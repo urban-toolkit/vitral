@@ -1,0 +1,48 @@
+services:
+  # Reverse proxy + HTTPS (recommended)
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Caddyfile should be in your repo at ./deploy/Caddyfile
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+
+  # Backend (Node + Hocuspocus + API)
+  server:
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Keep DATABASE_URL in env (or env_file) so you don't hardcode secrets
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+    # In prod you usually DON'T publish the app port directly;
+    # Caddy will reach it over the internal docker network.
+    expose:
+      - "3000"
+    # If your base compose used bind mounts, this override clears them.
+    volumes: []
+    # If your image is prebuilt in CI and pushed to a registry, set it here.
+    # Otherwise, remove "image:" and rely on "build:" from the base file.
+    # image: ghcr.io/YOUR_ORG/YOUR_REPO/server:latest
+
+  # Postgres: keep it private (no ports published)
+  postgres:
+    restart: unless-stopped
+    ports: []          # ensures 5432 is NOT exposed to the host
+    expose:
+      - "5432"         # internal only
+    # In production, avoid default passwords—use .env on the server
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+
+volumes:
+  caddy_data:
+  caddy_config:
