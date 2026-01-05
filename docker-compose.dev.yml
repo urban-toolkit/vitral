@@ -1,56 +1,19 @@
 services:
-  postgres:
-    image: postgres:16
-    container_name: vitral_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: app
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-    ports:
-      - "5432:5432"
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d app"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-
-  server:
-    image: node:20
-    container_name: vitral_server
-    working_dir: /app
-    depends_on:
-      postgres:
-        condition: service_healthy
+  vitral:
+    build:
+      context: ./vitral
+      dockerfile: ./Dockerfile
     environment:
       NODE_ENV: development
-      PORT: "3000"
-      DATABASE_URL: "postgres://app:app@postgres:5432/app"
     ports:
-      - "3000:3000"
-    volumes:
-      - ./server:/app
-      - server_node_modules:/app/node_modules
-    command: bash -lc "npm ci && npm run dev"
-    
-  pgadmin:
-    image: dpage/pgadmin4:8
-    container_name: vitral_pgadmin
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@local.dev
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "5050:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-
-volumes:
-  pg_data:
-  pgadmin_data:
-  server_node_modules:
+      - 5173:5173
+    develop:
+      watch:
+        - action: sync
+          path: ./vitral/src
+          target: /app/src
+          initial_sync: true
+          ignore:
+            - node_modules/
+        - action: rebuild
+          path: ./vitral/package.json

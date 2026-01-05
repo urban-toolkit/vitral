@@ -1,0 +1,73 @@
+.card {
+    width: 150px;
+    height: 200px;
+    display: flex;
+    flex-direction: column;
+}
+
+.header, .title, .footer {
+    flex: 1
+}
+
+.header {
+    display: flex;
+    flex-direction: row;
+}
+
+.title {
+    text-align: center;
+}
+
+.socialCard {
+    background-color: #CFDBD5;
+}
+
+.techCard {
+    background-color: #F5CB5C;
+}
+
+/* Flip animation */
+
+.flipCard {
+  /* background-color: transparent; */
+  /* width: 300px; */
+  /* height: 200px; */
+  /* border: 1px solid #f1f1f1; */
+  perspective: 1000px; /* Remove this if you don't want the 3D effect */
+}
+
+/* This container is needed to position the front and back side */
+.flipCardInner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  transition: transform 0.8s;
+  transform-style: preserve-3d;
+}
+
+/* Do an horizontal flip when you move the mouse over the flip box container */
+.flipCard:hover .flipCardInner {
+  transform: rotateY(180deg);
+}
+
+/* Position the front and back side */
+.flipCardFront, .flipCardBack {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  -webkit-backface-visibility: hidden; /* Safari */
+  backface-visibility: hidden;
+}
+
+.flipCardFront {
+    border: 1px solid black;
+}
+
+/* Style the back side */
+.flipCardBack {
+  background-color: dodgerblue;
+  border: 1px solid black;
+  color: white;
+  transform: rotateY(180deg);
+}
