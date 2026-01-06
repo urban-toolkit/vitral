@@ -1,0 +1,15 @@
+:root {
+  --font-size-xs: 0.75rem;   /* 12px */
+  --font-size-sm: 0.875rem;  /* 14px */
+  --font-size-md: 1rem;      /* 16px */
+  --font-size-lg: 1.25rem;   /* 20px */
+  --font-size-xl: 1.5rem;    /* 24px */
+  --font-size-2xl: 2rem;     /* 32px */
+
+  --social-color: #CFDBD5;
+  --social-color-darker: #8ebba2;
+  --technical-color: #F5CB5C;
+  --technical-color-darker: #d6a92e;
+
+  --subtitle-color: rgba(0, 0, 0, 0.6);
+}

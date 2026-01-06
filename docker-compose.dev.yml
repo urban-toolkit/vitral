@@ -2,7 +2,7 @@ services:
   vitral:
     build:
       context: ./vitral
-      dockerfile: ./Dockerfile
+      dockerfile: ./Dockerfile.dev
     environment:
       NODE_ENV: development
     ports:
@@ -17,3 +17,23 @@ services:
             - node_modules/
         - action: rebuild
           path: ./vitral/package.json
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ./Dockerfile.dev
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    ports:
+      - 3000:3000
+    develop:
+      watch:
+        - action: sync
+          path: ./backend/src
+          target: /app/src
+          initial_sync: true
+          ignore:
+            - node_modules/
+        - action: rebuild
+          path: ./backend/package.json

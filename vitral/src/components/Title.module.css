@@ -1,0 +1,35 @@
+.container {
+    position: fixed;
+    top: 10px;
+    left: 20px;
+}
+
+.titleContainer {
+    font-size: var(--font-size-xl);
+}
+
+.titleContainer input {
+    font-size: var(--font-size-xl);
+}
+
+.titleContainer p {
+    margin: 0;
+}
+
+.subtitleContainer {
+    font-size: var(--font-size-md);
+    color: var(--subtitle-color);
+}
+
+.socialTag {
+    background-color: var(--social-color);
+}
+
+.technicalTag {
+    background-color: var(--technical-color);
+}
+
+.socialTag, .technicalTag {
+    padding: 0 3px 0 3px;
+    font-weight: bold;
+}

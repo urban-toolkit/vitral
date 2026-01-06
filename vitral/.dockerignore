@@ -48,3 +48,5 @@ Dockerfile*
 tmp
 temp
 .cache
+
+.env
