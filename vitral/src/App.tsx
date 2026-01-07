@@ -4,6 +4,7 @@ import '@xyflow/react/dist/style.css';
 
 import { Card } from '@/components/Card';
 import { Title } from '@/components/Title';
+import { FileDropZone } from '@/components/FileDropZone';
 
 const initialNodes = [
     { id: 'n1', position: { x: -200, y: 0 }, type: 'card', data: { label: 'person', type: "social", title: "Fabio" } },
@@ -57,6 +58,11 @@ export default function App() {
 
             {/* Document title */}
             <Title />
+
+            <FileDropZone 
+                onFileSelected={(file: File) => {console.log(file)}}
+                accept='.txt'
+            />
         </div>
     );
 }
