@@ -7,3 +7,12 @@ export type cardData = {
     title: string,
     description: string
 }
+
+export type fileType = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md';
+
+export type fileData = {
+    name: string,
+    type: fileType,
+    content: string,
+    lastModified: Date,
+}

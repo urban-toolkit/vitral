@@ -5,6 +5,10 @@ import '@xyflow/react/dist/style.css';
 import { Card } from '@/components/Card';
 import { Title } from '@/components/Title';
 import { FileDropZone } from '@/components/FileDropZone';
+import { parseFile } from '@/func/FileParser';
+import { requestCardsLLM } from '@/func/LLMRequest';
+
+import type { fileData } from '@/config/types';
 
 const initialNodes = [
     { id: 'n1', position: { x: -200, y: 0 }, type: 'card', data: { label: 'person', type: "social", title: "Fabio" } },
@@ -60,8 +64,13 @@ export default function App() {
             <Title />
 
             <FileDropZone 
-                onFileSelected={(file: File) => {console.log(file)}}
-                accept='.txt'
+                onFileSelected={async (file: File) => {
+                    const data: fileData = await parseFile(file);
+                    const response: {cards: {entity: string, title: string, description: string}[]} = await requestCardsLLM(data);
+
+                    console.log("response", response);
+                }}
+                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
             />
         </div>
     );

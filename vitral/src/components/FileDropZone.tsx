@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 
 import classes from './FileDropZone.module.css'
 
@@ -10,10 +10,37 @@ type FileDropZoneProps = {
 export function FileDropZone({ onFileSelected, accept }: FileDropZoneProps) {
     const [isDragging, setIsDragging] = useState(false);
 
+    useEffect(() => {
+        const onDragEnter = (e: DragEvent) => {
+            if (e.dataTransfer?.types.includes("Files")) {
+                setIsDragging(true);
+            }
+        };
+
+        const onDragEnd = () => {
+            setIsDragging(false);
+        };
+
+        const onDragOver = () => {
+            setIsDragging(true);
+        }
+
+        window.addEventListener("dragenter", onDragEnter);
+        window.addEventListener("dragover", onDragOver);
+        window.addEventListener("dragend", onDragEnd);
+        window.addEventListener("drop", onDragEnd);
+
+        return () => {
+            window.removeEventListener("dragenter", onDragEnter);
+            window.removeEventListener("dragover", onDragOver);
+            window.removeEventListener("dragend", onDragEnd);
+            window.removeEventListener("drop", onDragEnd);
+        };
+    }, []);
+
     const handleDragOver = useCallback((e: React.DragEvent<HTMLLabelElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        setIsDragging(true);
     }, []);
 
     const handleDragLeave = useCallback((e: React.DragEvent<HTMLLabelElement>) => {
@@ -48,7 +75,7 @@ export function FileDropZone({ onFileSelected, accept }: FileDropZoneProps) {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={classes.dropZone}
+            className={`${classes.dropZone} ${isDragging ? "" : classes.inactive}`}
         >
 
             <input
@@ -59,8 +86,8 @@ export function FileDropZone({ onFileSelected, accept }: FileDropZoneProps) {
                 hidden
             />
 
-            <div>
-                <strong>Drag & drop a file here</strong>
+            <div className={classes.content}>
+                <p>Drag and drop files here</p>
             </div>
 
         </label>
