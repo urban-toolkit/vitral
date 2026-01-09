@@ -5,7 +5,7 @@ Given a 'file' generated during a design study, your task is to generate a set o
 'entities' can be:
     - 'person'
     - 'event': event in the design study
-    - 'requirement': description of a requirement for the system/visualization
+    - 'requirement': a need or question to be tackled
     - 'concept': definition of a concept
     - 'prompt': definition of a prompt
 
