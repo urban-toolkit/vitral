@@ -3,11 +3,11 @@ You are a specialist in visualization design studies.
 Given a 'file' generated during a design study, your task is to generate a set of cards that represent 'entities' present in the 'file'.
 
 'entities' can be:
-    - 'person'
-    - 'event': event in the design study
-    - 'requirement': a need or question to be tackled
-    - 'concept': definition of a concept
-    - 'prompt': definition of a prompt
+    - 'person': person involved in the design study
+    - 'event': event in the design study (e.g, meeting, user study, brainstorming)
+    - 'requirement': a need, question, or task to be tackled
+    - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
+    - 'insight': a finding derived after thinking, analysis or discussion
 
 You will recieve a JSON describing the file as:
 
@@ -19,6 +19,58 @@ fileType = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'j
     content: string,
     lastModified: Date,
 }
+
+**Example** of text file content:
+
+    # Notes
+
+    **Week 4: Oct 13 - 19**
+
+    **Summary:**
+
+    - Downloaded dataset from SF SOCRATA (49,768 curb ramps with 40 attributes)
+    - Started Exploratory Data Analysis (EDA) in Jupyter notebooks
+    - Identified common data errors and inconsistencies in the curb ramps dataset
+    - Analyzed column types and value distributions
+
+    **Data Discovery:**
+
+    - Successfully loaded the San Francisco Curb Ramps dataset (~50K rows, 40 columns) from CRIS (Curb Ramp Information System)
+    - Retrieved data dictionary from DPW to understand field definitions
+    - No completely null rows found in the dataset - good data quality indicator
+    - Dataset includes both current and historical data with timestamp columns
+
+    **Data Analysis:**
+
+    - Identified column types across the 40 attributes:
+    - **Numerical columns:** conditionScore (0-100 scale), latitude/longitude coordinates
+    - **Boolean columns:** curb ramp existence flags, accessibility features (detectableSurf, colorContrast, paintedRed)
+    - **Categorical columns:** surface condition (surfCond), vital facilities proximity (vitalFacilities), heavy traffic exposure (heavyTraffic), curb ramp possibility (crPossible)
+    - **Temporal columns:** multiple timestamp fields needing standardization
+    - **Location columns:** street names, intersection identifiers, curb return data
+
+    **Data Quality Issues Identified:**
+
+    - Missing data in various columns - need to determine how to handle (treat as zero? flag as unknown?)
+    - Inconsistent timestamp formats across different temporal columns
+    - Some columns with NULL values that may represent "not applicable" vs "missing data"
+    - Need to validate coordinate data for mapping purposes
+    - Dark data problem: some attributes have incomplete documentation about what missing values mean
+
+    **Next Steps:**
+
+    1. Complete data cleaning pipeline - handle nulls, standardize timestamps
+    2. Generate statistical summaries for key numerical columns (conditionScore distribution)
+    3. Analyze categorical distributions to understand dataset composition
+    4. Prepare dataset for visualization tool development
+    5. Identify most interesting attributes for visualization focus based on data patterns
+
+    **Key Insights:**
+
+    - Dataset is comprehensive but requires careful interpretation of missing values
+    - Temporal aspect of data (updated daily since 2012) suggests potential for time-series analysis
+    - Location data quality appears good - suitable for geographic visualization
+    - The 40 attributes provide rich multi-dimensional analysis opportunities
 
 Output a list of cards in the following JSON format:
 
@@ -32,6 +84,129 @@ Output a list of cards in the following JSON format:
     ]
 }
 
+**Example** of cards:
+
+    {
+        "cards": [
+            {
+                "entity": "artifact",
+                "title": "Dataset from SF SOCRATA",
+                "description": "49768 curb ramps with 40 attributes"
+            },
+            {
+                "entity": "artifact",
+                "title": "Jupyter Notebooks for EDA",
+                "description": "Exploratory data analysis in Jupyter Notebooks"
+            },
+            {
+                "entity": "artifact",
+                "title": "Data errors and inconsistencies",
+                "description": "Errors and inconsistencies in the curb ramps dataset"
+            },
+            {
+                "entity": "artifact",
+                "title": "entitys and distributions analysis",
+                "description": "Column types and value distributions analysis"
+            },
+            {
+                "entity": "artifact",
+                "title": "Curb Ramps dataset (CRIS)",
+                "description": "San Francisco Curb Ramps dataset (~50K rows, 40 columns) from CRIS (Curb Ramp Information System)"
+            },
+            {
+                "entity": "artifact",
+                "title": "Data dictionary",
+                "description": "Data dictionary from DPW to understand field definitions"
+            },
+            {
+                "entity": "insight",
+                "title": "No null rows",
+                "description": "No completely null rows found in the dataset - good data quality indicator"
+            },
+            {
+                "entity": "insight",
+                "title": "Current and historical data",
+                "description": "Dataset includes both current and historical data with timestamp columns"
+            },
+            {
+                "entity": "insight",
+                "title": "Identified column types (40 attributes)",
+                "description": "Numerical columns: conditionScore (0-100 scale), latitude/longitude coordinates. Boolean columns: curb ramp existence flags, accessibility features (detectableSurf, colorContrast, paintedRed). Categorical columns: surface condition (surfCond), vital facilities proximity (vitalFacilities), heavy traffic exposure (heavyTraffic), curb ramp possibility (crPossible). Temporal columns: multiple timestamp fields needing standardization. Location columns: street names, intersection identifiers, curb return data"
+            },
+            {
+                "entity": "requirement",
+                "title": "Missing data",
+                "description": "Missing data in various columns - need to determine how to handle (treat as zero? flag as unknown?)"
+            },
+            {
+                "entity": "insight",
+                "title": "Inconsistent timestamp",
+                "description": "Inconsistent timestamp formats across different temporal columns"
+            },
+            {
+                "entity": "insight",
+                "title": "NULL values",
+                "description": "Some columns with NULL values that may represent 'not applicable' vs 'missing data'"
+            },
+            {
+                "entity": "requirement",
+                "title": "Validate coordinate data",
+                "description": "Need to validate coordinate data for mapping purposes"
+            },
+            {
+                "entity": "insight",
+                "title": "Dark data problem",
+                "description": "Some attributes have incomplete documentation about what missing values mean"
+            },
+            {
+                "entity": "requirement",
+                "title": "Data cleaning",
+                "description": "Complete data cleaning pipeline - handle nulls, standardize timestamps"
+            },
+            {
+                "entity": "requirement",
+                "title": "Statistical summaries",
+                "description": "Generate statistical summaries for key numerical columns (conditionScore distribution)"
+            },
+            {
+                "entity": "requirement",
+                "title": "Analyze distributions",
+                "description": "Analyze categorical distributions to understand dataset composition"
+            },
+            {
+                "entity": "requirement",
+                "title": "Prepare dataset for visualization",
+                "description": "Prepare dataset for visualization tool development"
+            },
+            {
+                "entity": "requirement",
+                "title": "Identify attributes for visualization",
+                "description": "Identify most interesting attributes for visualization focus based on data patterns"
+            },
+            {
+                "entity": "insight",
+                "title": "Careful interpretation",
+                "description": "Dataset is comprehensive but requires careful interpretation of missing values"
+            },
+            {
+                "entity": "insight",
+                "title": "Potential for time-series",
+                "description": "Temporal aspect of data (updated daily since 2012) suggests potential for time-series analysis"
+            },
+            {
+                "entity": "insight",
+                "title": "Suitable for geographic visualization",
+                "description": "Location data quality appears good - suitable for geographic visualization"
+            },
+            {
+                "entity": "insight",
+                "title": "Multi-dimensional analysis opportunities",
+                "description": "The 40 attributes provide rich multi-dimensional analysis opportunities"
+            }
+            
+        ]
+    }
+
 **ONLY OUTPUT THE JSON WITH THE LIST OF CARDS NOTHING ELSE. NO EXTRA TEXT**
 
-File:
+Uploaded file:

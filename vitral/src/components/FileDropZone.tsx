@@ -4,10 +4,11 @@ import classes from './FileDropZone.module.css'
 
 type FileDropZoneProps = {
     onFileSelected: (file: File) => void;
+    loading: boolean;
     accept?: string;
 };
 
-export function FileDropZone({ onFileSelected, accept }: FileDropZoneProps) {
+export function FileDropZone({ onFileSelected, loading, accept }: FileDropZoneProps) {
     const [isDragging, setIsDragging] = useState(false);
 
     useEffect(() => {
@@ -71,25 +72,40 @@ export function FileDropZone({ onFileSelected, accept }: FileDropZoneProps) {
     );
 
     return (
-        <label
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            className={`${classes.dropZone} ${isDragging ? "" : classes.inactive}`}
-        >
+        <>
+            <label
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`${classes.dropZone} ${isDragging ? "" : classes.inactive}`}
+            >
 
-            <input
-                type="file"
-                accept={accept}
-                onChange={handleInputChange}
-                onClick={(event: any) => {event.preventDefault()}}
-                hidden
-            />
+                <input
+                    type="file"
+                    accept={accept}
+                    onChange={handleInputChange}
+                    onClick={(event: any) => {event.preventDefault()}}
+                    hidden
+                />
 
-            <div className={classes.content}>
-                <p>Drag and drop files here</p>
-            </div>
+                <div className={classes.content}>
+                    <p>Drag and drop files here</p>
+                </div>
 
-        </label>
+            </label>
+        
+            {loading ? 
+                <div className={classes.spinnerContainer}>
+                    <div 
+                        className={classes.spinner}
+                        aria-label="Loading"
+                    />
+                </div> 
+                : 
+                null}
+
+
+        </>
+
     );
 }

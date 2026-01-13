@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react';
-import { ReactFlow, applyNodeChanges, applyEdgeChanges, addEdge } from '@xyflow/react';
+import { useState } from 'react';
+import { ReactFlow } from '@xyflow/react';
+import { useSelector, useDispatch } from 'react-redux';
 import '@xyflow/react/dist/style.css';
 
 import { Card } from '@/components/Card';
@@ -7,45 +8,29 @@ import { Title } from '@/components/Title';
 import { FileDropZone } from '@/components/FileDropZone';
 import { parseFile } from '@/func/FileParser';
 import { requestCardsLLM } from '@/func/LLMRequest';
+import { onEdgesChange, onNodesChange } from '@/store/flowSlice';
 
 import type { fileData } from '@/config/types';
-
-const initialNodes = [
-    { id: 'n1', position: { x: -200, y: 0 }, type: 'card', data: { label: 'person', type: "social", title: "Fabio" } },
-    { id: 'n2', position: { x: 0, y: 0 }, type: 'card', data: { label: 'event', type: "social", title: "Meeting", description: "In this meeting we define the concept of knowledge management." } },
-    { id: 'n3', position: { x: 200, y: 0 }, type: 'card', data: { label: 'requirement', type: "technical", title: "Temperature Dataset" } },
-];
-
-// const initialEdges = [{ id: 'n1-n2', source: 'n1', target: 'n2' }];
+import type { RootState } from '@/store';
 
 const nodeTypes = {
     card: Card,
 };
 
 export default function App() {
-    const [nodes, setNodes] = useState(initialNodes);
-    // const [edges, setEdges] = useState(initialEdges);
+    const dispatch = useDispatch();
+    const nodes = useSelector((state: RootState) => state.flow.nodes);
+    const edges = useSelector((state: RootState) => state.flow.edges);
 
-    const onNodesChange = useCallback(
-        (changes: any) => setNodes((nodesSnapshot) => applyNodeChanges(changes, nodesSnapshot)),
-        [],
-    );
-    // const onEdgesChange = useCallback(
-    //   (changes: any) => setEdges((edgesSnapshot) => applyEdgeChanges(changes, edgesSnapshot)),
-    //   [],
-    // );
-    // const onConnect = useCallback(
-    //   (params: any) => setEdges((edgesSnapshot) => addEdge(params, edgesSnapshot)),
-    //   [],
-    // );
+    const [loading, setLoading] = useState(false);
 
     return (
         <div style={{ width: '100vw', height: '100vh' }}>
             <ReactFlow
                 nodes={nodes}
-                // edges={edges}
-                onNodesChange={onNodesChange}
-                // onEdgesChange={onEdgesChange}
+                edges={edges}
+                onNodesChange={(e) => dispatch(onNodesChange(e))}
+                onEdgesChange={(e) => dispatch(onEdgesChange(e))}
                 // onConnect={onConnect}
                 nodeTypes={nodeTypes}
                 fitView
@@ -65,11 +50,14 @@ export default function App() {
 
             <FileDropZone 
                 onFileSelected={async (file: File) => {
+                    setLoading(true);
                     const data: fileData = await parseFile(file);
                     const response: {cards: {entity: string, title: string, description: string}[]} = await requestCardsLLM(data);
+                    setLoading(false);
 
                     console.log("response", response);
                 }}
+                loading={loading}
                 accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
             />
         </div>
