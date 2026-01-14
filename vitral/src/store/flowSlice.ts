@@ -3,10 +3,7 @@ import type { nodeType, edgeType } from '@/config/types';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 
 const initialState: { nodes: nodeType[], edges: edgeType[] } = {
-    nodes: [
-        { id: 'n1', position: { x: -200, y: 0 }, type: 'card', data: { label: 'person', type: "social", title: "Fabio" } },
-        { id: 'n2', position: { x: 0, y: 0 }, type: 'card', data: { label: 'event', type: "social", title: "Meeting", description: "In this meeting we define the concept of knowledge management." } }
-    ],
+    nodes: [],
     edges: []
 };
 
@@ -22,6 +19,9 @@ const flowSlice = createSlice({
         },
         addNode: (state, action) => {
             state.nodes.push(action.payload);
+        },
+        addNodes: (state, action) => {
+            state.nodes = state.nodes.concat(action.payload); 
         },
         updateNode: (state, action) => {
             const index = state.nodes.findIndex(n => n.id === action.payload.id);
@@ -48,5 +48,5 @@ const flowSlice = createSlice({
     }
 });
 
-export const { setNodes, setEdges, addNode, updateNode, removeNode, connectEdge, removeEdge, onNodesChange, onEdgesChange } = flowSlice.actions;
+export const { setNodes, setEdges, addNode, updateNode, removeNode, connectEdge, removeEdge, onNodesChange, onEdgesChange, addNodes } = flowSlice.actions;
 export default flowSlice.reducer;

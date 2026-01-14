@@ -1,11 +1,17 @@
 export type cardType = 'technical' | 'social';
-export type cardLabel = 'person' | 'event' | 'requirement' | 'concept' | 'prompt';
+export type cardLabel = 'person' | 'event' | 'requirement' | 'concept' | 'insight';
 
 export type cardData = {
     label: string, 
     type: cardType,
     title: string,
     description?: string
+}
+
+export type llmCardData = {
+    entity: string,
+    title: string,
+    description: string 
 }
 
 export type fileType = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md';
@@ -18,7 +24,7 @@ export type fileData = {
 }
 
 export type nodeType = {
-    id: string, 
+    id: string, // n123 or 123
     position: {x: number, y: number}, 
     type: string, 
     data: cardData

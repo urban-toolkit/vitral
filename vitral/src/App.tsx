@@ -7,8 +7,8 @@ import { Card } from '@/components/Card';
 import { Title } from '@/components/Title';
 import { FileDropZone } from '@/components/FileDropZone';
 import { parseFile } from '@/func/FileParser';
-import { requestCardsLLM } from '@/func/LLMRequest';
-import { onEdgesChange, onNodesChange } from '@/store/flowSlice';
+import { requestCardsLLM, llmCardsToNodes } from '@/func/LLMRequest';
+import { onEdgesChange, onNodesChange, addNodes } from '@/store/flowSlice';
 
 import type { fileData } from '@/config/types';
 import type { RootState } from '@/store';
@@ -51,11 +51,22 @@ export default function App() {
             <FileDropZone 
                 onFileSelected={async (file: File) => {
                     setLoading(true);
+
                     const data: fileData = await parseFile(file);
                     const response: {cards: {entity: string, title: string, description: string}[]} = await requestCardsLLM(data);
-                    setLoading(false);
 
-                    console.log("response", response);
+                    console.log(response);
+
+                    if(response && response.cards){
+                        console.log("response", response);
+                        let newNodes = llmCardsToNodes(response.cards, nodes);
+
+                        console.log(newNodes);
+
+                        dispatch(addNodes(newNodes));
+                    }
+
+                    setLoading(false);
                 }}
                 loading={loading}
                 accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'

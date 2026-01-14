@@ -3,3 +3,7 @@
 </div>
 
 docker-compose --file docker-compose.dev.yml up --watch
+
+To recreate database:
+
+docker-compose --file docker-compose.dev.yml down

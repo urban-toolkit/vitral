@@ -26,8 +26,11 @@ services:
       NODE_ENV: development
       PORT: 3000
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
     ports:
       - 3000:3000
+    depends_on:
+      - postgres
     develop:
       watch:
         - action: sync
@@ -38,3 +41,17 @@ services:
             - node_modules/
         - action: rebuild
           path: ./backend/package.json
+  postgres:
+    image: postgres:18.1-alpine
+    environment:
+      POSTGRES_USER: vitral
+      POSTGRES_PASSWORD: vitral
+      POSTGRES_DB: vitral
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  postgres_data:
