@@ -10,6 +10,8 @@ import { parseFile } from '@/func/FileParser';
 import { requestCardsLLM, llmCardsToNodes } from '@/func/LLMRequest';
 import { onEdgesChange, onNodesChange, addNodes } from '@/store/flowSlice';
 
+import { useDocumentSync } from "@/hooks/useDocumentSync";
+
 import type { fileData } from '@/config/types';
 import type { RootState } from '@/store';
 
@@ -22,10 +24,21 @@ export default function App() {
     const nodes = useSelector((state: RootState) => state.flow.nodes);
     const edges = useSelector((state: RootState) => state.flow.edges);
 
+    const existingDocId = localStorage.getItem("vitral_doc_id") ?? undefined;
+    const { docId, status, error, resetDoc } = useDocumentSync(existingDocId);
+
     const [loading, setLoading] = useState(false);
 
     return (
         <div style={{ width: '100vw', height: '100vh' }}>
+
+            <div style={{ position: "absolute", top: 12, right: 1000, zIndex: 10 }}>
+                <div>doc: {docId ?? "creating..."}</div>
+                <div>status: {status}</div>
+                {error && <div style={{ color: "crimson" }}>{error}</div>}
+                <button onClick={resetDoc}>New document</button>
+            </div>
+
             <ReactFlow
                 nodes={nodes}
                 edges={edges}

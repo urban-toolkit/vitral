@@ -8,7 +8,7 @@ import dbPlugin from "./plugins/db.ts";
 
 const app = Fastify({ logger: true });
 
-await app.register(cors, { origin: true });
+await app.register(cors, { origin: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] });
 await app.register(dbPlugin);
 app.register(llmRoutes, { prefix: "/api/llm" });
 app.register(stateRoutes, { prefix: "/api" });
