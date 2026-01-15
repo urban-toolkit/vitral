@@ -6,7 +6,8 @@ export const persistConfig: PersistConfig<any> = {
   version: 1,
   storage: indexedDBStorage,
 
-  whitelist: ["flow"],
+  // whitelist: ["flow"],
+  whitelist: [], // TODO: persist preferences/settings
 
   migrate: async (state) => {
     return state;

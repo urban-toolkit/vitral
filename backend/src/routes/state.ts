@@ -57,6 +57,21 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     });
 
     /**
+     * Load all documents
+     * GET /api/state/
+     */
+    app.get("/state", async (request, reply) => {
+        const { rows } = await app.pg.query(
+            `
+            SELECT id, title, description, version, updated_at
+            FROM documents
+            `
+        );
+
+        return rows;
+    });
+
+    /**
      * Save (overwrite) a document by id
      * PUT /api/state/:id
      *

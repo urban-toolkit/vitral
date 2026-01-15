@@ -2,10 +2,15 @@ import { useState } from 'react';
 
 import classes from './Title.module.css'
 
-export function Title(_props: any) {
+
+type TitleProps = {
+    textTitle: string; 
+};
+
+export function Title({ textTitle }: TitleProps) {
 
     const [editing, setEditing] = useState(false);
-    const [title, setTitle] = useState("Untitled");
+    const [title, setTitle] = useState(textTitle);
 
     return (
         <div className={classes.container}>
