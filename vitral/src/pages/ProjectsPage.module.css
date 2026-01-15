@@ -1,0 +1,41 @@
+.pageContainer {
+    width: 100vw;
+    height: 100vh;
+    background-color: #f2f2f2;
+}
+
+.innerContent {
+    padding: 40px;
+}
+
+.projectsGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 300px);
+    gap: 24px;
+    justify-content: start;
+
+}
+
+.projectCard {
+    width: 300px;
+    height: 230px;
+    background-color: white;
+    border-radius: 15px;
+    border: 1px solid rgba(177, 177, 177, 0.589);
+}
+
+.innerCard {
+    padding: 10px;
+}
+
+.documentTitle {
+    font-size: var(--font-size-xl);
+}
+
+.title {
+    font-size: var(--font-size-2xl);
+    margin-top: 0;
+    margin-bottom: 40px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid rgba(177, 177, 177, 0.589);
+}
