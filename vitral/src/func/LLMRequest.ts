@@ -1,9 +1,9 @@
-import type { llmCardData, nodeType, cardType } from '@/config/types';
+import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType } from '@/config/types';
 import type { fileData } from '@/config/types';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
-export async function requestCardsLLM(fileData: fileData): Promise<{cards: {entity: string, title: string, description?: string}[]}>{
+export async function requestCardsLLM(fileData: fileData): Promise<{cards: {id: number, entity: string, title: string, description?: string}[]}>{
 
     const userText = JSON.stringify(fileData);
 
@@ -37,7 +37,7 @@ export async function requestCardsLLM(fileData: fileData): Promise<{cards: {enti
     }
 }
 
-export async function requestCardsLLMTextInput(userText: string): Promise<{cards: {entity: string, title: string, description?: string}[]}>{
+export async function requestCardsLLMTextInput(userText: string): Promise<{cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]}>{
 
     const response = await fetch(API_BASE_URL+"/api/llm/chat", {
         method: "POST",
@@ -50,7 +50,8 @@ export async function requestCardsLLMTextInput(userText: string): Promise<{cards
     if (!response.ok) {
         alert("Request failed");
         return {
-            cards: []
+            cards: [],
+            connections: []
         }
     }
 
@@ -65,7 +66,8 @@ export async function requestCardsLLMTextInput(userText: string): Promise<{cards
     }
 
     return {
-        cards: []
+        cards: [],
+        connections: []
     }
 }
 
@@ -85,7 +87,7 @@ export async function requestCardsLLMTextInput(userText: string): Promise<{cards
 //     }
 // }
 
-export function llmCardsToNodes(llmCards: llmCardData[], offset?: {x: number, y: number}): nodeType[] {
+export function llmCardsToNodes(llmCards: llmCardData[], offset?: {x: number, y: number}): {nodes: nodeType[], idMap: {[old: string]: string}} {
     // let id = getHighestId(nodes) + 1;
 
     let positionX = 0;
@@ -97,6 +99,8 @@ export function llmCardsToNodes(llmCards: llmCardData[], offset?: {x: number, y:
     }
 
     let resultingNodes: nodeType[] = [];
+
+    let idMapping: {[old: string]: string} = {};
 
     for(const card of llmCards){
 
@@ -111,8 +115,10 @@ export function llmCardsToNodes(llmCards: llmCardData[], offset?: {x: number, y:
                 break
         }
 
+        let newId = crypto.randomUUID();
+
         resultingNodes.push({
-            id: crypto.randomUUID(),
+            id: newId,
             position: {
                 x: positionX,
                 y: positionY
@@ -126,9 +132,28 @@ export function llmCardsToNodes(llmCards: llmCardData[], offset?: {x: number, y:
             }
         });
 
-        positionX += 100;
+        positionX += 300;
+        idMapping[card.id] = newId;
         // id += 1;
     }
 
-    return resultingNodes;
+    return {nodes: resultingNodes, idMap: idMapping};
+}
+
+export function llmConnectionsToEdges(llmConnections: llmConnectionData[], idMap: {[old: string]: string}): edgeType[] {
+    let resultingEdges: edgeType[] = []
+    
+    try{
+        for(const connection of llmConnections) {
+            resultingEdges.push({
+                id: crypto.randomUUID(),
+                source: idMap[connection.source],
+                target: idMap[connection.target]
+            });
+        }
+    }catch(err){
+        console.log("Edge generation failed for some connections in: "+llmConnections)
+    }
+
+    return resultingEdges;
 }

@@ -9,9 +9,15 @@ export type cardData = {
 }
 
 export type llmCardData = {
+    id: number,
     entity: string,
     title: string,
     description?: string 
+}
+
+export type llmConnectionData = {
+    source: number, 
+    target: number
 }
 
 export type fileType = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md';

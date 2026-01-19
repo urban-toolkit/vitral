@@ -3,7 +3,7 @@ You are a specialist in visualization design studies.
 Given a 'file' generated during a design study, your task is to generate a set of cards that represent 'entities' present in the 'file'.
 
 'entities' can be:
-    - 'person': person involved in the design study
+    - 'person': a person involved in the design study
     - 'activity': activity in the design study (e.g, meeting, user study, brainstorming)
     - 'requirement': a need, question, or task to be tackled
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)

@@ -9,8 +9,8 @@ import { Title } from '@/components/Title';
 import { Toolbar } from '@/components/Toolbar';
 import { FileDropZone } from '@/components/FileDropZone';
 import { parseFile } from '@/func/FileParser';
-import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput } from '@/func/LLMRequest';
-import { onEdgesChange, onNodesChange, addNodes } from '@/store/flowSlice';
+import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
+import { onEdgesChange, onNodesChange, addNodes, connectEdges } from '@/store/flowSlice';
 import { Card } from '@/components/Card';
 
 import type { fileData } from '@/config/types';
@@ -98,17 +98,19 @@ const FlowInner = () => {
 
                         setLoading(true);
 
-                        const response: {cards: {entity: string, title: string, description?: string}[]} = await requestCardsLLMTextInput(userText);
+                        const response: {cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]} = await requestCardsLLMTextInput(userText);
                         
                         console.log(response);
 
                         if(response && response.cards){
                             console.log("response", response);
-                            let newNodes = llmCardsToNodes(response.cards, screenToFlowPosition({x, y}));
+                            let {nodes, idMap} = llmCardsToNodes(response.cards, screenToFlowPosition({x, y}));
+                            let edges = llmConnectionsToEdges(response.connections, idMap);
 
-                            console.log(newNodes);
+                            console.log(nodes, edges, idMap);
 
-                            dispatch(addNodes(newNodes));
+                            dispatch(addNodes(nodes));
+                            dispatch(connectEdges(edges));
                         }
 
                         setLoading(false);
@@ -123,17 +125,17 @@ const FlowInner = () => {
                     setLoading(true);
 
                     const data: fileData = await parseFile(file);
-                    const response: {cards: {entity: string, title: string, description?: string}[]} = await requestCardsLLM(data);
+                    const response: {cards: {id: number, entity: string, title: string, description?: string}[]} = await requestCardsLLM(data);
 
                     console.log(response);
 
                     if(response && response.cards){
                         console.log("response", response);
-                        let newNodes = llmCardsToNodes(response.cards);
+                        let {nodes, idMap} = llmCardsToNodes(response.cards);
 
-                        console.log(newNodes);
+                        console.log(nodes, idMap);
 
-                        dispatch(addNodes(newNodes));
+                        dispatch(addNodes(nodes));
                     }
 
                     setLoading(false);

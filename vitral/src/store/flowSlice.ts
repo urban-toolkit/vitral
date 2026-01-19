@@ -34,6 +34,9 @@ const flowSlice = createSlice({
         connectEdge: (state, action) => {
             state.edges.push(action.payload);
         },
+        connectEdges: (state, action) => {
+            state.edges = state.edges.concat(action.payload);
+        },
         removeEdge: (state, action) => {
             state.edges = state.edges.filter(e => e.id !== action.payload);
         },
@@ -48,5 +51,5 @@ const flowSlice = createSlice({
     }
 });
 
-export const { setNodes, setEdges, addNode, updateNode, removeNode, connectEdge, removeEdge, onNodesChange, onEdgesChange, addNodes } = flowSlice.actions;
+export const { setNodes, setEdges, addNode, updateNode, removeNode, connectEdge, removeEdge, onNodesChange, onEdgesChange, addNodes, connectEdges } = flowSlice.actions;
 export default flowSlice.reducer;

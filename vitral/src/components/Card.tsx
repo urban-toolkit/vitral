@@ -5,6 +5,8 @@ import classes from './Card.module.css'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faRepeat } from '@fortawesome/free-solid-svg-icons'
 
+import { Position, Handle } from '@xyflow/react';
+
 const headerColor: Record<string, string> = {
     person: "#C655BC",
     activity: "#5E7CE2",
@@ -30,7 +32,6 @@ export function Card(props: any) {
                     <div className={classes.title}>
                         <p>{props.data.title}</p>
                     </div>
-                    <div className={classes.footer}><p>Footer</p></div>
                 </div>
 
                 <div className={`${classes.flipCardBack} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>
@@ -43,6 +44,8 @@ export function Card(props: any) {
 
             </div>
 
+            <Handle type="source" position={Position.Left} />
+            <Handle type="target" position={Position.Right} />
         </div>
     );
 }
