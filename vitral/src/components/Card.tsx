@@ -7,7 +7,7 @@ import { faRepeat } from '@fortawesome/free-solid-svg-icons'
 
 const headerColor: Record<string, string> = {
     person: "#C655BC",
-    event: "#5E7CE2",
+    activity: "#5E7CE2",
     requirement: "#B14022",
     concept: "#54B374",
     insight: "#528040"

@@ -3,7 +3,7 @@ import type { fileData } from '@/config/types';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
-export async function requestCardsLLM(fileData: fileData): Promise<{cards: {entity: string, title: string, description: string}[]}>{
+export async function requestCardsLLM(fileData: fileData): Promise<{cards: {entity: string, title: string, description?: string}[]}>{
 
     const userText = JSON.stringify(fileData);
 
@@ -12,7 +12,7 @@ export async function requestCardsLLM(fileData: fileData): Promise<{cards: {enti
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ input: userText }),
+        body: JSON.stringify({ input: userText, prompt: "CardsFromFile" }),
     });
 
     if (!response.ok) {
@@ -26,7 +26,6 @@ export async function requestCardsLLM(fileData: fileData): Promise<{cards: {enti
 
     try{
         const parsedData = JSON.parse(data.output);
-        
 
         return parsedData;
     }catch{
@@ -38,27 +37,64 @@ export async function requestCardsLLM(fileData: fileData): Promise<{cards: {enti
     }
 }
 
-function getHighestId(nodes: nodeType[]): number {
-    let highestId = 0;
+export async function requestCardsLLMTextInput(userText: string): Promise<{cards: {entity: string, title: string, description?: string}[]}>{
+
+    const response = await fetch(API_BASE_URL+"/api/llm/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ input: userText, prompt: "CardsFromTextInput" }),
+    });
+
+    if (!response.ok) {
+        alert("Request failed");
+        return {
+            cards: []
+        }
+    }
+
+    const data = await response.json();
 
     try{
-        for(const node of nodes){
-            let id = parseInt(node.id.replaceAll('n', ''));
-            if(id > highestId)
-                highestId = id;
-        }
+        const parsedData = JSON.parse(data.output);
 
-        return highestId;
-    } catch (err) {
-        throw new Error("Could not parse node id.");
+        return parsedData;
+    }catch{
+        alert("Request failed");
+    }
+
+    return {
+        cards: []
     }
 }
 
-export function llmCardsToNodes(llmCards: llmCardData[], nodes: nodeType[]): nodeType[] {
-    let id = getHighestId(nodes) + 1;
+// export function getHighestId(nodes: nodeType[]): number {
+//     let highestId = 0;
+
+//     try{
+//         for(const node of nodes){
+//             let id = parseInt(node.id.replaceAll('n', ''));
+//             if(id > highestId)
+//                 highestId = id;
+//         }
+
+//         return highestId;
+//     } catch (err) {
+//         throw new Error("Could not parse node id.");
+//     }
+// }
+
+export function llmCardsToNodes(llmCards: llmCardData[], offset?: {x: number, y: number}): nodeType[] {
+    // let id = getHighestId(nodes) + 1;
 
     let positionX = 0;
     let positionY = 0;
+
+    if(offset){
+        positionX = offset.x;
+        positionY = offset.y;
+    }
 
     let resultingNodes: nodeType[] = [];
 
@@ -76,7 +112,7 @@ export function llmCardsToNodes(llmCards: llmCardData[], nodes: nodeType[]): nod
         }
 
         resultingNodes.push({
-            id: id.toString(),
+            id: crypto.randomUUID(),
             position: {
                 x: positionX,
                 y: positionY
@@ -91,7 +127,7 @@ export function llmCardsToNodes(llmCards: llmCardData[], nodes: nodeType[]): nod
         });
 
         positionX += 100;
-        id += 1;
+        // id += 1;
     }
 
     return resultingNodes;

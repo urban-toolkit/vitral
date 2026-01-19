@@ -11,13 +11,19 @@ export const llmRoutes: FastifyPluginAsync = async (app) => {
     app.post("/chat", async (request, reply) => {
         try {
 
-            const body = request.body as {input: string};
+            const body = request.body as {input: string, prompt?: string};
 
             if (!body?.input) {
                 return reply.status(400).send({ error: "Invalid messages array" });
             }
 
-            const promptContent = await loadPrompt("CardsFromFile");
+            let promptContent = "";
+
+            if(body?.prompt){
+                promptContent = await loadPrompt(body?.prompt);
+            }else{
+                promptContent = await loadPrompt("CardsFromFile");
+            }
 
             const response = await client.responses.create({
                 model: "gpt-5-nano",

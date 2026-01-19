@@ -1,5 +1,5 @@
 export type cardType = 'technical' | 'social';
-export type cardLabel = 'person' | 'event' | 'requirement' | 'concept' | 'insight';
+export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight';
 
 export type cardData = {
     label: string, 
@@ -11,7 +11,7 @@ export type cardData = {
 export type llmCardData = {
     entity: string,
     title: string,
-    description: string 
+    description?: string 
 }
 
 export type fileType = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md';
