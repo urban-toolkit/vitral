@@ -3,7 +3,7 @@ import type { fileData } from '@/config/types';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
-export async function requestCardsLLM(fileData: fileData): Promise<{cards: {id: number, entity: string, title: string, description?: string}[]}>{
+export async function requestCardsLLM(fileData: fileData): Promise<{cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]}>{
 
     const userText = JSON.stringify(fileData);
 
@@ -18,7 +18,8 @@ export async function requestCardsLLM(fileData: fileData): Promise<{cards: {id: 
     if (!response.ok) {
         alert("Request failed");
         return {
-            cards: []
+            cards: [],
+            connections: []
         }
     }
 
@@ -33,7 +34,8 @@ export async function requestCardsLLM(fileData: fileData): Promise<{cards: {id: 
     }
 
     return {
-        cards: []
+        cards: [],
+        connections: []
     }
 }
 

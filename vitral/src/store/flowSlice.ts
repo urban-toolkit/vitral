@@ -2,9 +2,10 @@ import { createSlice } from '@reduxjs/toolkit';
 import type { nodeType, edgeType } from '@/config/types';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 
-const initialState: { nodes: nodeType[], edges: edgeType[] } = {
+const initialState: { nodes: nodeType[], edges: edgeType[], title: string } = {
     nodes: [],
-    edges: []
+    edges: [],
+    title: "Untitled"
 };
 
 const flowSlice = createSlice({
@@ -47,9 +48,12 @@ const flowSlice = createSlice({
         onEdgesChange: (state, action) => {
             const a = applyEdgeChanges(action.payload, state.edges);
             state.edges = a;
-        }
+        },
+        setTitle: (state, action) => {
+            state.title = action.payload;
+        },
     }
 });
 
-export const { setNodes, setEdges, addNode, updateNode, removeNode, connectEdge, removeEdge, onNodesChange, onEdgesChange, addNodes, connectEdges } = flowSlice.actions;
+export const { setNodes, setEdges, addNode, updateNode, removeNode, connectEdge, removeEdge, onNodesChange, onEdgesChange, addNodes, connectEdges, setTitle } = flowSlice.actions;
 export default flowSlice.reducer;

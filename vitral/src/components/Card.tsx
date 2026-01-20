@@ -1,15 +1,16 @@
 import { useState } from 'react';
 
-import classes from './Card.module.css'
+import classes from './Card.module.css';
 
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRepeat } from '@fortawesome/free-solid-svg-icons'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faRepeat } from '@fortawesome/free-solid-svg-icons';
 
 import { Position, Handle } from '@xyflow/react';
 
 const headerColor: Record<string, string> = {
     person: "#C655BC",
     activity: "#5E7CE2",
+    artifact: "#beac40",
     requirement: "#B14022",
     concept: "#54B374",
     insight: "#528040"

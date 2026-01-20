@@ -71,3 +71,27 @@ export async function saveDocument(
 
     return res.json();
 }
+
+export async function deleteDocument(docId: string) {
+    const res = await fetch(`${API_BASE}/api/state/${docId}`, {
+        method: "DELETE",
+    });
+
+    if (!res.ok) {
+        throw new Error(`Delete failed: ${res.status}`);
+    }
+}
+
+export async function updateDocumentMeta(docId: string, payload: {title?: string, description?: string}) {
+    const res = await fetch(`${API_BASE}/api/state/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        throw new Error(`Update failed: ${res.status}`);
+    }
+
+    return res.json();
+}

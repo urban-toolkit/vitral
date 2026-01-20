@@ -2,15 +2,19 @@ import { useState } from 'react';
 
 import classes from './Title.module.css'
 
-
 type TitleProps = {
-    textTitle: string; 
+    textTitle: string;
+    onSetTitle: (newTitle: string) => void;
 };
 
-export function Title({ textTitle }: TitleProps) {
+export function Title({ textTitle, onSetTitle }: TitleProps) {
 
     const [editing, setEditing] = useState(false);
     const [title, setTitle] = useState(textTitle);
+
+    const newTitle = (newTitle: string) => {
+        onSetTitle(newTitle);
+    }
 
     return (
         <div className={classes.container}>
@@ -18,7 +22,7 @@ export function Title({ textTitle }: TitleProps) {
                 {
                     editing 
                     ? 
-                        <input type="text" value={title} onBlur={() => {setEditing(false)}} onChange={(event: React.ChangeEvent<HTMLInputElement>) => {setTitle(event.target.value)}}/>
+                        <input type="text" value={title} onBlur={() => {setEditing(false); newTitle(title)}} onChange={(event: React.ChangeEvent<HTMLInputElement>) => {setTitle(event.target.value)}}/>
                     :
                         <p onClick={() => {setEditing(true)}}>{title}</p>
                 }

@@ -17,6 +17,7 @@ import type { fileData } from '@/config/types';
 import type { RootState } from '@/store';
 
 import { FreeInputZone } from '@/components/FreeInputZone';
+import { updateDocumentMeta } from '@/api/stateApi';
 
 const nodeTypes = {
     card: Card,
@@ -37,6 +38,7 @@ const FlowInner = () => {
     const dispatch = useDispatch();
     const nodes = useSelector((state: RootState) => state.flow.nodes);
     const edges = useSelector((state: RootState) => state.flow.edges);
+    const title = useSelector((state: RootState) => state.flow.title);
 
     const { screenToFlowPosition } = useReactFlow();
 
@@ -66,19 +68,19 @@ const FlowInner = () => {
                 fitView
             />
 
-            {/* Calls to action */}
+            {/* Call to action */}
             <div style={{ position: 'fixed', right: '30px', top: '30px' }}>
                 <img src="/cta_drag_and_drop.png" alt="Drag and Drop file to instantiate cards." />
             </div>
 
-            <div style={{ position: 'fixed', left: '30px', bottom: '30px' }}>
-                <img src="/cta_click_to_type.png" alt="Click and type to instantiate cards." />
-            </div>
-
             {/* Document title */}
-            {/* <Title 
+            <Title 
                 textTitle={title}
-            /> */}
+                onSetTitle={(newTitle: string) => {
+                    console.log("newTitle", newTitle);
+                    updateDocumentMeta(projectId, {title: newTitle});
+                }}
+            />
 
             <Toolbar
                 onFreeInputClicked={() => {
@@ -125,17 +127,19 @@ const FlowInner = () => {
                     setLoading(true);
 
                     const data: fileData = await parseFile(file);
-                    const response: {cards: {id: number, entity: string, title: string, description?: string}[]} = await requestCardsLLM(data);
+                    const response: {cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]} = await requestCardsLLM(data);
 
                     console.log(response);
 
                     if(response && response.cards){
                         console.log("response", response);
                         let {nodes, idMap} = llmCardsToNodes(response.cards);
+                        let edges = llmConnectionsToEdges(response.connections, idMap);
 
-                        console.log(nodes, idMap);
+                        console.log(nodes, edges, idMap);
 
                         dispatch(addNodes(nodes));
+                        dispatch(connectEdges(edges));
                     }
 
                     setLoading(false);

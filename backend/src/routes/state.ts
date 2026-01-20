@@ -71,8 +71,34 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         return rows;
     });
 
+
     /**
-     * Save (overwrite) a document by id
+     * Delete a document by id
+     * DELETE /api/state/:id
+     */
+    app.delete("/state/:id", async (request, reply) => {
+        const { id } = request.params as { id: string };
+
+        const result = await app.pg.query(
+            `
+            DELETE FROM documents
+            WHERE id = $1
+            RETURNING id
+            `,
+            [id]
+        );
+
+        if (result.rowCount === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return reply.status(204).send();
+    });
+
+
+
+    /**
+     * Save (overwrite) a document by id (ideal for updating nodes and edges)
      * PUT /api/state/:id
      *
      * This is an UPSERT:
@@ -112,6 +138,43 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         );
 
         return reply.status(200).send(rows[0]);
+    });
+
+
+    /**
+     * Update document metadata
+     * PATCH /api/state/:id
+     */
+    app.patch("/state/:id", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const body = request.body as { title?: string; description?: string | null };
+
+        const title = body.title?.trim();
+        const description =
+            body.description === undefined ? undefined : body.description;
+
+        if (title === undefined && description === undefined) {
+            return reply.status(400).send({ error: "Nothing to update" });
+        }
+
+        const { rows } = await app.pg.query(
+            `
+            UPDATE documents
+            SET
+            title = COALESCE($2, title),
+            description = COALESCE($3, description),
+            version = version + 1
+            WHERE id = $1
+            RETURNING id, title, description, version, updated_at
+            `,
+            [id, title ?? null, description ?? null]
+        );
+
+        if (rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return rows[0];
     });
 
 

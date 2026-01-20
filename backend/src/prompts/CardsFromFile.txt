@@ -8,6 +8,9 @@ Given a 'file' generated during a design study, your task is to generate a set o
     - 'requirement': a need, question, or task to be tackled
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion
+    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook)
+
+Based on the content generate at least one activity card.
 
 You will recieve a JSON describing the file as:
 
@@ -72,7 +75,9 @@ fileType = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'j
     - Location data quality appears good - suitable for geographic visualization
     - The 40 attributes provide rich multi-dimensional analysis opportunities
 
-Output a list of cards in the following JSON format:
+You should also connect all cards. The activity cards are hubs, all cards should directly or indirectly lead to an activity card. Activity cards should not be connected to each other. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
+
+Output a list of cards and connections in the following JSON format:
 
 {
     "cards": [
@@ -81,129 +86,271 @@ Output a list of cards in the following JSON format:
             title: string,
             description: string 
         }
+    ],
+    "connections": [
+        {
+            source: number,
+            target: number
+        }
     ]
 }
 
-**Example** of cards:
+**Example** of cards and connections:
 
     {
         "cards": [
             {
+                "id": 1,
                 "entity": "artifact",
                 "title": "Dataset from SF SOCRATA",
                 "description": "49768 curb ramps with 40 attributes"
             },
             {
+                "id": 2,
                 "entity": "artifact",
                 "title": "Jupyter Notebooks for EDA",
                 "description": "Exploratory data analysis in Jupyter Notebooks"
             },
             {
-                "entity": "artifact",
+                "id": 3,
+                "entity": "insight",
                 "title": "Data errors and inconsistencies",
                 "description": "Errors and inconsistencies in the curb ramps dataset"
             },
             {
-                "entity": "artifact",
-                "title": "entitys and distributions analysis",
+                "id": 4,
+                "entity": "activity",
+                "title": "Entities and distributions analysis",
                 "description": "Column types and value distributions analysis"
             },
             {
+                "id": 5,
                 "entity": "artifact",
                 "title": "Curb Ramps dataset (CRIS)",
                 "description": "San Francisco Curb Ramps dataset (~50K rows, 40 columns) from CRIS (Curb Ramp Information System)"
             },
             {
+                "id": 6,
                 "entity": "artifact",
                 "title": "Data dictionary",
                 "description": "Data dictionary from DPW to understand field definitions"
             },
             {
+                "id": 7,
                 "entity": "insight",
                 "title": "No null rows",
                 "description": "No completely null rows found in the dataset - good data quality indicator"
             },
             {
+                "id": 8,
                 "entity": "insight",
                 "title": "Current and historical data",
                 "description": "Dataset includes both current and historical data with timestamp columns"
             },
             {
+                "id": 9,
                 "entity": "insight",
                 "title": "Identified column types (40 attributes)",
                 "description": "Numerical columns: conditionScore (0-100 scale), latitude/longitude coordinates. Boolean columns: curb ramp existence flags, accessibility features (detectableSurf, colorContrast, paintedRed). Categorical columns: surface condition (surfCond), vital facilities proximity (vitalFacilities), heavy traffic exposure (heavyTraffic), curb ramp possibility (crPossible). Temporal columns: multiple timestamp fields needing standardization. Location columns: street names, intersection identifiers, curb return data"
             },
             {
+                "id": 10,
                 "entity": "requirement",
                 "title": "Missing data",
                 "description": "Missing data in various columns - need to determine how to handle (treat as zero? flag as unknown?)"
             },
             {
+                "id": 11,
                 "entity": "insight",
                 "title": "Inconsistent timestamp",
                 "description": "Inconsistent timestamp formats across different temporal columns"
             },
             {
+                "id": 12,
                 "entity": "insight",
                 "title": "NULL values",
                 "description": "Some columns with NULL values that may represent 'not applicable' vs 'missing data'"
             },
             {
+                "id": 13,
                 "entity": "requirement",
                 "title": "Validate coordinate data",
                 "description": "Need to validate coordinate data for mapping purposes"
             },
             {
+                "id": 14,
                 "entity": "insight",
                 "title": "Dark data problem",
                 "description": "Some attributes have incomplete documentation about what missing values mean"
             },
             {
+                "id": 15,
                 "entity": "requirement",
                 "title": "Data cleaning",
                 "description": "Complete data cleaning pipeline - handle nulls, standardize timestamps"
             },
             {
+                "id": 16,
                 "entity": "requirement",
                 "title": "Statistical summaries",
                 "description": "Generate statistical summaries for key numerical columns (conditionScore distribution)"
             },
             {
+                "id": 17,
                 "entity": "requirement",
                 "title": "Analyze distributions",
                 "description": "Analyze categorical distributions to understand dataset composition"
             },
             {
+                "id": 18,
                 "entity": "requirement",
                 "title": "Prepare dataset for visualization",
                 "description": "Prepare dataset for visualization tool development"
             },
             {
+                "id": 19,
                 "entity": "requirement",
                 "title": "Identify attributes for visualization",
                 "description": "Identify most interesting attributes for visualization focus based on data patterns"
             },
             {
+                "id": 20,
                 "entity": "insight",
                 "title": "Careful interpretation",
                 "description": "Dataset is comprehensive but requires careful interpretation of missing values"
             },
             {
+                "id": 21,
                 "entity": "insight",
                 "title": "Potential for time-series",
                 "description": "Temporal aspect of data (updated daily since 2012) suggests potential for time-series analysis"
             },
             {
+                "id": 22,
                 "entity": "insight",
                 "title": "Suitable for geographic visualization",
                 "description": "Location data quality appears good - suitable for geographic visualization"
             },
             {
+                "id": 23,
                 "entity": "insight",
                 "title": "Multi-dimensional analysis opportunities",
                 "description": "The 40 attributes provide rich multi-dimensional analysis opportunities"
+            },
+            {
+                "id": 24,
+                "entity": "concept",
+                "title": "Sunlight access",
+                "description": "Sunlight access is the related to the amount of shadow casted by buildings"
             }
-            
+            {
+                "id": 25,
+                "entity": "activity",
+                "title": "Weekly report (Oct 13 - 19)"
+            },
+            {
+                "id": 26,
+                "entity": "activity",
+                "title": "Exploratory Data Analysis (EDA)"
+            }
+        ],
+        "connections": [
+            {
+                "source": 1,
+                "target": 26
+            },
+            {
+                "source": 2,
+                "target": 1
+            },
+            {
+                "source": 3,
+                "target": 2
+            },
+            {
+                "source": 5,
+                "target": 26
+            },
+            {
+                "source": 6,
+                "target": 4
+            },
+            {
+                "source": 7,
+                "target": 4
+            },
+            {
+                "source": 8,
+                "target": 2
+            },
+            {
+                "source": 9,
+                "target": 4
+            },
+            {
+                "source": 10,
+                "target": 2
+            },
+            {
+                "source": 11,
+                "target": 2
+            },
+            {
+                "source": 12,
+                "target": 2
+            },
+            {
+                "source": 13,
+                "target": 25
+            },
+            {
+                "source": 14,
+                "target": 2
+            },
+            {
+                "source": 15,
+                "target": 2
+            }
+            {
+                "source": 16,
+                "target": 25
+            },
+            {
+                "source": 17,
+                "target": 25
+            },
+            {
+                "source": 18,
+                "target": 25
+            },
+            {
+                "source": 19,
+                "target": 25
+            },
+            {
+                "source": 20,
+                "target": 2
+            },
+            {
+                "source": 21,
+                "target": 2
+            },
+            {
+                "source": 21,
+                "target": 2
+            },
+            {
+                "source": 22,
+                "target": 2
+            },
+            {
+                "source": 23,
+                "target": 2
+            },
+            {
+                "source": 24,
+                "target": 25
+            }
         ]
     }
 

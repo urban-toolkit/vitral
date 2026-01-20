@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 // import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useSelector, useDispatch } from 'react-redux';
-import { setNodes, setEdges } from "@/store/flowSlice";
+import { setNodes, setEdges, setTitle } from "@/store/flowSlice";
 import { loadDocument, saveDocument } from "@/api/stateApi";
 import { debounce } from "@/utils/debounce";
 
@@ -26,13 +26,14 @@ export function useDocumentSync(projectId: string) {
         return JSON.stringify({
             nodes: flow.nodes,
             edges: flow.edges,
+            title: flow.title
         });
-    }, [flow.nodes, flow.edges]);
+    }, [flow.nodes, flow.edges, flow.title]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
         () =>
-            debounce(async (id: string, hash: string, nodes: any[], edges: any[]) => {
+            debounce(async (id: string, hash: string, nodes: any[], edges: any[], title?: string) => {
 
                 if (activeProjectIdRef.current !== id) return;
                 if (!hasLoadedRef.current) return;
@@ -43,7 +44,7 @@ export function useDocumentSync(projectId: string) {
 
                     await saveDocument(id, {
                         flow: { nodes, edges },
-                    });
+                    }, title);
 
                     lastSavedHashRef.current = hash;
                     setStatus("ready");
@@ -74,11 +75,13 @@ export function useDocumentSync(projectId: string) {
 
                 const nodes = serverFlow?.nodes ?? [];
                 const edges = serverFlow?.edges ?? [];
+                const title = doc.title ?? "Untitled";
 
                 dispatch(setNodes(nodes));
                 dispatch(setEdges(edges));
+                dispatch(setTitle(title));
 
-                lastSavedHashRef.current = JSON.stringify({ nodes, edges });
+                lastSavedHashRef.current = JSON.stringify({ nodes, edges, title });
                 hasLoadedRef.current = true;
                 setStatus("ready");
             } catch (e: any) {
@@ -103,8 +106,8 @@ export function useDocumentSync(projectId: string) {
 
         if (currentHash === lastSavedHashRef.current) return;
 
-        debouncedSave(projectId, currentHash, flow.nodes, flow.edges);
-    }, [projectId, currentHash, flow.nodes, flow.edges, status, debouncedSave]);
+        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, flow.title);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave]);
 
     return { status, error };
 }
