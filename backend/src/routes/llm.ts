@@ -1,4 +1,3 @@
-// src/routes/llm.ts
 import { FastifyPluginAsync } from "fastify";
 import OpenAI from "openai";
 import { loadPrompt } from "../prompts/loadPrompt.ts";
