@@ -177,5 +177,111 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         return rows[0];
     });
 
+    /**
+     * Link Github repo to document
+     * POST /api/state/:id/github/link
+     */
+    app.post("/state/:id/github/link", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const { owner, repo } = request.body as { owner?: string; repo?: string };
+
+        if (!owner || !repo) {
+            return reply.status(400).send({ error: "Missing owner or repo" });
+        }
+
+        // Validate repo access via GitHub API using user's OAuth token
+        const ghToken = request.cookies["gh_access_token"];
+        if (!ghToken) {
+            return reply.status(401).send({ error: "Not connected to GitHub" });
+        }
+
+        // Verify repo exists & user has access
+        const ghRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+            headers: {
+            Authorization: `Bearer ${ghToken}`,
+            Accept: "application/vnd.github+json",
+            },
+        });
+
+        if (!ghRes.ok) {
+            return reply.status(403).send({ error: "Cannot access repository" });
+        }
+
+        const ghRepo = await ghRes.json();
+
+        const { rows } = await app.pg.query(
+            `
+                UPDATE documents
+                SET
+                github_owner = $2,
+                github_repo = $3,
+                github_default_branch = $4,
+                github_linked_at = now()
+                WHERE id = $1
+                RETURNING id, github_owner, github_repo, github_default_branch
+            `,
+            [id, owner, repo, ghRepo.default_branch]
+        );
+
+        if (rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return rows[0];
+    });
+
+    /**
+     * Get linked repo to document
+     * GET /api/state/:id/github
+     */
+    app.get("/state/:id/github", async (request, reply) => {
+        const { id } = request.params as { id: string };
+
+        const { rows } = await app.pg.query(
+            `
+            SELECT github_owner, github_repo, github_default_branch, github_linked_at
+            FROM documents
+            WHERE id = $1
+            `,
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        if (!rows[0].github_owner) {
+            return reply.status(204).send();
+        }
+
+        return rows[0];
+    });
+
+    /**
+     * Remove link between document and github
+     * DELETE /api/state/:id/github/link
+     */
+    app.delete("/state/:id/github/link", async (request, reply) => {
+        const { id } = request.params as { id: string };
+
+        const { rowCount } = await app.pg.query(
+            `
+            UPDATE documents
+            SET
+            github_owner = NULL,
+            github_repo = NULL,
+            github_default_branch = NULL,
+            github_linked_at = NULL
+            WHERE id = $1
+            `,
+            [id]
+        );
+
+        if (rowCount === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return reply.status(204).send();
+    });
 
 };

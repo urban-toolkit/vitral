@@ -10,7 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "migrate": "for f in /migrations/*.sql; do psql \"$DATABASE_URL\" -f \"$f\"; done"
+    "migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

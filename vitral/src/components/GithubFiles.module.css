@@ -1,0 +1,28 @@
+.container {
+    position: fixed;
+    top: 350px;
+    right: 50px;
+    border: var(--border-style);
+    z-index: 3;
+    padding: 10px;
+    max-width: 250px;
+    background-color: white;
+}
+
+.title {
+    font-size: var(--font-size-lg);
+    font-weight: bold;
+}
+
+.container p {
+    margin-top: 0;
+}
+
+.linkButton {
+    background-color: black;
+    color: white;
+    border: none;
+    padding: 10px;
+    border-radius: 12px;
+    cursor: pointer;
+}

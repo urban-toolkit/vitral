@@ -2,13 +2,29 @@ import { FastifyPluginAsync } from "fastify";
 import crypto from "node:crypto";
 
 type TokenResponse =
-  | { access_token: string; token_type: string; scope: string }
-  | { error: string; error_description?: string; error_uri?: string };
+    | { access_token: string; token_type: string; scope: string }
+    | { error: string; error_description?: string; error_uri?: string };
+
+type GhRepo = {
+    name: string;
+    full_name: string;         
+    private: boolean;
+    owner: { login: string };
+    default_branch: string;
+    updated_at: string;
+};
 
 export const githubRoutes: FastifyPluginAsync = async (app) => {
-    app.get("/start", async (_req, reply) => {
+    app.get("/start", async (request, reply) => {
 
-        const state = crypto.randomBytes(16).toString("hex");
+        const { returnTo } = request.query as { returnTo?: string };
+
+        const statePayload = {
+            csrf: crypto.randomBytes(16).toString("hex"),
+            returnTo: returnTo ?? "/projects",
+        };
+
+        const state = Buffer.from(JSON.stringify(statePayload)).toString("base64url");
 
         reply.setCookie("gh_oauth_state", state, {
             httpOnly: true,
@@ -21,7 +37,7 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
         const params = new URLSearchParams({
             client_id: process.env.GITHUB_CLIENT_ID!,
             redirect_uri: process.env.GITHUB_CALLBACK_URL!,
-            scope: "read:user user:email",
+            scope: "read:user user:email repo",
             state
         });
 
@@ -104,8 +120,83 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
             maxAge: 7 * 24 * 60 * 60,
         });
 
+        // Decode state
+        let returnTo = "/projects";
+        try {
+            const decoded = JSON.parse(
+                Buffer.from(state, "base64url").toString("utf8")
+            );
+            if (typeof decoded.returnTo === "string") {
+                returnTo = decoded.returnTo;
+            }
+        } catch {
+            // fallback stays /projects
+        }
+
         const frontend = process.env.FRONTEND_URL ?? "http://localhost:5173";
-        reply.redirect(`${frontend}/projects?github=connected`);
+        reply.redirect(`${frontend}${returnTo}?github=connected`);
+    });
+
+    app.get("/status", async (request, reply) => {
+        const token = request.cookies["gh_access_token"];
+        if (!token) {
+            return { connected: false };
+        }
+
+        const res = await fetch("https://api.github.com/user", {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/vnd.github+json",
+            },
+        });
+
+        if (!res.ok) {
+            // Clear expired or revoked tokens
+            reply.clearCookie("gh_access_token", { path: "/" });
+            reply.clearCookie("gh_user", { path: "/" });
+            return { connected: false };
+        }
+
+        const user = await res.json();
+        return { connected: true, user: { id: user.id, login: user.login } };
+    });
+
+    app.get("/repos", async (request, reply) => {
+        const token = request.cookies["gh_access_token"];
+        if (!token) return reply.status(401).send({ error: "Not connected to GitHub" });
+
+        const params = new URLSearchParams({
+            per_page: "100",
+            sort: "updated",
+            direction: "desc",
+            // visibility: "all", // optional
+            // affiliation: "owner,collaborator,organization_member", 
+        });
+
+        const ghRes = await fetch(`https://api.github.com/user/repos?${params}`, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/vnd.github+json",
+            },
+        });
+
+        if (!ghRes.ok) {
+            const text = await ghRes.text();
+            request.log.error({ status: ghRes.status, text }, "GitHub repos fetch failed");
+            // token revoked/expired or missing scopes
+            return reply.status(502).send({ error: "Failed to fetch repos from GitHub" });
+        }
+
+        const repos = (await ghRes.json()) as GhRepo[];
+
+        return repos.map((r) => ({
+            owner: r.owner.login,
+            repo: r.name,
+            fullName: r.full_name,
+            private: r.private,
+            defaultBranch: r.default_branch,
+            updatedAt: r.updated_at,
+        }));
     });
 
 };

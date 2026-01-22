@@ -21,7 +21,7 @@
     height: 230px;
     background-color: white;
     border-radius: 15px;
-    border: 1px solid rgba(177, 177, 177, 0.589);
+    border: var(--border-style);
 }
 
 .innerCard {
@@ -38,7 +38,7 @@
     margin-top: 0;
     margin-bottom: 40px;
     padding-bottom: 20px;
-    border-bottom: 1px solid rgba(177, 177, 177, 0.589);
+    border-bottom: var(--border-style);
 }
 
 .removeIcon {

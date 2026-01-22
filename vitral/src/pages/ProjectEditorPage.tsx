@@ -18,6 +18,8 @@ import type { RootState } from '@/store';
 
 import { FreeInputZone } from '@/components/FreeInputZone';
 import { updateDocumentMeta } from '@/api/stateApi';
+import { GitHubFiles } from '@/components/GithubFiles';
+import { githubStatus } from '@/api/githubApi';
 
 const nodeTypes = {
     card: Card,
@@ -34,6 +36,7 @@ const FlowInner = () => {
 
     const [loading, setLoading] = useState(false);
     const [cursorMode, setCursorMode] = useState<'node' | 'text' | 'tree' | 'related' | ''>();
+    const [gitConnectionStatus, setGitConnectionStatus] = useState<{connected: boolean, user?: { id: number, login: string}}>({connected: false});
 
     const dispatch = useDispatch();
     const nodes = useSelector((state: RootState) => state.flow.nodes);
@@ -41,6 +44,21 @@ const FlowInner = () => {
     const title = useSelector((state: RootState) => state.flow.title);
 
     const { screenToFlowPosition } = useReactFlow();
+
+    const checkGitStatus = async () => {
+        const status = await githubStatus();
+        setGitConnectionStatus(status);
+
+        if (status.connected) {
+            console.log("Connected as", status.user.login);
+        } else {
+            console.log("Not connected");
+        }
+    }
+
+    useEffect(() => {
+        checkGitStatus();
+    }, [])
 
     useEffect(() => {
         switch(cursorMode){
@@ -90,6 +108,11 @@ const FlowInner = () => {
                 onNodeInputClicked={() => {
                     setCursorMode('');
                 }}
+            />
+
+            <GitHubFiles 
+                projectId={projectId}
+                connectionStatus={gitConnectionStatus}
             />
 
             {cursorMode == 'text'

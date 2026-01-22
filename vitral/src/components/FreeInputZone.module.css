@@ -22,7 +22,7 @@
     resize: none;
     flex: 1;
     width: 100%;
-    border: 1px solid #ccc;
+    border: var(--border-style);
     outline: none;
     padding: 10px;
     box-sizing: border-box;

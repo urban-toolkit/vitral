@@ -10,6 +10,7 @@ import classes from './ProjectsPage.module.css';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
+import { githubStatus } from '@/api/githubApi';
 
 export function ProjectsPage() {
     const navigate = useNavigate();
@@ -38,8 +39,18 @@ export function ProjectsPage() {
         });
     }
 
+    const checkGitStatus = async () => {
+        const status = await githubStatus();
+        if (status.connected) {
+            console.log("Connected as", status.user.login);
+        } else {
+            console.log("Not connected");
+        }
+    }
+
     useEffect(()=>{
         fetchDocuments();
+        checkGitStatus();
     }, []);
 
     return (

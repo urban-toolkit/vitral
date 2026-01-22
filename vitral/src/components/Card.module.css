@@ -96,13 +96,13 @@
 }
 
 .flipCardFront {
-	border: 1px solid black;
+	border: var(--border-style);
 	display: flex;
 	flex-direction: column;
 }
 
 .flipCardBack {
-	border: 1px solid black;
+	border: var(--border-style);
 	transform: rotateY(180deg);
 	color: white;
 }

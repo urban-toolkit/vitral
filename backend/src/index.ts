@@ -10,7 +10,7 @@ import dbPlugin from "./plugins/db.ts";
 
 const app = Fastify({ logger: true });
 
-await app.register(cors, { origin: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] });
+await app.register(cors, { origin: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], credentials: true });
 await app.register(dbPlugin);
 
 await app.register(cookie, {

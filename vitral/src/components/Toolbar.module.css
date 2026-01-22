@@ -8,7 +8,7 @@
     filter: drop-shadow(0px 0px 2px #e1dfdf9a);
     transform: translate(-50%, 0);
     border-radius: 12px;
-    border: 1px solid #e1dfdfbb;
+    border: var(--border-style);
     gap: 10px;
     padding-left: 5px;
     padding-right: 5px;

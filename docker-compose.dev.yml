@@ -57,6 +57,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: ./Dockerfile.dev
+    environment:
+      DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
+    depends_on:
+      - postgres
+    command: npm run migrate
+    restart: "no"
 
 volumes:
   postgres_data:
