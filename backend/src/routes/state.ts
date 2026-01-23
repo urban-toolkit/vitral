@@ -324,7 +324,6 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const url = `https://api.github.com/repos/${owner}/${repo}/contents${safePath}`;
 
-        // 3) Fetch contents from GitHub
         const ghRes = await fetch(url, {
             headers: {
                 Authorization: `Bearer ${token}`,
@@ -352,7 +351,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         // - array for directories
         // - object for single file
         const items = Array.isArray(data) ? data : [data];
-        
+
         return items.map((item: any) => ({
             name: item.name,
             path: item.path,
