@@ -198,8 +198,8 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         // Verify repo exists & user has access
         const ghRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
             headers: {
-            Authorization: `Bearer ${ghToken}`,
-            Accept: "application/vnd.github+json",
+                Authorization: `Bearer ${ghToken}`,
+                Accept: "application/vnd.github+json",
             },
         });
 
@@ -282,6 +282,84 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
 
         return reply.status(204).send();
+    });
+
+    /**
+     * Get repo contents
+     * GET /:id/github/contents
+     */
+    app.get("/state/:id/github/contents", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const { path = "" } = request.query as { path?: string };
+
+        const token = request.cookies["gh_access_token"];
+        if (!token) {
+            return reply.status(401).send({ error: "Not connected to GitHub" });
+        }
+
+        // Get linked repo from DB
+        const { rows } = await app.pg.query(
+            `
+            SELECT github_owner, github_repo
+            FROM documents
+            WHERE id = $1
+            `,
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        const { github_owner: owner, github_repo: repo } = rows[0];
+
+        if (!owner || !repo) {
+            return reply.status(400).send({ error: "No GitHub repo linked to document" });
+        }
+
+        // Build GitHub API URL
+        const safePath = path
+            ? "/" + encodeURIComponent(path).replace(/%2F/g, "/")
+            : "";
+
+        const url = `https://api.github.com/repos/${owner}/${repo}/contents${safePath}`;
+
+        // 3) Fetch contents from GitHub
+        const ghRes = await fetch(url, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/vnd.github+json",
+            },
+        });
+
+        if (!ghRes.ok) {
+            const text = await ghRes.text();
+            request.log.error(
+                { status: ghRes.status, text, owner, repo, path },
+                "GitHub contents fetch failed"
+            );
+
+            if (ghRes.status === 404) {
+                return reply.status(404).send({ error: "Path not found in repository" });
+            }
+
+            return reply.status(502).send({ error: "Failed to fetch GitHub contents" });
+        }
+
+        const data = await ghRes.json();
+
+        // GitHub returns:
+        // - array for directories
+        // - object for single file
+        const items = Array.isArray(data) ? data : [data];
+        
+        return items.map((item: any) => ({
+            name: item.name,
+            path: item.path,
+            type: item.type, // "file" | "dir"
+            size: item.size,
+            sha: item.sha,
+        }));
     });
 
 };

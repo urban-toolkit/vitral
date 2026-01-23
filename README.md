@@ -11,11 +11,3 @@
 3) Executing: docker-compose --file docker-compose.dev.yml up --watch
 
 4) And dragging any txt file into the canvas.
-
-To recreate database:
-
-docker-compose --file docker-compose.dev.yml down
-
-To run migrations (one-off):
-
-docker-compose --file docker-compose.dev.yml run --rm migrate
