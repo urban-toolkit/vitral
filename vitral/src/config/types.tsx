@@ -2,7 +2,7 @@ export type cardType = 'technical' | 'social';
 export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight';
 
 export type cardData = {
-    label: string, 
+    label: string,
     type: cardType,
     title: string,
     description?: string
@@ -12,11 +12,11 @@ export type llmCardData = {
     id: number,
     entity: string,
     title: string,
-    description?: string 
+    description?: string
 }
 
 export type llmConnectionData = {
-    source: number, 
+    source: number,
     target: number
 }
 
@@ -31,8 +31,8 @@ export type fileData = {
 
 export type nodeType = {
     id: string, // n123 or 123
-    position: {x: number, y: number}, 
-    type: string, 
+    position: { x: number, y: number },
+    type: string,
     data: cardData
 }
 

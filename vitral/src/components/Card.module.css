@@ -62,6 +62,14 @@
 	background-color: var(--technical-color-darker);
 }
 
+.backText {
+	font-size: var(--font-size-xs);
+	overflow-y: auto;
+	text-align: left;
+	padding: 5px;
+	margin: 0;
+}
+
 /* Flip animation */
 
 .flipIcon {

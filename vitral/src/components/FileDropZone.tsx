@@ -4,11 +4,12 @@ import classes from './FileDropZone.module.css'
 
 type FileDropZoneProps = {
     onFileSelected: (file: File) => void;
+    dropZoneCSS: React.CSSProperties;
     loading: boolean;
     accept?: string;
 };
 
-export function FileDropZone({ onFileSelected, loading, accept }: FileDropZoneProps) {
+export function FileDropZone({ onFileSelected, loading, accept, dropZoneCSS }: FileDropZoneProps) {
     const [isDragging, setIsDragging] = useState(false);
 
     useEffect(() => {
@@ -77,7 +78,8 @@ export function FileDropZone({ onFileSelected, loading, accept }: FileDropZonePr
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                className={`${classes.dropZone} ${isDragging ? "" : classes.inactive}`}
+                style={dropZoneCSS}
+                className={`${isDragging ? "" : classes.inactive}`}
             >
 
                 <input

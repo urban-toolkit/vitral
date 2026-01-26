@@ -40,7 +40,7 @@ export function Card(props: any) {
                         <p>{`${props.data.label[0].toUpperCase()}${props.data.label.slice(1)}`}</p>
                         <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => {setFlipped(false)}}/>
                     </div>
-                    <p>Back</p>
+                    <p className={classes.backText}>{props.data.description}</p>
                 </div>
 
             </div>

@@ -167,6 +167,19 @@ const FlowInner = () => {
 
                     setLoading(false);
                 }}
+                dropZoneCSS={{
+                    border: "2px dashed #ccc",
+                    borderRadius: "8",
+                    textAlign: "center",
+                    background: "transparent",
+                    transition: "background 0.2s ease",
+                    position: "fixed",
+                    width: "95vw",
+                    height: "95vh",
+                    margin: "5px",
+                    top: "2.5vh",
+                    left: "2.5vw"
+                }}
                 loading={loading}
                 accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
             />
