@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { useParams } from "react-router-dom";
 import { ReactFlow, useReactFlow, ReactFlowProvider } from '@xyflow/react';
@@ -7,7 +7,6 @@ import { useDocumentSync } from "@/hooks/useDocumentSync";
 
 import { Title } from '@/components/Title';
 import { Toolbar } from '@/components/Toolbar';
-import { FileDropZone } from '@/components/FileDropZone';
 import { parseFile } from '@/func/FileParser';
 import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
 import { onEdgesChange, onNodesChange, addNodes, connectEdges } from '@/store/flowSlice';
@@ -21,10 +20,6 @@ import { updateDocumentMeta } from '@/api/stateApi';
 import { GitHubFiles } from '@/components/GithubFiles';
 import { githubStatus } from '@/api/githubApi';
 import { LoadSpinner } from '@/components/LoadSpinner';
-
-const nodeTypes = {
-    card: Card,
-};
 
 const FlowInner = () => {
     const { projectId } = useParams<{ projectId: string }>();
@@ -45,6 +40,44 @@ const FlowInner = () => {
     const title = useSelector((state: RootState) => state.flow.title);
 
     const { screenToFlowPosition } = useReactFlow();
+
+    const onAttachFile = async (nodeId: string, file: File) => {
+        
+        const fe = await parseFile(file);
+
+        console.log("parse file", fe);
+
+        // TODO: Parse file
+        // TODO: POST /api/state/:docId/files
+        // TODO: Upsert into filesSlice using that fileId
+        // TODO: Attach to node (update node attachmentIds and save document)
+
+        // // 2) create on backend (dedupe)
+        // const { fileId } = await createFile(docId, {
+        //     name: fe.name,
+        //     mimeType: fe.mimeType,
+        //     sizeBytes: fe.sizeBytes,
+        //     content: fe.content,
+        //     contentKind: fe.contentKind,
+        // });
+
+        // // 3) upsert into filesSlice using backend id
+        // dispatch(addFile({ ...fe, id: fileId, documentId: docId }));
+
+        // // 4) attach to node (node.data.attachmentIds)
+        // dispatch(attachFileIdToNode({ nodeId, fileId }));
+
+        // // 5) your existing debounced flow autosave will persist the node change
+    };
+
+    const nodeTypes = useMemo(() => ({
+        card: (nodeProps: any) => (
+            <Card
+            {...nodeProps}
+            onAttachFile={onAttachFile}
+            />
+        ),
+    }), []);
 
     const checkGitStatus = async () => {
         const status = await githubStatus();
@@ -222,7 +255,7 @@ const FlowInner = () => {
                 null
             }
 
-            {/* Ghost overlay */}
+            {/* Ghost overlay for file dragging */}
             {dragActive && ghostScreen && (
                 <div
                     style={{
@@ -251,46 +284,6 @@ const FlowInner = () => {
             <LoadSpinner 
                 loading={loading}        
             />
-
-
-            {/* <FileDropZone 
-                onFileSelected={async (file: File) => {
-                    setLoading(true);
-
-                    const data: fileData = await parseFile(file);
-                    const response: {cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]} = await requestCardsLLM(data);
-
-                    console.log(response);
-
-                    if(response && response.cards){
-                        console.log("response", response);
-                        let {nodes, idMap} = llmCardsToNodes(response.cards);
-                        let edges = llmConnectionsToEdges(response.connections, idMap);
-
-                        console.log(nodes, edges, idMap);
-
-                        dispatch(addNodes(nodes));
-                        dispatch(connectEdges(edges));
-                    }
-
-                    setLoading(false);
-                }}
-                dropZoneCSS={{
-                    border: "2px dashed #ccc",
-                    borderRadius: "8",
-                    textAlign: "center",
-                    background: "transparent",
-                    transition: "background 0.2s ease",
-                    position: "fixed",
-                    width: "95vw",
-                    height: "95vh",
-                    margin: "5px",
-                    top: "2.5vh",
-                    left: "2.5vw"
-                }}
-                loading={loading}
-                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
-            /> */}
         </>
 
 }

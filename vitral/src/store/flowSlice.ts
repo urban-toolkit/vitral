@@ -1,12 +1,18 @@
-import { createSlice } from '@reduxjs/toolkit';
-import type { nodeType, edgeType } from '@/config/types';
+import { createSlice, type PayloadAction, createSelector } from '@reduxjs/toolkit';
+import type { nodeType, edgeType, fileData } from '@/config/types';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
+import type { RootState } from "@/store/rootReducer";
 
 const initialState: { nodes: nodeType[], edges: edgeType[], title: string } = {
     nodes: [],
     edges: [],
     title: "Untitled"
 };
+
+function ensureAttachmentArray(node: nodeType): string[] {
+    if (!Array.isArray(node.data.attachmentIds)) node.data.attachmentIds = [];
+    return node.data.attachmentIds;
+}
 
 const flowSlice = createSlice({
     name: 'flow',
@@ -22,7 +28,7 @@ const flowSlice = createSlice({
             state.nodes.push(action.payload);
         },
         addNodes: (state, action) => {
-            state.nodes = state.nodes.concat(action.payload); 
+            state.nodes = state.nodes.concat(action.payload);
         },
         updateNode: (state, action) => {
             const index = state.nodes.findIndex(n => n.id === action.payload.id);
@@ -52,8 +58,54 @@ const flowSlice = createSlice({
         setTitle: (state, action) => {
             state.title = action.payload;
         },
+        attachFileIdToNode: (state, action: PayloadAction<{ nodeId: string; fileId: string }>) => {
+            const { nodeId, fileId } = action.payload;
+            const node = state.nodes.find((n) => n.id === nodeId);
+            if (!node) return;
+
+            const ids = ensureAttachmentArray(node);
+            if (!ids.includes(fileId)) ids.push(fileId);
+        },
+        detachFileIdFromNode: (
+            state,
+            action: PayloadAction<{ nodeId: string; fileId: string }>
+        ) => {
+            const { nodeId, fileId } = action.payload;
+            const node = state.nodes.find((n) => n.id === nodeId);
+            if (!node) return;
+
+            const ids = ensureAttachmentArray(node);
+            node.data!.attachmentIds = ids.filter((id) => id !== fileId);
+        },
     }
 });
 
-export const { setNodes, setEdges, addNode, updateNode, removeNode, connectEdge, removeEdge, onNodesChange, onEdgesChange, addNodes, connectEdges, setTitle } = flowSlice.actions;
+export const {
+    setNodes,
+    setEdges,
+    addNode,
+    updateNode,
+    removeNode,
+    connectEdge,
+    removeEdge,
+    onNodesChange,
+    onEdgesChange,
+    addNodes,
+    connectEdges,
+    setTitle,
+    attachFileIdToNode,
+    detachFileIdFromNode
+} = flowSlice.actions;
+
 export default flowSlice.reducer;
+
+export const selectFlow = (state: RootState) => state.flow;
+export const selectNodes = createSelector(selectFlow, (flow) => flow.nodes);
+export const selectFilesById = (state: RootState) => state.files.byId as Record<string, fileData>;
+
+export const selectFilesForNode = (nodeId: string) =>
+    createSelector([selectNodes, selectFilesById], (nodes, filesById) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        const ids = node?.data?.attachmentIds ?? [];
+        return ids.map((id) => filesById[id]).filter(Boolean);
+    });

@@ -5,7 +5,8 @@ export type cardData = {
     label: string,
     type: cardType,
     title: string,
-    description?: string
+    attachmentIds?: string[];
+    description?: string;
 }
 
 export type llmCardData = {
@@ -43,14 +44,3 @@ export type edgeType = {
     source: string,
     target: string
 }
-
-export type FileEntity = {
-  id: string;
-  documentId: string;
-  name: string;
-  mimeType?: string;
-  sizeBytes?: number;
-  sha256?: string;
-  // optional: contentText only when loaded/opened
-  contentText?: string;
-};

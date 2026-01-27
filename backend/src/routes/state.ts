@@ -1,10 +1,15 @@
 import type { FastifyPluginAsync } from "fastify";
+import crypto from "node:crypto";
 
 type SaveBody = {
     title?: string;
     description?: string | null;
     state: unknown;
 };
+
+function sha256Hex(input: string): string {
+  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
+}
 
 export const stateRoutes: FastifyPluginAsync = async (app) => {
     /**
@@ -361,4 +366,110 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }));
     });
 
+    /**
+     * Create a new file for a document
+     * POST /api/state/:id/files
+     */
+    app.post("/state/:id/files", async (request, reply) => {
+        const { id } = request.params as { id: string };
+
+        const { name, mimeType, sizeBytes, content, contentKind } = request.body as {  name: string; mimeType: string; sizeBytes: number; content: string; contentKind: string };
+
+        // Dedupe key = sha256 of stored content string
+        const hash = sha256Hex(content);
+
+        const client = await app.pg.connect();
+        try {
+
+            const result = await client.query<{id: string}>(
+                `
+                INSERT INTO document_files (
+                    document_id,
+                    name,
+                    mime_type,
+                    size_bytes,
+                    sha256,
+                    content_text,
+                    created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, now())
+                ON CONFLICT (document_id, sha256)
+                DO NOTHING
+                RETURNING id
+                `,
+                [
+                    id,
+                    name,
+                    mimeType,
+                    sizeBytes,
+                    hash,
+                    content,
+                ]
+            );
+
+            const fileId = result.rows[0]?.id;
+            if (!fileId) {
+                return reply.code(500).send();
+            }
+
+            return reply.send({ fileId });
+        } finally {
+            client.release();
+        }
+    });
+
+    /**
+     * Get files from a documetn
+     * GET /api/state/:id/files
+     */
+    app.get("/state/:id/files", async (request, reply) => {
+        const { id } = request.params as { id: string };
+
+        const client = await app.pg.connect();
+
+        try {
+            const res = await client.query<{
+                id: string;
+                name: string;
+                mime_type: string | null;
+                size_bytes: number | null;
+                sha256: string | null;
+                created_at: string; 
+            }>(
+                `
+                SELECT
+                    id,
+                    name,
+                    mime_type,
+                    size_bytes,
+                    sha256,
+                    created_at
+                FROM document_files
+                WHERE document_id = $1
+                ORDER BY created_at DESC
+                `,
+                [id]
+            );
+
+            const files = res.rows.map((r: any) => {
+                const ext = r.name.includes(".")
+                    ? r.name.split(".").pop()?.toLowerCase()
+                    : undefined;
+
+                return {
+                    id: r.id,
+                    name: r.name,
+                    mimeType: r.mime_type ?? undefined,
+                    ext,
+                    sizeBytes: r.size_bytes ?? undefined,
+                    sha256: r.sha256 ?? undefined,
+                    createdAt: new Date(r.created_at).toISOString(),
+                };
+            });
+
+            return reply.send({ files });
+        } finally {
+            client.release();
+        }
+    });
 };

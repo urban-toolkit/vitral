@@ -1,3 +1,4 @@
+import type { fileData } from "@/config/types";
 
 export type FlowStatePayload = {
     flow: {
@@ -50,7 +51,7 @@ export async function loadDocuments(): Promise<DocumentResponse[]> {
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
     }
-    
+
     return res.json();
 }
 
@@ -82,7 +83,7 @@ export async function deleteDocument(docId: string) {
     }
 }
 
-export async function updateDocumentMeta(docId: string, payload: {title?: string, description?: string}) {
+export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string }) {
     const res = await fetch(`${API_BASE}/api/state/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -95,3 +96,43 @@ export async function updateDocumentMeta(docId: string, payload: {title?: string
 
     return res.json();
 }
+
+export async function createFile(docId: string, payload: {
+    name: string;
+    mimeType?: string;
+    sizeBytes?: number;
+    content: string;
+    contentKind: "text" | "base64";
+}): Promise<{ fileId: string }> {
+
+    const res = await fetch(`${API_BASE}/state/${docId}/files`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to create file");
+    }
+
+    return res.json();
+}
+
+export async function listFiles(docId: string): Promise<{ files: fileData[] }> {
+    const res = await fetch(`${API_BASE}/state/${docId}/files`, {
+        method: "GET",
+        credentials: "include",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to list files");
+    }
+
+    return res.json();
+}
+

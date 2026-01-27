@@ -7,6 +7,9 @@ import { faRepeat } from '@fortawesome/free-solid-svg-icons';
 
 import { Position, Handle } from '@xyflow/react';
 import { AttachFileZone } from './AttachFileZone';
+import { parseFile } from '@/func/FileParser';
+import type { fileData } from '@/config/types';
+import { createFile } from '@/api/stateApi';
 
 const headerColor: Record<string, string> = {
     person: "#C655BC",
@@ -36,7 +39,7 @@ export function Card(props: any) {
                     </div>
                     <div className={classes.footer}>
                         <AttachFileZone 
-                            onFileSelected={(file: File) => {console.log("File loaded", file, "Card", props.data)}}
+                            onFileSelected={(file: File) => props.onAttachFile?.(props.id, file)}
                             dropZoneCSS={{
                                 border: "2px dashed #ccc",
                                 borderRadius: "8",
