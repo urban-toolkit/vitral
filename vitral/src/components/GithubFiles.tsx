@@ -31,7 +31,6 @@ export function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
     const retrieveGithubRepos = async () => {
         const repos: GitHubRepo[] = await getGitHubRepos();
         setGithubRepos(repos);
-        console.log("Repos", repos);
     };
 
     const loadContents = async (path: string) => {

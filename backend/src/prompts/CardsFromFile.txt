@@ -14,13 +14,14 @@ Based on the content generate at least one activity card.
 
 You will recieve a JSON describing the file as:
 
-fileType = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md'
-
 {
-    "name": string,
-    "type": fileType,
+    id: string,
+    name: string,
+    ext: string,
+    sizeBytes: number,
+    mimeType: string,
     content: string,
-    lastModified: Date,
+    contentKind: "text" | "base64"
 }
 
 **Example** of text file content:

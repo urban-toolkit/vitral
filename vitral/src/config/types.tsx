@@ -20,13 +20,15 @@ export type llmConnectionData = {
     target: number
 }
 
-export type fileType = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md';
-
 export type fileData = {
+    id: string,
     name: string,
-    type: fileType,
+    ext: string,
+    sizeBytes: number,
+    mimeType: string,
     content: string,
-    lastModified: Date,
+    contentKind: "text" | "base64",
+    sha256?: string; // for dedupe
 }
 
 export type nodeType = {
@@ -41,3 +43,14 @@ export type edgeType = {
     source: string,
     target: string
 }
+
+export type FileEntity = {
+  id: string;
+  documentId: string;
+  name: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  sha256?: string;
+  // optional: contentText only when loaded/opened
+  contentText?: string;
+};

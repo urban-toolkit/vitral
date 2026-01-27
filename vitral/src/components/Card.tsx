@@ -6,6 +6,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRepeat } from '@fortawesome/free-solid-svg-icons';
 
 import { Position, Handle } from '@xyflow/react';
+import { AttachFileZone } from './AttachFileZone';
 
 const headerColor: Record<string, string> = {
     person: "#C655BC",
@@ -33,6 +34,23 @@ export function Card(props: any) {
                     <div className={classes.title}>
                         <p>{props.data.title}</p>
                     </div>
+                    <div className={classes.footer}>
+                        <AttachFileZone 
+                            onFileSelected={(file: File) => {console.log("File loaded", file, "Card", props.data)}}
+                            dropZoneCSS={{
+                                border: "2px dashed #ccc",
+                                borderRadius: "8",
+                                textAlign: "center",
+                                background: "transparent",
+                                transition: "background 0.2s ease",
+                                width: "100%",
+                                height: "100%"
+                                // margin: "5px",
+                            }}
+                            loading={false}
+                            accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
+                        />
+                    </div>
                 </div>
 
                 <div className={`${classes.flipCardBack} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>
@@ -45,8 +63,17 @@ export function Card(props: any) {
 
             </div>
 
-            <Handle type="source" position={Position.Left} />
-            <Handle type="target" position={Position.Right} />
+            {
+                props.id != undefined 
+                ? 
+                    <>
+                        <Handle type="source" position={Position.Left} />
+                        <Handle type="target" position={Position.Right} />
+                    </>
+                :
+                null
+            }
+
         </div>
     );
 }

@@ -1,4 +1,4 @@
-import type { fileData, fileType } from '@/config/types';
+import type { fileData } from '@/config/types';
 
 function readAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -9,7 +9,7 @@ function readAsDataURL(file: File): Promise<string> {
   });
 }
 
-async function readFile(file:File): Promise<{type: fileType, content: string}> {
+async function readFile(file:File): Promise<{mimeType: string, content: string, contentKind: "base64" | "text"}> {
     const ext = file.name.split(".").pop()?.toLowerCase();
     const mime = file.type;
 
@@ -18,56 +18,54 @@ async function readFile(file:File): Promise<{type: fileType, content: string}> {
     if (mime.startsWith("image/") && ext != undefined) {
         const dataUrl = await readAsDataURL(file);
         return {
-            type: ext as 'png' | 'jpg' | 'jpeg',
+            mimeType: mime,
             content: dataUrl,
+            contentKind: "base64"
         };
     }
 
-    if (ext === "json" || ext === "ipynb") {
-        const text = await file.text();
-        return {
-            type: ext,
-            content: text
-        };
-    }
+    const textExtensions = [
+        "txt",
+        "json",
+        "ipynb",
+        "csv",
+        "py",
+        "js",
+        "ts",
+        "html",
+        "css",
+        "md",
+    ];
 
-    if (ext === "csv") {
+    if (ext && textExtensions.includes(ext)) {
         return {
-            type: ext,
-            content: await file.text()
-        };
-    }
-
-    if (
-        ext === "txt" ||
-        ext === "py" ||
-        ext === "js" ||
-        ext === "ts" ||
-        ext === "html" ||
-        ext === "css" ||
-        ext === "md"
-    ) {
-        return {
-            type: ext,
-            content: await file.text()
+        mimeType: mime || "text/plain",
+        content: await file.text(),
+        contentKind: "text",
         };
     }
 
     return {
-        type: "txt",
-        content: await file.text()
+        mimeType: mime || "text/plain",
+        content: await file.text(),
+        contentKind: "text",
     };
-
 }
 
 export async function parseFile(file: File): Promise<fileData> {
-    const fileContentAndType: {type: fileType, content: string} = await readFile(file);
+    const fileContentAndType: {mimeType: string, content: string, contentKind: "base64" | "text"} = await readFile(file);
+
+    const ext = file.name.split(".").pop()?.toLowerCase() as string;
 
     const data: fileData = {
+        id: crypto.randomUUID(),
         name: file.name,
-        type: fileContentAndType.type,
+        ext,
+        sizeBytes: file.size,
+        mimeType: fileContentAndType.mimeType,
         content: fileContentAndType.content,
-        lastModified: new Date(file.lastModified)
+        contentKind: fileContentAndType.contentKind
+        // sha256: TODO: dedupe
     } 
 
     return data;

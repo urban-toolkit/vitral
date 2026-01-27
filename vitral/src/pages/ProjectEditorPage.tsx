@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { useParams } from "react-router-dom";
 import { ReactFlow, useReactFlow, ReactFlowProvider } from '@xyflow/react';
@@ -20,6 +20,7 @@ import { FreeInputZone } from '@/components/FreeInputZone';
 import { updateDocumentMeta } from '@/api/stateApi';
 import { GitHubFiles } from '@/components/GithubFiles';
 import { githubStatus } from '@/api/githubApi';
+import { LoadSpinner } from '@/components/LoadSpinner';
 
 const nodeTypes = {
     card: Card,
@@ -48,13 +49,85 @@ const FlowInner = () => {
     const checkGitStatus = async () => {
         const status = await githubStatus();
         setGitConnectionStatus(status);
-
-        if (status.connected) {
-            console.log("Connected as", status.user.login);
-        } else {
-            console.log("Not connected");
-        }
     }
+
+    // Drag + Drop functions
+
+    const [ghostScreen, setGhostScreen] = useState<{ x: number; y: number } | null>(null);
+    const [dragActive, setDragActive] = useState(false);
+
+    const isFileDrag = (dt: DataTransfer | null) => {
+        if (!dt) return false;
+        // Works well for OS drags; “Files” is the key signal.
+        return Array.from(dt.types || []).includes("Files");
+    };
+
+    const processFile = async (file:File) => {
+        setLoading(true);
+
+        const data: fileData = await parseFile(file);
+        const response: {cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]} = await requestCardsLLM(data);
+
+        console.log(response);
+
+        if(response && response.cards){
+            console.log("response", response);
+            let {nodes, idMap} = llmCardsToNodes(response.cards);
+            let edges = llmConnectionsToEdges(response.connections, idMap);
+
+            console.log(nodes, edges, idMap);
+
+            dispatch(addNodes(nodes));
+            dispatch(connectEdges(edges));
+        }
+
+        setLoading(false);
+    }
+
+    const onDragEnter = useCallback((e: React.DragEvent) => {
+        if (!isFileDrag(e.dataTransfer)) return;
+        e.preventDefault();
+        setDragActive(true);
+    }, []);
+
+    const onDragOver = useCallback(
+        (e: React.DragEvent) => {
+            if (!isFileDrag(e.dataTransfer)) return;
+
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+
+            if(!dragActive)
+                setDragActive(true);
+
+            // const files = Array.from(e.dataTransfer.files ?? []);
+            // if (files.length > 0) setGhostLabel(files[0].name);
+
+            setGhostScreen({ x: e.clientX, y: e.clientY });
+        },
+    []);
+
+    const onDragLeave = useCallback((e: React.DragEvent) => {
+        setDragActive(false);
+    }, []);
+
+    const onDrop = useCallback(
+        async (e: React.DragEvent) => {
+            if (!isFileDrag(e.dataTransfer)) return;
+            e.preventDefault();
+
+            // const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+
+            setDragActive(false);
+            setGhostScreen(null);
+
+            const files = Array.from(e.dataTransfer.files ?? []);
+            if (files.length === 0) return;
+
+            processFile(files[0]);
+        },
+    [screenToFlowPosition]);
+
 
     useEffect(() => {
         checkGitStatus();
@@ -79,6 +152,10 @@ const FlowInner = () => {
                 key={projectId}
                 nodes={nodes}
                 edges={edges}
+                onDragEnter={onDragEnter}
+                onDragOver={onDragOver}
+                onDragLeave={onDragLeave}
+                onDrop={onDrop}
                 onNodesChange={(e) => dispatch(onNodesChange(e))}
                 onEdgesChange={(e) => dispatch(onEdgesChange(e))}
                 // onConnect={onConnect}
@@ -145,7 +222,38 @@ const FlowInner = () => {
                 null
             }
 
-            <FileDropZone 
+            {/* Ghost overlay */}
+            {dragActive && ghostScreen && (
+                <div
+                    style={{
+                        position: "fixed", 
+                        left: ghostScreen.x + 12,
+                        top: ghostScreen.y + 12,
+                        transform: "translate(0, 0)",
+                        zIndex: 9999,
+                        pointerEvents: "none",
+                        opacity: "60%"
+                    }}
+                >
+                    <div>
+                        <Card
+                            data={{
+                                title: "",
+                                type: "social",
+                                label: "activity"
+                            }}
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* Load spinner */}
+            <LoadSpinner 
+                loading={loading}        
+            />
+
+
+            {/* <FileDropZone 
                 onFileSelected={async (file: File) => {
                     setLoading(true);
 
@@ -182,7 +290,7 @@ const FlowInner = () => {
                 }}
                 loading={loading}
                 accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
-            />
+            /> */}
         </>
 
 }
