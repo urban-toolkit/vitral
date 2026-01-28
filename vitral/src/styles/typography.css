@@ -6,10 +6,10 @@
   --font-size-xl: 1.5rem;    /* 24px */
   --font-size-2xl: 2rem;     /* 32px */
 
-  --social-color: #CFDBD5;
+  --social-color: rgb(125, 192, 255, 0.2);
   --social-color-darker: #8ebba2;
-  --technical-color: #F5CB5C;
-  --technical-color-darker: #d6a92e;
+  --technical-color: rgb(255, 219, 125, 0.2);
+  --technical-color-darker: rgb(214, 169, 46);
 
   --subtitle-color: rgba(0, 0, 0, 0.6);
 }

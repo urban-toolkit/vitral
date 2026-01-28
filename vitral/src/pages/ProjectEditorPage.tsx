@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { useParams } from "react-router-dom";
-import { ReactFlow, useReactFlow, ReactFlowProvider } from '@xyflow/react';
+import { ReactFlow, useReactFlow, ReactFlowProvider, Background, BackgroundVariant } from '@xyflow/react';
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
 
@@ -181,7 +181,9 @@ const FlowInner = () => {
                 // onConnect={onConnect}
                 nodeTypes={nodeTypes}
                 fitView
-            />
+            >
+                <Background color="#848484" variant={BackgroundVariant.Dots} />
+            </ReactFlow>
 
             {/* Call to action */}
             <div style={{ position: 'fixed', right: '30px', top: '30px' }}>

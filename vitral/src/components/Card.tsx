@@ -1,25 +1,47 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import classes from './Card.module.css';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRepeat } from '@fortawesome/free-solid-svg-icons';
+import { faRepeat, faPerson, faCalendar, faCube, faListCheck, faLinesLeaning, faLightbulb, type IconDefinition } from '@fortawesome/free-solid-svg-icons';
 
 import { Position, Handle } from '@xyflow/react';
 import { AttachFileZone } from './AttachFileZone';
+import { useSelector } from 'react-redux';
+import type { fileData } from '@/config/types';
+import { selectFilesForNode } from '@/store/flowSlice';
+import { FileCarousel } from '@/components/FileCarousel';
 
 const headerColor: Record<string, string> = {
-    person: "#C655BC",
-    activity: "#5E7CE2",
-    artifact: "#beac40",
-    requirement: "#B14022",
-    concept: "#54B374",
-    insight: "#528040"
+    person: "rgba(231, 174, 255, 0.70)",
+    activity: "rgb(174, 233, 255, 0.70)",
+    artifact: "rgb(255, 243, 174, 0.70)",
+    requirement: "rgb(255, 174, 174, 0.70)",
+    concept: "rgb(224, 255, 174, 0.70)",
+    insight: "rgb(174, 255, 198, 0.70)"
+}
+
+function LabelIcon({ label }: {label: string}) {
+    
+    const iconName: Record<string, IconDefinition> = {
+        person: faPerson,
+        activity: faCalendar,
+        artifact: faCube,
+        requirement: faListCheck,
+        concept: faLinesLeaning,
+        insight: faLightbulb
+    }
+
+    return (
+        <FontAwesomeIcon className={classes.flipIcon} icon={iconName[label]}/>
+    )
 }
 
 export function Card(props: any) {
 
     const [flipped, setFlipped] = useState(false);
+
+    const files: fileData[] = useSelector(useMemo(() => selectFilesForNode(props.id), [props.id])) as fileData[];
 
     return (
         <div className={`${classes.card} ${classes.flipCard}`}>
@@ -27,14 +49,16 @@ export function Card(props: any) {
             <div className={`${classes.flipCardInner} ${flipped ? classes.flipAnimation : ""}`}>
 
                 <div className={`${classes.flipCardFront} ${props.data.type == "social" ? classes.socialCard : classes.techCard}`}>
-                    <div className={classes.header} style={{backgroundColor: headerColor[props.data.label as string]}}>
+                    <div className={classes.header}>
                         <p>{`${props.data.label[0].toUpperCase()}${props.data.label.slice(1)}`}</p>
                         <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => {setFlipped(true)}}/>
                     </div>
-                    <div className={classes.title}>
-                        <p>{props.data.title}</p>
-                    </div>
-                    <div className={classes.footer}>
+                    <div className={classes.attachments}>
+                        <div className={classes.labelIcon} style={{backgroundColor: headerColor[props.data.label as string]}}>
+                            <LabelIcon
+                                label={props.data.label}
+                            />
+                        </div>
                         <AttachFileZone 
                             onFileSelected={(file: File) => props.onAttachFile?.(props.id, file)}
                             dropZoneCSS={{
@@ -50,7 +74,22 @@ export function Card(props: any) {
                             loading={false}
                             accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
                         />
+                        <FileCarousel 
+                            files={files}
+                        />
+
+                        <div className={classes.fileCarousel}>
+                            {files.map((file) => (
+                                <div className={classes.fileSlide} key={props.id+file.id}>
+                                    <p className={classes.fileName}>{file.name}</p>
+                                </div>
+                            ))}
+                        </div>
                     </div>
+                    <div className={classes.title}>
+                        <p>{props.data.title}</p>
+                    </div>
+
                 </div>
 
                 <div className={`${classes.flipCardBack} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>

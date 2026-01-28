@@ -1,0 +1,77 @@
+.carouselWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.fileCarousel {
+  display: flex;
+  gap: 12px;
+
+  overflow-x: auto;
+  overflow-y: hidden;
+
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+
+  width: 100%;
+
+  /* optional: hide scrollbar */
+  scrollbar-width: none;
+}
+.fileCarousel::-webkit-scrollbar {
+  display: none;
+}
+
+.fileSlide {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+
+  min-width: 140px;
+  padding: 8px 12px;
+
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+
+  white-space: nowrap;
+}
+
+.fileName {
+  font-size: 12px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.carouselBtn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+
+  display: grid;
+  place-items: center;
+
+  cursor: pointer;
+  user-select: none;
+}
+
+.carouselBtn.left {
+  left: 4px;
+}
+
+.carouselBtn.right {
+  right: 4px;
+}
+
+.carouselBtn:active {
+  transform: translateY(-50%) scale(0.98);
+}

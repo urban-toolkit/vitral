@@ -422,7 +422,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     });
 
     /**
-     * Get files from a documetn
+     * Get files from a document
      * GET /api/state/:id/files
      */
     app.get("/state/:id/files", async (request, reply) => {
