@@ -31,8 +31,12 @@ export const filesSlice = createSlice({
     name: "files",
     initialState,
     reducers: {
-        addFile: (state, action: PayloadAction<fileData>) => {
-            upsertOne(state, action.payload);
+        setFiles: (state, action: PayloadAction<fileData[]>) => {
+            state.byId = {};
+            state.allIds = [];
+            state.activeFileId = null;
+
+            for (const f of action.payload) upsertOne(state, f);
         },
         upsertFile: (state, action: PayloadAction<fileData>) => {
             upsertOne(state, action.payload);
@@ -86,7 +90,7 @@ export const filesSlice = createSlice({
 });
 
 export const {
-    addFile,
+    setFiles,
     upsertFile,
     upsertMany,
     removeFile,

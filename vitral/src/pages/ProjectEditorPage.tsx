@@ -9,14 +9,15 @@ import { Title } from '@/components/Title';
 import { Toolbar } from '@/components/Toolbar';
 import { parseFile } from '@/func/FileParser';
 import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
-import { onEdgesChange, onNodesChange, addNodes, connectEdges } from '@/store/flowSlice';
+import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNode } from '@/store/flowSlice';
+import { upsertFile } from '@/store/filesSlice';
 import { Card } from '@/components/Card';
 
 import type { fileData } from '@/config/types';
 import type { RootState } from '@/store';
 
 import { FreeInputZone } from '@/components/FreeInputZone';
-import { updateDocumentMeta } from '@/api/stateApi';
+import { createFile, updateDocumentMeta } from '@/api/stateApi';
 import { GitHubFiles } from '@/components/GithubFiles';
 import { githubStatus } from '@/api/githubApi';
 import { LoadSpinner } from '@/components/LoadSpinner';
@@ -43,31 +44,17 @@ const FlowInner = () => {
 
     const onAttachFile = async (nodeId: string, file: File) => {
         
-        const fe = await parseFile(file);
+        const res = await parseFile(file);
 
-        console.log("parse file", fe);
+        const {id, name, mimeType, sizeBytes, content, ...rest} = res;
 
-        // TODO: Parse file
-        // TODO: POST /api/state/:docId/files
-        // TODO: Upsert into filesSlice using that fileId
-        // TODO: Attach to node (update node attachmentIds and save document)
+        const { fileId } = await createFile(projectId, {id, name, mimeType, sizeBytes, content});
 
-        // // 2) create on backend (dedupe)
-        // const { fileId } = await createFile(docId, {
-        //     name: fe.name,
-        //     mimeType: fe.mimeType,
-        //     sizeBytes: fe.sizeBytes,
-        //     content: fe.content,
-        //     contentKind: fe.contentKind,
-        // });
+        // The fileId from the DB is the source of truth (there is where dedupe is happening).
+        dispatch(upsertFile({id: fileId, name, mimeType, sizeBytes, content, ...rest}));
 
-        // // 3) upsert into filesSlice using backend id
-        // dispatch(addFile({ ...fe, id: fileId, documentId: docId }));
-
-        // // 4) attach to node (node.data.attachmentIds)
-        // dispatch(attachFileIdToNode({ nodeId, fileId }));
-
-        // // 5) your existing debounced flow autosave will persist the node change
+        dispatch(attachFileIdToNode({nodeId, fileId}));
+        
     };
 
     const nodeTypes = useMemo(() => ({

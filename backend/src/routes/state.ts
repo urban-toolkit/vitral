@@ -368,12 +368,12 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
     /**
      * Create a new file for a document
-     * POST /api/state/:id/files
+     * POST /api/state/:docId/files
      */
-    app.post("/state/:id/files", async (request, reply) => {
-        const { id } = request.params as { id: string };
+    app.post("/state/:docId/files", async (request, reply) => {
+        const { docId } = request.params as { docId: string };
 
-        const { name, mimeType, sizeBytes, content, contentKind } = request.body as {  name: string; mimeType: string; sizeBytes: number; content: string; contentKind: string };
+        const { id, name, mimeType, sizeBytes, content } = request.body as { id: string, name: string; mimeType: string; sizeBytes: number; content: string };
 
         // Dedupe key = sha256 of stored content string
         const hash = sha256Hex(content);
@@ -384,6 +384,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             const result = await client.query<{id: string}>(
                 `
                 INSERT INTO document_files (
+                    id,
                     document_id,
                     name,
                     mime_type,
@@ -392,13 +393,15 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     content_text,
                     created_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, now())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, now())
                 ON CONFLICT (document_id, sha256)
-                DO NOTHING
+                DO UPDATE SET
+                    name = document_files.name
                 RETURNING id
                 `,
                 [
                     id,
+                    docId,
                     name,
                     mimeType,
                     sizeBytes,

@@ -1,0 +1,1 @@
+ALTER TABLE document_files ADD CONSTRAINT dedupe_files UNIQUE (document_id, sha256);

@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useSelector, useDispatch } from 'react-redux';
 import { setNodes, setEdges, setTitle } from "@/store/flowSlice";
-import { loadDocument, saveDocument } from "@/api/stateApi";
+import { listFiles, loadDocument, saveDocument } from "@/api/stateApi";
 import { debounce } from "@/utils/debounce";
 
 import type { RootState } from '@/store';
+import { setFiles } from "@/store/filesSlice";
 
 type SyncStatus = "idle" | "loading" | "saving" | "error" | "ready";
 
@@ -80,6 +81,10 @@ export function useDocumentSync(projectId: string) {
                 dispatch(setNodes(nodes));
                 dispatch(setEdges(edges));
                 dispatch(setTitle(title));
+
+                const { files } = await listFiles(projectId);
+
+                dispatch(setFiles(files));
 
                 lastSavedHashRef.current = JSON.stringify({ nodes, edges, title });
                 hasLoadedRef.current = true;

@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS document_files (
   ext TEXT,
 
   content_text TEXT,       -- for text/json/csv/code/md/ipynb
-  content_base64 TEXT,     -- for images/binary
  
   size_bytes INTEGER,
   sha256 TEXT,             -- dedupe + integrity

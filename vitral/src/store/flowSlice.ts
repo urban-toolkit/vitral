@@ -66,10 +66,7 @@ const flowSlice = createSlice({
             const ids = ensureAttachmentArray(node);
             if (!ids.includes(fileId)) ids.push(fileId);
         },
-        detachFileIdFromNode: (
-            state,
-            action: PayloadAction<{ nodeId: string; fileId: string }>
-        ) => {
+        detachFileIdFromNode: (state, action: PayloadAction<{ nodeId: string; fileId: string }>) => {
             const { nodeId, fileId } = action.payload;
             const node = state.nodes.find((n) => n.id === nodeId);
             if (!node) return;

@@ -98,14 +98,14 @@ export async function updateDocumentMeta(docId: string, payload: { title?: strin
 }
 
 export async function createFile(docId: string, payload: {
+    id: string;
     name: string;
     mimeType?: string;
     sizeBytes?: number;
     content: string;
-    contentKind: "text" | "base64";
 }): Promise<{ fileId: string }> {
 
-    const res = await fetch(`${API_BASE}/state/${docId}/files`, {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/files`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -123,7 +123,7 @@ export async function createFile(docId: string, payload: {
 }
 
 export async function listFiles(docId: string): Promise<{ files: fileData[] }> {
-    const res = await fetch(`${API_BASE}/state/${docId}/files`, {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/files`, {
         method: "GET",
         credentials: "include",
     });
