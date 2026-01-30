@@ -56,11 +56,13 @@ export function FileCarousel({ files, children }: { files: fileData[], children?
                 {children ? <div className={classes.fileSlide}>{children}</div> : null}
 
                 {files.map((file) => (
-                    <div className={classes.fileSlide} >
-                        {/* <FontAwesomeIcon className={classes.flipIcon} icon={extToIcon(file.ext)} />
-                        <p className={classes.fileName}>
-                            {file.name}
-                        </p> */}
+                    <div className={classes.fileSlide} key={file.id}>
+                        <div className={classes.fileDescription}>
+                            <FontAwesomeIcon className={classes.flipIcon} icon={extToIcon(file.ext)} />
+                            <p className={classes.fileName}>
+                                {file.name}
+                            </p>
+                        </div>
                         <FilePreview
                             file={file}
                             key={file.id}

@@ -30,6 +30,8 @@
 
     width: 100%;
 
+    position: relative;
+
     background: rgba(0, 0, 0, 0.06);
     padding: 5px;
     display: flex;
@@ -45,6 +47,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
+}
+
+.fileDescription {
+    display: flex;
+    overflow-x: auto;
+    width: 150px;
+    position: absolute;
+    left: 1px;
+    bottom: 1px;
+    background-color: white;
+    border-radius: 5px;
+    z-index: 2;
+    align-items: center;
 }
 
 .carouselBtn {

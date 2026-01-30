@@ -1,11 +1,9 @@
 .outerModal {
     position: fixed;
-    /* inset: 0; */
     z-index: 100000;
     left: 220px;
     top: 0;
-    /* display: grid; */
-    /* place-items: center; */
+    border: 1px solid rgba(255, 255, 255, 0.39);
 }
 
 .innerModal {
