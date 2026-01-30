@@ -9,7 +9,7 @@ function readAsDataURL(file: File): Promise<string> {
   });
 }
 
-async function readFile(file:File): Promise<{mimeType: string, content: string, contentKind: "base64" | "text"}> {
+async function readFile(file:File): Promise<{mimeType: string, content: string}> {
     const ext = file.name.split(".").pop()?.toLowerCase();
     const mime = file.type;
 
@@ -19,8 +19,7 @@ async function readFile(file:File): Promise<{mimeType: string, content: string, 
         const dataUrl = await readAsDataURL(file);
         return {
             mimeType: mime,
-            content: dataUrl,
-            contentKind: "base64"
+            content: dataUrl
         };
     }
 
@@ -39,21 +38,19 @@ async function readFile(file:File): Promise<{mimeType: string, content: string, 
 
     if (ext && textExtensions.includes(ext)) {
         return {
-        mimeType: mime || "text/plain",
-        content: await file.text(),
-        contentKind: "text",
+            mimeType: mime || "text/plain",
+            content: await file.text()
         };
     }
 
     return {
         mimeType: mime || "text/plain",
-        content: await file.text(),
-        contentKind: "text",
+        content: await file.text()
     };
 }
 
 export async function parseFile(file: File): Promise<fileData> {
-    const fileContentAndType: {mimeType: string, content: string, contentKind: "base64" | "text"} = await readFile(file);
+    const fileContentAndType: {mimeType: string, content: string} = await readFile(file);
 
     const ext = file.name.split(".").pop()?.toLowerCase() as string;
 
@@ -64,7 +61,6 @@ export async function parseFile(file: File): Promise<fileData> {
         sizeBytes: file.size,
         mimeType: fileContentAndType.mimeType,
         content: fileContentAndType.content,
-        contentKind: fileContentAndType.contentKind
         // sha256: TODO: dedupe
     } 
 

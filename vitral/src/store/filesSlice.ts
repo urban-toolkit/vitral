@@ -62,18 +62,16 @@ export const filesSlice = createSlice({
             action: PayloadAction<{
                 fileId: string;
                 content: string;
-                contentKind?: "text" | "base64";
                 mimeType?: string;
                 sizeBytes?: number;
                 sha256?: string;
             }>
         ) => {
-            const { fileId, content, contentKind, mimeType, sizeBytes, sha256 } = action.payload;
+            const { fileId, content, mimeType, sizeBytes, sha256 } = action.payload;
             const f = state.byId[fileId];
             if (!f) return;
 
             f.content = content;
-            if (contentKind) f.contentKind = contentKind;
             if (mimeType !== undefined) f.mimeType = mimeType;
             if (sizeBytes !== undefined) f.sizeBytes = sizeBytes;
             if (sha256 !== undefined) f.sha256 = sha256;

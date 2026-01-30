@@ -21,7 +21,6 @@ You will recieve a JSON describing the file as:
     sizeBytes: number,
     mimeType: string,
     content: string,
-    contentKind: "text" | "base64"
 }
 
 **Example** of text file content:

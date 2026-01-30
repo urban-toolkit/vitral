@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import classes from './Card.module.css';
 
@@ -7,9 +7,9 @@ import { faRepeat, faPerson, faCalendar, faCube, faListCheck, faLinesLeaning, fa
 
 import { Position, Handle } from '@xyflow/react';
 import { AttachFileZone } from './AttachFileZone';
-import { useSelector } from 'react-redux';
+import { shallowEqual, useSelector } from 'react-redux';
 import type { fileData } from '@/config/types';
-import { selectFilesForNode } from '@/store/flowSlice';
+import { makeSelectFilesForNode } from '@/store/flowSlice';
 import { FileCarousel } from '@/components/FileCarousel';
 
 const headerColor: Record<string, string> = {
@@ -21,17 +21,16 @@ const headerColor: Record<string, string> = {
     insight: "rgb(174, 255, 198, 0.70)"
 }
 
-function LabelIcon({ label }: {label: string}) {
-    
-    const iconName: Record<string, IconDefinition> = {
-        person: faPerson,
-        activity: faCalendar,
-        artifact: faCube,
-        requirement: faListCheck,
-        concept: faLinesLeaning,
-        insight: faLightbulb
-    }
+const iconName: Record<string, IconDefinition> = {
+    person: faPerson,
+    activity: faCalendar,
+    artifact: faCube,
+    requirement: faListCheck,
+    concept: faLinesLeaning,
+    insight: faLightbulb
+}
 
+function LabelIcon({ label }: {label: string}) {
     return (
         <FontAwesomeIcon className={classes.flipIcon} icon={iconName[label]}/>
     )
@@ -41,7 +40,25 @@ export function Card(props: any) {
 
     const [flipped, setFlipped] = useState(false);
 
-    const files: fileData[] = useSelector(useMemo(() => selectFilesForNode(props.id), [props.id])) as fileData[];
+    const selectFiles = useMemo(
+        () => makeSelectFilesForNode(props.id),
+        [props.id]
+    );
+
+    const files: fileData[] = useSelector(selectFiles, shallowEqual);
+
+    const dropZoneCSS = useMemo<React.CSSProperties>(() => ({
+        border: "2px dashed #ccc",
+        borderRadius: "8",
+        textAlign: "center",
+        background: "transparent",
+        transition: "background 0.2s ease",
+        flex: "1" 
+    }), []);
+
+    const handleFileSelected = useCallback((file: File) => {
+        props.onAttachFile?.(props.id, file);
+    }, [props.onAttachFile, props.id]);
 
     return (
         <div className={`${classes.card} ${classes.flipCard}`}>
@@ -59,32 +76,17 @@ export function Card(props: any) {
                                 label={props.data.label}
                             />
                         </div>
-                        <AttachFileZone 
-                            onFileSelected={(file: File) => props.onAttachFile?.(props.id, file)}
-                            dropZoneCSS={{
-                                border: "2px dashed #ccc",
-                                borderRadius: "8",
-                                textAlign: "center",
-                                background: "transparent",
-                                transition: "background 0.2s ease",
-                                width: "100%",
-                                height: "100%"
-                                // margin: "5px",
-                            }}
-                            loading={false}
-                            accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
-                        />
+
                         <FileCarousel 
                             files={files}
-                        />
-
-                        <div className={classes.fileCarousel}>
-                            {files.map((file) => (
-                                <div className={classes.fileSlide} key={props.id+file.id}>
-                                    <p className={classes.fileName}>{file.name}</p>
-                                </div>
-                            ))}
-                        </div>
+                        >
+                            <AttachFileZone 
+                                onFileSelected={handleFileSelected}
+                                dropZoneCSS={dropZoneCSS}
+                                loading={false}
+                                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
+                            />
+                        </FileCarousel>
                     </div>
                     <div className={classes.title}>
                         <p>{props.data.title}</p>

@@ -1,43 +1,58 @@
 import type { fileData } from "@/config/types";
 import { useRef } from "react";
+import classes from './FileCarousel.module.css';
+import { FilePreview } from "./FilePreview";
 
-export function FileCarousel({ files }: { files: fileData[] }) {
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
+export function FileCarousel({ files, children }: { files: fileData[], children?: React.ReactNode }) {
+    const scrollerRef = useRef<HTMLDivElement | null>(null);
 
-  const scrollBySlides = (dir: -1 | 1) => {
-    const el = scrollerRef.current;
-    if (!el) return;
+    const scrollBySlides = (dir: -1 | 1) => {
+        const el = scrollerRef.current;
+        if (!el) return;
 
-    el.scrollBy({ left: dir * 180, behavior: "smooth" });
-  };
+        const slideWidth = el.clientWidth;
+        const currentIndex = Math.round(el.scrollLeft / slideWidth);
+        const slideCount = el.children.length;
+        const nextIndex = Math.min(slideCount - 1, Math.max(0, currentIndex + dir));
 
-  return (
-    <div className="carouselWrap">
-      <button
-        type="button"
-        className="carouselBtn left"
-        onClick={() => scrollBySlides(-1)}
-        aria-label="Scroll left"
-      >
-        ‹
-      </button>
+        el.scrollTo({
+            left: nextIndex * slideWidth,
+            behavior: "smooth",
+        });
+    };
 
-      <div className="fileCarousel" ref={scrollerRef}>
-        {files.map((file) => (
-          <div className="fileSlide" key={file.id}>
-            <p className="fileName">{file.name}</p>
-          </div>
-        ))}
-      </div>
+    return (
+        <div className={classes.carouselWrap}>
+            <button
+                type="button"
+                className={`${classes.carouselBtn} ${classes.carouselBtnLeft}`}
+                onClick={() => scrollBySlides(-1)}
+                aria-label="Scroll left"
+            >
+                ‹
+            </button>
 
-      <button
-        type="button"
-        className="carouselBtn right"
-        onClick={() => scrollBySlides(1)}
-        aria-label="Scroll right"
-      >
-        ›
-      </button>
-    </div>
-  );
+            <div className={classes.fileCarousel} ref={scrollerRef}>
+                {files.map((file) => (
+                    <div className={classes.fileSlide} key={file.id}>
+                        {/* <p className={classes.fileName}>{file.name}</p> */}
+                        <FilePreview
+                            file={file}
+                        />
+                    </div>
+                ))}
+
+                {children ? <div className={classes.fileSlide}>{children}</div> : null}
+            </div>
+
+            <button
+                type="button"
+                className={`${classes.carouselBtn} ${classes.carouselBtnRight}`}
+                onClick={() => scrollBySlides(1)}
+                aria-label="Scroll right"
+            >
+                ›
+            </button>
+        </div>
+    );
 }

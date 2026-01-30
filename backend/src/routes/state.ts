@@ -434,6 +434,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             const res = await client.query<{
                 id: string;
                 name: string;
+                content: string;
                 mime_type: string | null;
                 size_bytes: number | null;
                 sha256: string | null;
@@ -443,6 +444,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 SELECT
                     id,
                     name,
+                    content_text,
                     mime_type,
                     size_bytes,
                     sha256,
@@ -462,6 +464,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 return {
                     id: r.id,
                     name: r.name,
+                    content: r.content_text,
                     mimeType: r.mime_type ?? undefined,
                     ext,
                     sizeBytes: r.size_bytes ?? undefined,

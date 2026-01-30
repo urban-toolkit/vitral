@@ -3,6 +3,9 @@ import type { nodeType, edgeType, fileData } from '@/config/types';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { RootState } from "@/store/rootReducer";
 
+const EMPTY_IDS: string[] = [];
+const EMPTY_BY_ID: Record<string, fileData> = {};
+
 const initialState: { nodes: nodeType[], edges: edgeType[], title: string } = {
     nodes: [],
     edges: [],
@@ -98,11 +101,34 @@ export default flowSlice.reducer;
 
 export const selectFlow = (state: RootState) => state.flow;
 export const selectNodes = createSelector(selectFlow, (flow) => flow.nodes);
-export const selectFilesById = (state: RootState) => state.files.byId as Record<string, fileData>;
+// export const selectFilesById = (state: RootState) => state.files.byId as Record<string, fileData>;
+// export const selectFilesById = createSelector(
+//   (state: RootState) => state.files.byId,
+//   (byId) => byId
+// );
+export const selectFilesById = (state: RootState) =>
+  (state.files.byId ?? EMPTY_BY_ID) as Record<string, fileData>;
 
-export const selectFilesForNode = (nodeId: string) =>
-    createSelector([selectNodes, selectFilesById], (nodes, filesById) => {
-        const node = nodes.find((n) => n.id === nodeId);
-        const ids = node?.data?.attachmentIds ?? [];
-        return ids.map((id) => filesById[id]).filter(Boolean);
-    });
+
+// export const selectFilesForNode = (nodeId: string) =>
+//     createSelector([selectNodes, selectFilesById], (nodes, filesById) => {
+//         const node = nodes.find((n) => n.id === nodeId);
+//         const ids = node?.data?.attachmentIds ?? [];
+//         return ids.map((id) => filesById[id]).filter(Boolean);
+//     });
+
+// const selectAttachmentIdsForNode = (state: RootState, nodeId: string) => {
+//   const node = selectNodes(state).find(n => n.id === nodeId);
+//   return node?.data?.attachmentIds ?? [];
+// };
+
+const selectAttachmentIdsForNode = (state: RootState, nodeId: string) => {
+  const node = selectNodes(state).find(n => n.id === nodeId);
+  return node?.data?.attachmentIds ?? EMPTY_IDS;
+};
+
+export const makeSelectFilesForNode = (nodeId: string) =>
+  createSelector(
+    [ (state) => selectAttachmentIdsForNode(state, nodeId), selectFilesById ],
+    (ids, filesById) => ids.map(id => filesById[id]).filter(Boolean)
+  );

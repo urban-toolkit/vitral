@@ -28,7 +28,6 @@ export type fileData = {
     sizeBytes: number,
     mimeType: string,
     content: string,
-    contentKind: "text" | "base64",
     sha256?: string; // for dedupe
 }
 

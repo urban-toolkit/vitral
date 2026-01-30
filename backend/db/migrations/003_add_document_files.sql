@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS document_files (
   mime_type TEXT,
   ext TEXT,
 
-  content_text TEXT,       -- for text/json/csv/code/md/ipynb
+  content_text TEXT,       
  
   size_bytes INTEGER,
   sha256 TEXT,             -- dedupe + integrity
