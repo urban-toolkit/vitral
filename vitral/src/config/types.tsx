@@ -1,6 +1,8 @@
 export type cardType = 'technical' | 'social';
 export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight';
 
+export type fileExtension = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md';
+
 export type cardData = {
     label: string,
     type: cardType,
@@ -24,7 +26,7 @@ export type llmConnectionData = {
 export type fileData = {
     id: string,
     name: string,
-    ext: string,
+    ext: fileExtension,
     sizeBytes: number,
     mimeType: string,
     content: string,

@@ -1,0 +1,34 @@
+.outerPreview {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border-radius: 10px;
+    cursor: zoom-in;
+    background: rgba(0,0,0,0.03);
+}
+
+.outerPreview:hover {
+    opacity: 70%;
+}
+
+.img {
+    width: 100%; 
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.outerMarkdown {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+.outerSyntaxHighlighter {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+}
+

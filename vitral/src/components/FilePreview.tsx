@@ -13,6 +13,9 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { NotebookRenderer } from "@/components/NotebookRenderer";
 
+import classes from './FilePreview.module.css';
+import FileModal from "@/components/FileModal";
+
 // react-pdf worker 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
     "pdfjs-dist/build/pdf.worker.min.js",
@@ -25,6 +28,14 @@ type FilePreviewProps = {
 
 const EMPTY_STR = "";
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
+
+const CustomCSSSynHigh: React.CSSProperties = {
+    margin: 0,
+    width: "100%",
+    minHeight: "100%",
+    minWidth: 0,
+    boxSizing: "border-box",
+}
 
 function normalizeExt(ext: string) {
     const e = (ext || "").toLowerCase().replace(/^\./, "");
@@ -57,111 +68,6 @@ function getRenderableUrl(file: fileData): string | undefined {
     }
 
     return undefined;
-}
-
-function Modal({
-    open,
-    onClose,
-    title,
-    children,
-}: {
-    open: boolean;
-    onClose: () => void;
-    title?: string;
-    children: React.ReactNode;
-}) {
-    useEffect(() => {
-        if (!open) return;
-        const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === "Escape") onClose();
-        };
-        window.addEventListener("keydown", onKeyDown);
-        return () => window.removeEventListener("keydown", onKeyDown);
-    }, [open, onClose]);
-
-    if (!open) return null;
-
-    return (
-        <div
-            role="dialog"
-            aria-modal="true"
-            onMouseDown={onClose}
-            style={{
-                position: "fixed",
-                inset: 0,
-                zIndex: 100000,
-                background: "rgba(0,0,0,0.55)",
-                display: "grid",
-                placeItems: "center",
-                padding: 16,
-            }}
-        >
-            <div
-                onMouseDown={(e) => e.stopPropagation()}
-                style={{
-                    width: "min(1100px, 95vw)",
-                    height: "min(900px, 92vh)",
-                    background: "white",
-                    borderRadius: 14,
-                    boxShadow: "0 18px 60px rgba(0,0,0,0.35)",
-                    display: "flex",
-                    flexDirection: "column",
-                    overflow: "hidden",
-                }}
-            >
-                <div
-                    style={{
-                        flex: "0 0 auto",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 12,
-                        padding: "10px 12px",
-                        borderBottom: "1px solid rgba(0,0,0,0.10)",
-                    }}
-                >
-                    <div
-                        style={{
-                            fontSize: 13,
-                            fontWeight: 600,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                        }}
-                        title={title}
-                    >
-                        {title ?? "Preview"}
-                    </div>
-
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        style={{
-                            border: "1px solid rgba(0,0,0,0.15)",
-                            background: "rgba(255,255,255,0.9)",
-                            borderRadius: 10,
-                            padding: "6px 10px",
-                            cursor: "pointer",
-                            fontSize: 12,
-                            fontWeight: 600,
-                        }}
-                    >
-                        Close
-                    </button>
-                </div>
-
-                <div
-                    style={{
-                        flex: "1 1 auto",
-                        overflow: "auto",
-                        padding: 14,
-                    }}
-                >
-                    {children}
-                </div>
-            </div>
-        </div>
-    );
 }
 
 export function FilePreview({ file }: FilePreviewProps) {
@@ -217,54 +123,47 @@ export function FilePreview({ file }: FilePreviewProps) {
     const PreviewInner = useMemo(() => {
         // PNG / Images
         if (isImage) {
-            if (!renderUrl) {
-                return (
-                    <div style={{ padding: 10, fontSize: 12 }}>
-                        Image preview needs <code>contentKind: "base64"</code> (or pass <code>url</code>).
-                    </div>
-                );
-            }
             return (
                 <img
                     src={renderUrl}
                     alt={file.name}
-                    style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                    className={classes.img}
                 />
             );
         }
 
-        // PDF
-        if (isPdf) {
-            if (!renderUrl) {
-                return (
-                    <div style={{ padding: 10, fontSize: 12 }}>
-                        PDF preview needs <code>contentKind: "base64"</code> (or pass <code>url</code>).
-                    </div>
-                );
-            }
-            return (
-                <div style={{ width: "100%", height: "100%", overflow: "hidden" }}>
-                    <Document
-                        file={renderUrl}
-                        onLoadSuccess={(info) => setPdfNumPages(info.numPages)}
-                        loading={<div style={{ padding: 10, fontSize: 12 }}>Loading PDF…</div>}
-                        error={<div style={{ padding: 10, fontSize: 12 }}>Could not load PDF.</div>}
-                    >
-                        <Page
-                            pageNumber={1}
-                            width={containerWidth ? Math.floor(containerWidth) : undefined}
-                            renderTextLayer={false}
-                            renderAnnotationLayer={false}
-                        />
-                    </Document>
-                </div>
-            );
-        }
+        // // PDF
+        // if (isPdf) {
+        //     if (!renderUrl) {
+        //         return (
+        //             <div style={{ padding: 10, fontSize: 12 }}>
+        //                 PDF preview needs <code>contentKind: "base64"</code> (or pass <code>url</code>).
+        //             </div>
+        //         );
+        //     }
+        //     return (
+        //         <div style={{ width: "100%", height: "100%", overflow: "hidden" }}>
+        //             <Document
+        //                 file={renderUrl}
+        //                 onLoadSuccess={(info) => setPdfNumPages(info.numPages)}
+        //                 loading={<div style={{ padding: 10, fontSize: 12 }}>Loading PDF…</div>}
+        //                 error={<div style={{ padding: 10, fontSize: 12 }}>Could not load PDF.</div>}
+        //             >
+        //                 <Page
+        //                     pageNumber={1}
+        //                     width={containerWidth ? Math.floor(containerWidth) : undefined}
+        //                     renderTextLayer={false}
+        //                     renderAnnotationLayer={false}
+        //                 />
+        //             </Document>
+        //         </div>
+        //     );
+        // }
 
         // Markdown
         if (isMarkdown) {
             return (
-                <div style={{ width: "100%", height: "100%", overflow: "auto", padding: 10, boxSizing: "border-box" }}>
+                <div className={classes.outerMarkdown}>
                     <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
@@ -273,7 +172,12 @@ export function FilePreview({ file }: FilePreviewProps) {
                                 const codeLang = match?.[1] ?? "text";
 
                                 return (
-                                    <SyntaxHighlighter style={oneDark} language={codeLang}>
+                                    <SyntaxHighlighter 
+                                        style={oneDark} 
+                                        language={codeLang} 
+                                        wrapLongLines={true} 
+                                        customStyle={CustomCSSSynHigh}
+                                    >
                                         {String(children).replace(/\n$/, "")}
                                     </SyntaxHighlighter>
                                 );
@@ -286,33 +190,29 @@ export function FilePreview({ file }: FilePreviewProps) {
             );
         }
 
-        // Jupyter Notebook
-        if (isIpynb) {
-            if (!notebookJson) {
-                return (
-                    <div style={{ padding: 10, fontSize: 12 }}>
-                        Notebook preview expects JSON text (<code>contentKind: "text"</code>). If you store notebooks as base64, decode upstream.
-                    </div>
-                );
-            }
-            return (
-                <div style={{ width: "100%", height: "100%", overflow: "auto" }}>
-                    <NotebookRenderer ipynb={notebookJson} compact={false} />
-                </div>
-            );
-        }
+        // // Jupyter Notebook
+        // if (isIpynb) {
+        //     if (!notebookJson) {
+        //         return (
+        //             <div style={{ padding: 10, fontSize: 12 }}>
+        //                 Notebook preview expects JSON text (<code>contentKind: "text"</code>). If you store notebooks as base64, decode upstream.
+        //             </div>
+        //         );
+        //     }
+        //     return (
+        //         <div style={{ width: "100%", height: "100%", overflow: "auto" }}>
+        //             <NotebookRenderer ipynb={notebookJson} compact={false} />
+        //         </div>
+        //     );
+        // }
 
         return (
-            <div style={{ width: "100%", height: "100%", overflow: "auto" }}>
+            <div className={classes.outerSyntaxHighlighter}>
                 <SyntaxHighlighter
                     language={lang}
                     style={oneDark}
-                    customStyle={{
-                        margin: 0,
-                        width: "100%",
-                        minHeight: "100%",
-                        boxSizing: "border-box",
-                    }}
+                    wrapLongLines={true}
+                    customStyle={CustomCSSSynHigh}
                 >
                     {textContent || EMPTY_STR}
                 </SyntaxHighlighter>
@@ -332,38 +232,38 @@ export function FilePreview({ file }: FilePreviewProps) {
             );
         }
 
-        // PDF: render all pages
-        if (isPdf) {
-            if (!renderUrl) {
-                return (
-                    <div style={{ fontSize: 12 }}>
-                        PDF preview needs <code>contentKind: "base64"</code> (or pass <code>url</code>).
-                    </div>
-                );
-            }
+        // // PDF: render all pages
+        // if (isPdf) {
+        //     if (!renderUrl) {
+        //         return (
+        //             <div style={{ fontSize: 12 }}>
+        //                 PDF preview needs <code>contentKind: "base64"</code> (or pass <code>url</code>).
+        //             </div>
+        //         );
+        //     }
 
-            const modalPageWidth = clamp(Math.floor(window.innerWidth * 0.8), 520, 1000);
+        //     const modalPageWidth = clamp(Math.floor(window.innerWidth * 0.8), 520, 1000);
 
-            return (
-                <Document
-                    file={renderUrl}
-                    onLoadSuccess={(info) => setPdfNumPages(info.numPages)}
-                    loading={<div style={{ fontSize: 12 }}>Loading PDF…</div>}
-                    error={<div style={{ fontSize: 12 }}>Could not load PDF.</div>}
-                >
-                    {Array.from({ length: pdfNumPages || 0 }, (_, i) => (
-                        <div key={i} style={{ marginBottom: 12 }}>
-                            <Page
-                                pageNumber={i + 1}
-                                width={modalPageWidth}
-                                renderTextLayer={false}
-                                renderAnnotationLayer={false}
-                            />
-                        </div>
-                    ))}
-                </Document>
-            );
-        }
+        //     return (
+        //         <Document
+        //             file={renderUrl}
+        //             onLoadSuccess={(info) => setPdfNumPages(info.numPages)}
+        //             loading={<div style={{ fontSize: 12 }}>Loading PDF…</div>}
+        //             error={<div style={{ fontSize: 12 }}>Could not load PDF.</div>}
+        //         >
+        //             {Array.from({ length: pdfNumPages || 0 }, (_, i) => (
+        //                 <div key={i} style={{ marginBottom: 12 }}>
+        //                     <Page
+        //                         pageNumber={i + 1}
+        //                         width={modalPageWidth}
+        //                         renderTextLayer={false}
+        //                         renderAnnotationLayer={false}
+        //                     />
+        //                 </div>
+        //             ))}
+        //         </Document>
+        //     );
+        // }
 
         // Markdown
         if (isMarkdown) {
@@ -375,21 +275,28 @@ export function FilePreview({ file }: FilePreviewProps) {
             );
         }
 
-        // Notebook
-        if (isIpynb) {
-            return notebookJson ? (
-                <NotebookRenderer ipynb={notebookJson} compact={false} />
-            ) : (
-                <div style={{ fontSize: 12 }}>
-                    Notebook preview expects JSON text (<code>contentKind: "text"</code>).
-                </div>
-            );
-        }
+        // // Notebook
+        // if (isIpynb) {
+        //     return notebookJson ? (
+        //         <NotebookRenderer ipynb={notebookJson} compact={false} />
+        //     ) : (
+        //         <div style={{ fontSize: 12 }}>
+        //             Notebook preview expects JSON text (<code>contentKind: "text"</code>).
+        //         </div>
+        //     );
+        // }
 
         return (
-            <SyntaxHighlighter style={oneDark} language={lang} customStyle={{ margin: 0 }}>
-                {file.content || EMPTY_STR}
-            </SyntaxHighlighter>
+            <div className={classes.outerSyntaxHighlighter}>
+                <SyntaxHighlighter 
+                    style={oneDark} 
+                    language={lang} 
+                    wrapLongLines={true} 
+                    customStyle={CustomCSSSynHigh}
+                >
+                    {file.content || EMPTY_STR}
+                </SyntaxHighlighter>
+            </div>
         );
     }, [file, isImage, isIpynb, isMarkdown, isPdf, lang, notebookJson, pdfNumPages, renderUrl]);
 
@@ -398,22 +305,15 @@ export function FilePreview({ file }: FilePreviewProps) {
             <div
                 ref={containerRef}
                 onClick={onClick}
-                style={{
-                    width: "100%",
-                    height: "100%",
-                    overflow: "hidden",
-                    borderRadius: 10,
-                    cursor: "zoom-in",
-                    background: "rgba(0,0,0,0.03)",
-                }}
+                className={`${classes.outerPreview} nowheel`}
                 title={"Click to expand"}
             >
                 {PreviewInner}
             </div>
 
-            <Modal open={open} onClose={close} title={file.name}>
+            <FileModal open={open} onClose={close} title={file.name}>
                 {ModalInner}
-            </Modal>
+            </FileModal>
         </>
     );
 }

@@ -1,0 +1,54 @@
+.outerModal {
+    position: fixed;
+    /* inset: 0; */
+    z-index: 100000;
+    left: 220px;
+    top: 0;
+    /* display: grid; */
+    /* place-items: center; */
+}
+
+.innerModal {
+    background: white;
+    border-radius: 14px;
+    width: 400px;
+    height: 260px;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.headerModal {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(0,0,0,0.10);
+}
+
+.titleModal {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.closeModal {
+    border: 1px solid rgba(0,0,0,0.15);
+    background: rgba(255,255,255,0.9);
+    border-radius: 10px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+}
+
+.contentModal {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 14px;
+}

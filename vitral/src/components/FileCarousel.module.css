@@ -28,6 +28,8 @@
 
     scroll-snap-align: start;
 
+    width: 100%;
+
     background: rgba(0, 0, 0, 0.06);
     padding: 5px;
     display: flex;
