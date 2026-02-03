@@ -143,8 +143,6 @@ export async function getFileContent(docId: string, fileId: string): Promise<fil
         throw new Error(text || "Failed to get file content");
     }
 
-    console.log("getFileContent", fileId);
-
     return res.json();
 }
 

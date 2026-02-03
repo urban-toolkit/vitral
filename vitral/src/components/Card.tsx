@@ -8,7 +8,7 @@ import { faRepeat, faPerson, faCalendar, faCube, faListCheck, faLinesLeaning, fa
 import { Position, Handle } from '@xyflow/react';
 import { AttachFileZone } from './AttachFileZone';
 import { shallowEqual, useSelector } from 'react-redux';
-import type { fileRecord } from '@/config/types';
+import type { fileRecord, nodeType } from '@/config/types';
 import { makeSelectFilesForNode } from '@/store/flowSlice';
 import { FileCarousel } from '@/components/FileCarousel';
 
@@ -30,9 +30,11 @@ const iconName: Record<string, IconDefinition> = {
     insight: faLightbulb
 }
 
-function LabelIcon({ label }: {label: string}) {
+const CARD_LABELS = ["person", "activity", "requirement", "concept", "insight"]
+
+function LabelIcon({ label }: { label: string }) {
     return (
-        <FontAwesomeIcon className={classes.flipIcon} icon={iconName[label]}/>
+        <FontAwesomeIcon className={classes.flipIcon} icon={iconName[label]} />
     )
 }
 
@@ -53,12 +55,14 @@ export function Card(props: any) {
         textAlign: "center",
         background: "transparent",
         transition: "background 0.2s ease",
-        flex: "1" 
+        flex: "1"
     }), []);
 
     const handleFileSelected = useCallback((file: File) => {
         props.onAttachFile?.(props.id, file);
     }, [props.onAttachFile, props.id]);
+
+    const [isEditingLabel, setIsEditingLabel] = useState(false);
 
     return (
         <div className={`${classes.card} ${classes.flipCard}`}>
@@ -67,20 +71,50 @@ export function Card(props: any) {
 
                 <div className={`${classes.flipCardFront} ${props.data.type == "social" ? classes.socialCard : classes.techCard}`}>
                     <div className={classes.header}>
-                        <p>{`${props.data.label[0].toUpperCase()}${props.data.label.slice(1)}`}</p>
-                        <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => {setFlipped(true)}}/>
+                        {/* <p>{`${props.data.label[0].toUpperCase()}${props.data.label.slice(1)}`}</p> */}
+                        {isEditingLabel ? (
+                            <select
+                                value={props.data.label}
+                                autoFocus
+                                onChange={(e) => {
+                                    const newLabel = e.target.value;
+
+                                    // Removing callback functions from props
+                                    const {onAttachFile, onLabelChange, ...cleanProps } = props;
+
+                                    props.onLabelChange(cleanProps, newLabel);
+                                    setIsEditingLabel(false);
+                                }}
+                                onBlur={() => setIsEditingLabel(false)}
+                            >
+                                {CARD_LABELS.map(label => (
+                                    <option key={label} value={label}>
+                                        {label[0].toUpperCase() + label.slice(1)}
+                                    </option>
+                                ))}
+                            </select>
+                        ) : (
+                            <p
+                                className={classes.label}
+                                onClick={() => setIsEditingLabel(true)}
+                            >
+                                {props.data.label[0].toUpperCase() + props.data.label.slice(1)}
+                            </p>
+                        )}
+
+                        <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => { setFlipped(true) }} />
                     </div>
                     <div className={classes.attachments}>
-                        <div className={classes.labelIcon} style={{backgroundColor: headerColor[props.data.label as string], top: "-10px", left: "-3px"}}>
+                        <div className={classes.labelIcon} style={{ backgroundColor: headerColor[props.data.label as string], top: "-10px", left: "-3px" }}>
                             <LabelIcon
                                 label={props.data.label}
                             />
                         </div>
 
-                        <FileCarousel 
+                        <FileCarousel
                             files={files}
                         >
-                            <AttachFileZone 
+                            <AttachFileZone
                                 onFileSelected={handleFileSelected}
                                 dropZoneCSS={dropZoneCSS}
                                 loading={false}
@@ -97,10 +131,10 @@ export function Card(props: any) {
                 <div className={`${classes.flipCardBack} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>
                     <div className={classes.header}>
                         <p>{`${props.data.label[0].toUpperCase()}${props.data.label.slice(1)}`}</p>
-                        <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => {setFlipped(false)}}/>
+                        <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => { setFlipped(false) }} />
                     </div>
                     <div className={classes.backBody}>
-                        <div className={classes.labelIcon} style={{backgroundColor: headerColor[props.data.label as string], top: "-4px", left: "-5px"}}>
+                        <div className={classes.labelIcon} style={{ backgroundColor: headerColor[props.data.label as string], top: "-4px", left: "-5px" }}>
                             <LabelIcon
                                 label={props.data.label}
                             />
@@ -112,14 +146,14 @@ export function Card(props: any) {
             </div>
 
             {
-                props.id != undefined 
-                ? 
+                props.id != undefined
+                    ?
                     <>
                         <Handle type="source" position={Position.Left} />
                         <Handle type="target" position={Position.Right} />
                     </>
-                :
-                null
+                    :
+                    null
             }
 
         </div>

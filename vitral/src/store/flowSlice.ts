@@ -27,13 +27,13 @@ const flowSlice = createSlice({
         setEdges: (state, action) => {
             state.edges = action.payload;
         },
-        addNode: (state, action) => {
+        addNode: (state, action: PayloadAction<nodeType>) => {
             state.nodes.push(action.payload);
         },
         addNodes: (state, action) => {
             state.nodes = state.nodes.concat(action.payload);
         },
-        updateNode: (state, action) => {
+        updateNode: (state, action: PayloadAction<nodeType>) => {
             const index = state.nodes.findIndex(n => n.id === action.payload.id);
             if (index !== -1) state.nodes[index] = { ...state.nodes[index], ...action.payload };
         },

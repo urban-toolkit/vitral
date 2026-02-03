@@ -9,11 +9,11 @@ import { Title } from '@/components/Title';
 import { Toolbar } from '@/components/Toolbar';
 import { parseFile } from '@/func/FileParser';
 import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
-import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNode } from '@/store/flowSlice';
+import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNode, addNode, updateNode } from '@/store/flowSlice';
 import { upsertFile } from '@/store/filesSlice';
 import { Card } from '@/components/Card';
 
-import type { edgeType, filePendingUpload, nodeType } from '@/config/types';
+import type { cardType, edgeType, filePendingUpload, nodeType } from '@/config/types';
 import type { RootState } from '@/store';
 
 import { FreeInputZone } from '@/components/FreeInputZone';
@@ -21,7 +21,6 @@ import { createFile, updateDocumentMeta } from '@/api/stateApi';
 import { GitHubFiles } from '@/components/GithubFiles';
 import { githubStatus } from '@/api/githubApi';
 import { LoadSpinner } from '@/components/LoadSpinner';
-
 
 type FlowCanvasProps = {
     projectId: string;
@@ -36,6 +35,8 @@ type FlowCanvasProps = {
 
     onNodesChange: (changes: NodeChange<nodeType>[]) => any;
     onEdgesChange: (changes: EdgeChange<edgeType>[]) => any;
+
+    onClick: (e: React.MouseEvent) => void;
 };
 
 export const FlowCanvas = memo(function FlowCanvas({
@@ -49,6 +50,7 @@ export const FlowCanvas = memo(function FlowCanvas({
     onDrop,
     onNodesChange,
     onEdgesChange,
+    onClick
 }: FlowCanvasProps) {
 
     return (
@@ -63,6 +65,7 @@ export const FlowCanvas = memo(function FlowCanvas({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
+            onClick={onClick}
             fitView
         >
             <Background color="#848484" variant={BackgroundVariant.Dots} />
@@ -80,7 +83,8 @@ const FlowInner = () => {
     const { status, error } = useDocumentSync(projectId);
 
     const [loading, setLoading] = useState(false);
-    const [cursorMode, setCursorMode] = useState<'node' | 'text' | 'tree' | 'related' | ''>();
+    const cursorMode = useRef<'node' | 'text' | 'tree' | 'related' | ''>('');
+
     const [gitConnectionStatus, setGitConnectionStatus] = useState<{ connected: boolean, user?: { id: number, login: string } }>({ connected: false });
 
     const dispatch = useDispatch();
@@ -97,15 +101,40 @@ const FlowInner = () => {
 
         const res = await parseFile(file);
         const { fileId, createdAt, sha256, bucket, key } = await createFile(projectId, res);
-        
+
         const { name, mimeType, sizeBytes, ext } = res;
-        dispatch(upsertFile({ id: fileId, docId: projectId, name, mimeType, sizeBytes, ext, createdAt, sha256, storage: {bucket, key} }));
+        dispatch(upsertFile({ id: fileId, docId: projectId, name, mimeType, sizeBytes, ext, createdAt, sha256, storage: { bucket, key } }));
         dispatch(attachFileIdToNode({ nodeId, fileId }));
 
     }, [dispatch, projectId]);
 
+    const onLabelChange = useCallback(async (nodeProps: nodeType, newLabel: string) => {
+
+        let cardType: cardType = 'social';
+
+        switch (newLabel) {
+            case 'requirement':
+                cardType = 'technical';
+                break;
+            case 'insight':
+                cardType = 'technical';
+                break
+        }
+
+        let newNode = {
+            ...nodeProps,
+            data: {
+                ...nodeProps.data,
+                label: newLabel,
+                type: cardType
+            }
+        };
+
+        dispatch(updateNode(newNode));
+    }, [dispatch]);
+
     const nodeTypes = useMemo(() => ({
-        card: (nodeProps: any) => <Card {...nodeProps} onAttachFile={onAttachFile} />
+        card: (nodeProps: any) => <Card {...nodeProps} onAttachFile={onAttachFile} onLabelChange={onLabelChange} />
     }), [onAttachFile]);
 
     const checkGitStatus = async () => {
@@ -181,19 +210,40 @@ const FlowInner = () => {
             if (files.length === 0) return;
 
             processFile(files[0]);
-        },
-        []);
+        }, []);
 
+    const onClick = useCallback((e: React.MouseEvent) => {
+        if(cursorMode.current == 'node'){
+            const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    
+            dispatch(addNode({
+                id: crypto.randomUUID(),
+                position,
+                type: 'card',
+                data: {
+                    label: 'activity',
+                    type: 'social',
+                    title: ''
+                }
+            }));
+        }
+
+    }, []);
+        
     useEffect(() => {
         checkGitStatus();
     }, [])
 
     useEffect(() => {
-        switch (cursorMode) {
+        switch (cursorMode.current) {
             case 'text':
                 document.body.style.cursor = 'text';
                 break;
+            case 'node':
+                document.body.style.cursor = 'pointer';
+                break;
             default:
+                document.body.style.cursor = '';
                 break;
         }
 
@@ -214,6 +264,7 @@ const FlowInner = () => {
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             nodeTypes={nodeTypes}
+            onClick={onClick}
         />
 
         {/* Call to action */}
@@ -232,11 +283,15 @@ const FlowInner = () => {
 
         <Toolbar
             onFreeInputClicked={() => {
-                setCursorMode('text');
+                cursorMode.current = 'text';
             }}
 
             onNodeInputClicked={() => {
-                setCursorMode('');
+                cursorMode.current = 'node';
+            }}
+
+            onPointerClicked={() => {
+                cursorMode.current = '';
             }}
         />
 
@@ -245,11 +300,11 @@ const FlowInner = () => {
             connectionStatus={gitConnectionStatus}
         />
 
-        {cursorMode == 'text'
+        {cursorMode.current == 'text'
             ?
             <FreeInputZone
                 onInputSubmit={async (x: number, y: number, userText: string) => {
-                    setCursorMode("");
+                    cursorMode.current = "";
 
                     setLoading(true);
 
