@@ -1,4 +1,4 @@
-import type { fileRecord } from "@/config/types";
+import type { filePendingUpload, fileRecord } from "@/config/types";
 
 export type FlowStatePayload = {
     flow: {
@@ -97,27 +97,21 @@ export async function updateDocumentMeta(docId: string, payload: { title?: strin
     return res.json();
 }
 
-export async function createFile(docId: string, payload: {
-    id: string;
-    name: string;
-    mimeType: string;
-    sizeBytes: number;
-    content?: string;
-    contentKind: 'text' | 'base64';
-}): Promise<{ fileId: string, createdAt: string }> {
+export async function createFile(docId: string, pending: filePendingUpload): Promise<{ fileId: string, createdAt: string, sha256: string, sizeBytes: number, bucket: string, key: string }> {
+
+    const fd = new FormData();
+    fd.append("id", pending.id);
+    fd.append("name", pending.name);
+    fd.append("mimeType", pending.mimeType);
+    fd.append("file", pending.file); // binary
 
     const res = await fetch(`${API_BASE}/api/state/${docId}/files`, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify(payload),
+        body: fd,
     });
 
     if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || "Failed to create file");
+        throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
     }
 
     return res.json();
@@ -133,6 +127,23 @@ export async function listFiles(docId: string): Promise<{ files: fileRecord[] }>
         const text = await res.text();
         throw new Error(text || "Failed to list files");
     }
+
+    return res.json();
+}
+
+// Only text
+export async function getFileContent(docId: string, fileId: string): Promise<fileRecord & {content: string}> {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/files/${fileId}/content`, {
+        method: "GET",
+        credentials: "include",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to get file content");
+    }
+
+    console.log("getFileContent", fileId);
 
     return res.json();
 }

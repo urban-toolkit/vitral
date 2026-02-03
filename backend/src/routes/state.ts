@@ -1,6 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
-import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, HeadObjectCommand, GetObjectCommand, ListBucketsCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
+import type { Readable } from "node:stream";
+import { streamToString } from "../utils/streams.ts";
+import { safeFilename } from "../utils/files.ts";
 
 type SaveBody = {
     title?: string;
@@ -8,13 +11,9 @@ type SaveBody = {
     state: unknown;
 };
 
-function sha256HexFromBuffer(buf: Buffer) {
-    return crypto.createHash("sha256").update(buf).digest("hex");
-}
-
-function bufferFromContent(content: string, contentKind: "text" | "base64") {
-    return contentKind === "base64" ? Buffer.from(content, "base64") : Buffer.from(content, "utf8");
-}
+const TEXT_EXTENSIONS = new Set([
+    "txt", "json", "ipynb", "csv", "py", "js", "ts", "html", "css", "md",
+]);
 
 export const stateRoutes: FastifyPluginAsync = async (app) => {
     /**
@@ -394,8 +393,12 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     mimetype: part.mimetype,
                     file: part.file,
                 };
+
+                console.log("part.type", part.type);
+
+                break;
             } else {
-                fields[part.fieldname] = part.value as string;
+                fields[part.fieldname] = String(part.value);
             }
         }
 
@@ -448,16 +451,14 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 `
                 INSERT INTO document_files (
                     id, document_id, name, mime_type, ext, size_bytes, sha256,
-                    content_text,
-                    storage_backend, storage_bucket, storage_key, created_at
+                    storage_bucket, storage_key, created_at
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,'minio',$8,$9,now())
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
                 ON CONFLICT (document_id, sha256)
                 DO UPDATE SET
                     name = EXCLUDED.name,
                     mime_type = EXCLUDED.mime_type,
                     size_bytes = EXCLUDED.size_bytes,
-                    storage_backend = 'minio',
                     storage_bucket = EXCLUDED.storage_bucket,
                     storage_key = EXCLUDED.storage_key
                 RETURNING id, created_at
@@ -475,7 +476,10 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 ]
             );
 
-            return reply.send({ fileId: result.rows[0]?.id, createdAt: result.rows[0]?.created_at, sha256: hash, sizeBytes: size });
+            return reply.send({ fileId: result.rows[0]?.id, createdAt: result.rows[0]?.created_at, sha256: hash, sizeBytes: size, bucket, key: objectKey });
+        } catch (e: any) {
+            request.log.error({ err: e }, "Failed to insert document_files row");
+            return reply.code(500).send({ error: e?.message ?? "DB insert failed" });
         } finally {
             client.release();
         }
@@ -492,27 +496,25 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         try {
             const res = await client.query<{
                 id: string;
+                docId: string;
                 name: string;
                 mime_type: string | null;
                 size_bytes: number | null;
                 sha256: string | null;
                 created_at: string;
 
-                content_text: string | null;
-                storage_backend: "postgres" | "minio";
                 storage_bucket: string | null;
                 storage_key: string | null;
             }>(
                 `
                 SELECT
                     id,
+                    document_id,
                     name,
                     mime_type,
                     size_bytes,
                     sha256,
                     created_at,
-                    content_text,
-                    storage_backend,
                     storage_bucket,
                     storage_key
                 FROM document_files
@@ -529,6 +531,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
                 return {
                     id: r.id,
+                    docId: r.document_id,
                     name: r.name,
                     mimeType: r.mime_type ?? undefined,
                     ext,
@@ -536,20 +539,10 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     sha256: r.sha256 ?? undefined,
                     createdAt: new Date(r.created_at).toISOString(),
 
-                    content:
-                        r.storage_backend === "postgres"
-                            ? r.content_text
-                            : undefined,
-
-                    contentBackend: r.storage_backend,
-
-                    storage:
-                        r.storage_backend === "minio"
-                            ? {
-                                bucket: r.storage_bucket!,
-                                key: r.storage_key!,
-                            }
-                            : undefined,
+                    storage: {
+                        bucket: r.storage_bucket!,
+                        key: r.storage_key!,
+                    }
                 };
             });
 
@@ -558,4 +551,150 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             client.release();
         }
     });
+
+    /**
+     * Get file content for text-like content
+     * GET /api/state/:docId/files/:id/content
+     */
+    app.get("/state/:docId/files/:id/content", async (request, reply) => {
+        const { docId } = request.params as { docId: string };
+        const { id } = request.params as { id: string };
+
+        const client = await request.server.pg.connect();
+        try {
+            const res = await client.query<{
+                id: string;
+                docId: string;
+                name: string;
+                mime_type: string | null;
+                size_bytes: number | null;
+                sha256: string | null;
+
+                storage_bucket: string | null;
+                storage_key: string | null;
+                created_at: string;
+            }>(
+                `
+                SELECT
+                    id, document_id, name, mime_type, ext, size_bytes, sha256, created_at,
+                    storage_bucket, storage_key
+                FROM document_files
+                WHERE document_id = $1 AND id = $2
+                LIMIT 1
+                `,
+                [
+                    docId,
+                    id
+                ]
+            );
+
+            const row = res.rows[0];
+            if (!row) return reply.code(404).send({ error: "File not found" });
+
+            const ext = row.ext ?? "txt";
+            const mimeType = row.mime_type ?? "application/octet-stream";
+
+            // Only allow text-like content for this endpoint
+            const isText =
+                (ext && TEXT_EXTENSIONS.has(ext)) ||
+                mimeType.startsWith("text/") ||
+                mimeType === "application/json";
+
+            if (!isText) {
+                return reply.code(415).send({
+                    error: "File is binary; use /api/files/:fileId/raw",
+                    mimeType,
+                    ext,
+                });
+            }
+
+            // MinIO
+            if (!row.storage_bucket || !row.storage_key) {
+                return reply.code(500).send({ error: "Missing storage location for MinIO object" });
+            }
+
+            const obj = await request.server.s3.send(
+                new GetObjectCommand({
+                    Bucket: row.storage_bucket,
+                    Key: row.storage_key,
+                })
+            );
+
+            const body = obj.Body as Readable | undefined;
+            if (!body) return reply.code(500).send({ error: "Missing object body" });
+
+            const content = await streamToString(body, "utf8");
+
+            return reply.send({
+                fileId: row.id,
+                docId: row.document_id,
+                name: row.name,
+                mimeType,
+                ext,
+                sizeBytes: row.size_bytes ?? undefined,
+                sha256: row.sha256 ?? undefined,
+                createdAt: new Date(row.created_at).toISOString(),
+                content,
+            });
+        } finally {
+            client.release();
+        }
+    });
+
+    /**
+     * Get file content for binary content
+     * GET api/state/:docId/files/:id/raw
+     */
+    app.get("/state/:docId/files/:id/raw", async (request, reply) => {
+        const { docId } = request.params as { docId: string };
+        const { id } = request.params as { id: string };
+
+        const client = await request.server.pg.connect();
+        try {
+            const res = await client.query<{
+                id: string;
+                name: string;
+                mime_type: string | null;
+
+                storage_bucket: string | null;
+                storage_key: string | null;
+            }>(
+                `
+                SELECT id, name, mime_type, storage_bucket, storage_key
+                FROM document_files
+                WHERE document_id = $1 AND id = $2
+                LIMIT 1
+                `,
+                [
+                    docId,
+                    id
+                ]
+            );
+
+            const row = res.rows[0];
+            if (!row) return reply.code(404).send({ error: "File not found" });
+
+            const mimeType = row.mime_type ?? "application/octet-stream";
+            reply.header("Content-Type", mimeType);
+            reply.header("Content-Disposition", `inline; filename="${safeFilename(row.name)}"`);
+
+            // MinIO
+            if (!row.storage_bucket || !row.storage_key) {
+                return reply.code(500).send({ error: "Missing storage location for MinIO object" });
+            }
+
+            const obj = await request.server.s3.send(
+                new GetObjectCommand({ Bucket: row.storage_bucket, Key: row.storage_key })
+            );
+
+            const body = obj.Body as Readable | undefined;
+            if (!body) return reply.code(500).send({ error: "Missing object body" });
+
+            // Stream bytes
+            return reply.send(body);
+        } finally {
+            client.release();
+        }
+    });
+
 };

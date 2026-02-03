@@ -1,0 +1,119 @@
+.card {
+    width: 100%;
+    height: 100%;
+    text-align: left;
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    transition: box-shadow 120ms ease, border-color 120ms ease,
+        background-color 120ms ease;
+    cursor: pointer;
+}
+
+.card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.left {
+    flex: none;
+}
+
+.thumb {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    background: #f3f4f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.thumbImage {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.extBadge {
+    font-size: var(--font-size-xxxs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #374151;
+}
+
+.body {
+    min-width: 0;
+    flex: 1;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.titleWrap {
+    min-width: 0;
+}
+
+.title {
+    font-weight: 500;
+    color: #111827;
+    white-space: nowrap;
+    overflow: hidden;
+    font-size: var(--font-size-xxs);
+    text-overflow: ellipsis;
+}
+
+.mime {
+    font-size: var(--font-size-xxxs);
+    color: #6b7280;
+    margin-top: 2px;
+}
+
+.metaGrid {
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    font-size: var(--font-size-xxxs);
+}
+
+.metaLabel {
+    color: #6b7280;
+}
+
+.metaValue {
+    color: #111827;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+}
+
+.footer {
+    margin-top: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.hint {
+    font-size: var(--font-size-xxs);
+    color: #6b7280;
+}
+
+.hintKey {
+    font-size: var(--font-size-xxs);
+    color: #9ca3af;
+}

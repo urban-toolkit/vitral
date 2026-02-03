@@ -96,12 +96,10 @@ const FlowInner = () => {
     const onAttachFile = useCallback(async (nodeId: string, file: File) => {
 
         const res = await parseFile(file);
-        const { id, name, mimeType, sizeBytes, previewText, ext, ...rest } = res;
-        const { fileId, createdAt } = await createFile(projectId, { id, name, mimeType, sizeBytes, content: previewText, contentKind: previewText ? 'text' : 'base64'});
-
-        // TODO: if there is storage pass it to the upsertFile.
-
-        dispatch(upsertFile({ id: fileId, name, mimeType, sizeBytes, ext, content: previewText, contentBackend: previewText ? 'postgres' : 'minio', createdAt }));
+        const { fileId, createdAt, sha256, bucket, key } = await createFile(projectId, res);
+        
+        const { name, mimeType, sizeBytes, ext } = res;
+        dispatch(upsertFile({ id: fileId, docId: projectId, name, mimeType, sizeBytes, ext, createdAt, sha256, storage: {bucket, key} }));
         dispatch(attachFileIdToNode({ nodeId, fileId }));
 
     }, [dispatch, projectId]);

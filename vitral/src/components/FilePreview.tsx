@@ -15,6 +15,11 @@ import { NotebookRenderer } from "@/components/NotebookRenderer";
 
 import classes from './FilePreview.module.css';
 import FileModal from "@/components/FileModal";
+import { FilePreviewCard } from "@/components/FilePreviewCard";
+import { LoadSpinner } from "@/components/LoadSpinner";
+import { getFileContent } from "@/api/stateApi";
+
+const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
 
 // react-pdf worker 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -59,17 +64,9 @@ function normalizeLang(ext: string) {
     }
 }
 
-function getRenderableUrl(file: fileRecord): string | undefined {
-
-    // const mt = file.mimeType || "";
-
-    // TODO: generate URL from file blob fetched from MinIO.
-
-    // if (file.mimeType.startsWith("image/")) {
-    //     return `data:${mt};base64,${file.content.replace(/\s/g, "")}`;
-    // }
-
-    return undefined;
+async function fetchFileContent(docId: string, fileId: string): Promise<string> {
+    const data = await getFileContent(docId, fileId);
+    return data.content ?? "";
 }
 
 export function FilePreview({ file }: FilePreviewProps) {
@@ -81,14 +78,18 @@ export function FilePreview({ file }: FilePreviewProps) {
     const isMarkdown = ext === "md" || file.mimeType === "text/markdown";
     const isIpynb = ext === "ipynb";
 
-    const renderUrl = useMemo(() => getRenderableUrl(file), [file]);
-
     const [open, setOpen] = useState(false);
 
     const [pdfNumPages, setPdfNumPages] = useState(0);
 
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [containerWidth, setContainerWidth] = useState(0);
+
+    const [loading, setLoading] = useState(false);
+    const [loadedContent, setLoadedContent] = useState<string | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
+
+    const rawUrl = useMemo(() => `${API_BASE}/api/state/${file.docId}/files/${file.id}/raw`, [API_BASE, file.docId, file.id]);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -106,34 +107,57 @@ export function FilePreview({ file }: FilePreviewProps) {
         setOpen(true);
     }
 
-    const close = useCallback(() => setOpen(false), []);
+    const close = useCallback(() => {
+        setOpen(false);
 
-    const textContent = !file.mimeType.startsWith("image/") ? file.content : "";
+        setLoadedContent(null);
+        setLoadError(null);
+        setLoading(false);
+    }, []);
+
+    useEffect(() => {
+        if (!open) return;
+
+        if (isImage || isPdf) return;
+
+        setLoading(true);
+        setLoadError(null);
+        setLoadedContent(null);
+
+        fetchFileContent(file.docId, file.id)
+            .then((content) => {
+                setLoadedContent(content);
+            })
+            .catch((e: any) => {
+                setLoadError(e?.message ?? "Failed to load file");
+            })
+            .finally(() => {
+                setLoading(false);
+            });
+
+    }, [open, file.id, isImage, isPdf]);
 
     const notebookJson = useMemo(() => {
         if (!isIpynb) return null;
-
-        if (file.mimeType.startsWith("image/")) return null;
-
+        if (!loadedContent) return null;
         try {
-            // TODO: fetch content if undefined.
-            return JSON.parse(file.content as string);
+            return JSON.parse(loadedContent);
         } catch {
             return null;
         }
-    }, [file, isIpynb]);
+    }, [isIpynb, loadedContent]);
 
     const PreviewInner = useMemo(() => {
         // PNG / Images
-        if (isImage) {
-            return (
-                <img
-                    src={renderUrl}
-                    alt={file.name}
-                    className={classes.img}
-                />
-            );
-        }
+        // if (isImage) {
+        //     return (
+        //         <img
+        //             src={rawUrl}
+        //             alt={file.name}
+        //             className={classes.img}
+        //         />
+        //     );
+        // }
 
         // // PDF
         // if (isPdf) {
@@ -164,34 +188,34 @@ export function FilePreview({ file }: FilePreviewProps) {
         // }
 
         // Markdown
-        if (isMarkdown) {
-            return (
-                <div className={classes.outerMarkdown}>
-                    <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                            code({ className, children, ...props }) {
-                                const match = /language-(\w+)/.exec(className || "");
-                                const codeLang = match?.[1] ?? "text";
+        // if (isMarkdown) {
+        //     return (
+        //         <div className={classes.outerMarkdown}>
+        //             <ReactMarkdown
+        //                 remarkPlugins={[remarkGfm]}
+        //                 components={{
+        //                     code({ className, children, ...props }) {
+        //                         const match = /language-(\w+)/.exec(className || "");
+        //                         const codeLang = match?.[1] ?? "text";
 
-                                return (
-                                    <SyntaxHighlighter 
-                                        style={oneDark} 
-                                        language={codeLang} 
-                                        wrapLongLines={true} 
-                                        customStyle={CustomCSSSynHigh}
-                                    >
-                                        {String(children).replace(/\n$/, "")}
-                                    </SyntaxHighlighter>
-                                );
-                            },
-                        }}
-                    >
-                        {!file.mimeType.startsWith("image/") ? file.content : EMPTY_STR}
-                    </ReactMarkdown>
-                </div>
-            );
-        }
+        //                         return (
+        //                             <SyntaxHighlighter 
+        //                                 style={oneDark} 
+        //                                 language={codeLang} 
+        //                                 wrapLongLines={true} 
+        //                                 customStyle={CustomCSSSynHigh}
+        //                             >
+        //                                 {String(children).replace(/\n$/, "")}
+        //                             </SyntaxHighlighter>
+        //                         );
+        //                     },
+        //                 }}
+        //             >
+        //                 {!file.mimeType.startsWith("image/") ? file.content : EMPTY_STR}
+        //             </ReactMarkdown>
+        //         </div>
+        //     );
+        // }
 
         // // Jupyter Notebook
         // if (isIpynb) {
@@ -210,98 +234,115 @@ export function FilePreview({ file }: FilePreviewProps) {
         // }
 
         return (
-            <div className={classes.outerSyntaxHighlighter}>
-                <SyntaxHighlighter
-                    language={lang}
-                    style={oneDark}
-                    wrapLongLines={true}
-                    customStyle={CustomCSSSynHigh}
-                >
-                    {textContent || EMPTY_STR}
-                </SyntaxHighlighter>
-            </div>
+            // <div className={classes.outerSyntaxHighlighter}>
+            //     <SyntaxHighlighter
+            //         language={lang}
+            //         style={oneDark}
+            //         wrapLongLines={true}
+            //         customStyle={CustomCSSSynHigh}
+            //     >
+            //         {textContent || EMPTY_STR}
+            //     </SyntaxHighlighter>
+            // </div>
+            <FilePreviewCard
+                file={file}
+                thumbnailUrl={isImage ? rawUrl : undefined}
+            />
         );
-    }, [containerWidth, file, isImage, isIpynb, isMarkdown, isPdf, lang, notebookJson, renderUrl, textContent]);
+        // }, [containerWidth, file, isImage, isIpynb, isMarkdown, isPdf, lang, notebookJson, renderUrl, textContent]);
+    }, [containerWidth, file, isImage, isIpynb, isMarkdown, isPdf, lang]);
 
     const ModalInner = useMemo(() => {
+
+        if (!isImage && !isPdf) {
+            if (loading) return <p>Loading...</p>;
+            if (loadError) return <div style={{ fontSize: 12 }}>{loadError}</div>;
+            if (loadedContent == null) return null; // open but not yet fetched
+        }
+
         // Image
         if (isImage) {
-            return renderUrl ? (
-                <img src={renderUrl} alt={file.name} style={{ width: "100%", height: "auto", display: "block" }} />
-            ) : (
-                <div style={{ fontSize: 12 }}>
-                    Image preview needs <code>contentKind: "base64"</code> (or pass <code>url</code>).
-                </div>
+            return <img
+                src={rawUrl}
+                alt={file.name}
+                style={{ width: "auto", height: "100%", display: "block" }}
+            />
+        }
+
+        // PDF
+        if (isPdf) {
+            const modalPageWidth = clamp(Math.floor(window.innerWidth * 0.8), 520, 1000);
+
+            return (
+                <Document
+                    file={rawUrl}
+                    onLoadSuccess={(info) => setPdfNumPages(info.numPages)}
+                    loading={<LoadSpinner loading={true} />}
+                    error={<div style={{ fontSize: 12 }}>Could not load PDF.</div>}
+                >
+                    {Array.from({ length: pdfNumPages || 0 }, (_, i) => (
+                        <div key={i} style={{ marginBottom: 12 }}>
+                            <Page
+                                pageNumber={i + 1}
+                                width={modalPageWidth}
+                                renderTextLayer={false}
+                                renderAnnotationLayer={false}
+                            />
+                        </div>
+                    ))}
+                </Document>
             );
         }
 
-        // // PDF: render all pages
-        // if (isPdf) {
-        //     if (!renderUrl) {
-        //         return (
-        //             <div style={{ fontSize: 12 }}>
-        //                 PDF preview needs <code>contentKind: "base64"</code> (or pass <code>url</code>).
-        //             </div>
-        //         );
-        //     }
-
-        //     const modalPageWidth = clamp(Math.floor(window.innerWidth * 0.8), 520, 1000);
-
-        //     return (
-        //         <Document
-        //             file={renderUrl}
-        //             onLoadSuccess={(info) => setPdfNumPages(info.numPages)}
-        //             loading={<div style={{ fontSize: 12 }}>Loading PDF…</div>}
-        //             error={<div style={{ fontSize: 12 }}>Could not load PDF.</div>}
-        //         >
-        //             {Array.from({ length: pdfNumPages || 0 }, (_, i) => (
-        //                 <div key={i} style={{ marginBottom: 12 }}>
-        //                     <Page
-        //                         pageNumber={i + 1}
-        //                         width={modalPageWidth}
-        //                         renderTextLayer={false}
-        //                         renderAnnotationLayer={false}
-        //                     />
-        //                 </div>
-        //             ))}
-        //         </Document>
-        //     );
-        // }
-
         // Markdown
         if (isMarkdown) {
-
             return (
                 <div style={{ fontSize: 14, lineHeight: 1.5 }}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{file.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {loadedContent ?? EMPTY_STR}
+                    </ReactMarkdown>
                 </div>
             );
         }
 
         // // Notebook
-        // if (isIpynb) {
-        //     return notebookJson ? (
-        //         <NotebookRenderer ipynb={notebookJson} compact={false} />
-        //     ) : (
-        //         <div style={{ fontSize: 12 }}>
-        //             Notebook preview expects JSON text (<code>contentKind: "text"</code>).
-        //         </div>
-        //     );
-        // }
+        if (isIpynb) {
+            return notebookJson ? (
+                <NotebookRenderer ipynb={notebookJson} compact={false} />
+            ) : (
+                <div style={{ fontSize: 12 }}>
+                    Could not parse notebook JSON.
+                </div>
+            );
+        }
 
         return (
             <div className={classes.outerSyntaxHighlighter}>
-                <SyntaxHighlighter 
-                    style={oneDark} 
-                    language={lang} 
-                    wrapLongLines={true} 
+                <SyntaxHighlighter
+                    style={oneDark}
+                    language={lang}
+                    wrapLongLines={true}
                     customStyle={CustomCSSSynHigh}
                 >
-                    {file.content || EMPTY_STR}
+                    {loadedContent ?? EMPTY_STR}
                 </SyntaxHighlighter>
             </div>
         );
-    }, [file, isImage, isIpynb, isMarkdown, isPdf, lang, notebookJson, pdfNumPages, renderUrl]);
+        // }, [file, isImage, isIpynb, isMarkdown, isPdf, lang, notebookJson, pdfNumPages, renderUrl]);
+    }, [
+        file.name,
+        isImage,
+        isPdf,
+        isMarkdown,
+        isIpynb,
+        lang,
+        loading,
+        loadError,
+        loadedContent,
+        notebookJson,
+        pdfNumPages,
+        rawUrl,
+    ]);
 
     return (
         <>

@@ -23,19 +23,6 @@ export type llmConnectionData = {
     target: number
 }
 
-// export type fileData = {
-//     id: string,
-//     name: string,
-//     ext: fileExtension,
-//     sizeBytes: number,
-//     mimeType: string,
-//     contentBackend: string,
-//     created_at: Date,
-//     sha256?: string, // for dedupe
-//     content?: string, // undefined for binary
-//     storage?: { bucket: string, key: string } // if stored in minio
-// }
-
 // Frontend file record
 export type filePendingUpload = {
     id: string;            
@@ -52,6 +39,7 @@ export type filePendingUpload = {
 // Backend file record
 export type fileRecord = {
     id: string;
+    docId: string;
     name: string;
     ext: fileExtension;
     sizeBytes: number;
@@ -60,13 +48,7 @@ export type fileRecord = {
 
     sha256?: string;
 
-    // Where the bytes live
-    contentBackend: "postgres" | "minio";
-
-    // Only present when contentBackend === "postgres"
-    content?: string;
-
-    // Only present when contentBackend === "minio"
+    // Minio info
     storage?: { bucket: string; key: string };
 };
 

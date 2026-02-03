@@ -1,4 +1,6 @@
 :root {
+  --font-size-xxxs: 0.5rem;  /* 8px */
+  --font-size-xxs: 0.6rem;   /* 10px */
   --font-size-xs: 0.75rem;   /* 12px */
   --font-size-sm: 0.875rem;  /* 14px */
   --font-size-md: 1rem;      /* 16px */

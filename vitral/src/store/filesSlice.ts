@@ -57,25 +57,6 @@ export const filesSlice = createSlice({
             f.name = name;
             f.ext = name.split(".").pop()?.toLowerCase() as fileExtension;
         },
-        updateFileContent: (
-            state,
-            action: PayloadAction<{
-                fileId: string;
-                content: string;
-                mimeType?: string;
-                sizeBytes?: number;
-                sha256?: string;
-            }>
-        ) => {
-            const { fileId, content, mimeType, sizeBytes, sha256 } = action.payload;
-            const f = state.byId[fileId];
-            if (!f) return;
-
-            f.content = content;
-            if (mimeType !== undefined) f.mimeType = mimeType;
-            if (sizeBytes !== undefined) f.sizeBytes = sizeBytes;
-            if (sha256 !== undefined) f.sha256 = sha256;
-        },
         setActiveFile: (state, action: PayloadAction<string | null>) => {
             state.activeFileId = action.payload;
         },
@@ -94,7 +75,6 @@ export const {
     removeFile,
     removeMany,
     renameFile,
-    updateFileContent,
     setActiveFile,
     clearAllFiles,
 } = filesSlice.actions;
