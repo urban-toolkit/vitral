@@ -13,8 +13,10 @@
     "migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.981.0",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
+    "@fastify/multipart": "^9.4.0",
     "@fastify/postgres": "^6.0.2",
     "dotenv": "^17.2.3",
     "fastify": "^5.6.2",
@@ -27,4 +29,3 @@
     "typescript": "^5.4.0"
   }
 }
-

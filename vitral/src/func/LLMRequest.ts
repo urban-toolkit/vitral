@@ -1,11 +1,15 @@
 import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType } from '@/config/types';
-import type { fileData } from '@/config/types';
+import type { filePendingUpload } from '@/config/types';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
-export async function requestCardsLLM(fileData: fileData): Promise<{cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]}>{
+export async function requestCardsLLM(fileData: filePendingUpload): Promise<{cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]}>{
+    
+    // TODO: if binary file create base64 representation
 
-    const userText = JSON.stringify(fileData);
+    let {name, ext, previewText, ...rest} = fileData;
+
+    const userText = JSON.stringify({name, ext, content: previewText});
 
     const response = await fetch(API_BASE_URL+"/api/llm/chat", {
         method: "POST",

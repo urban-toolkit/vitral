@@ -7,9 +7,9 @@
   --font-size-2xl: 2rem;     /* 32px */
 
   --social-color: rgb(125, 192, 255, 0.2);
-  --social-color-darker: #8ebba2;
+  --social-color-darker: rgba(13, 75, 132, 0.4);
   --technical-color: rgb(255, 219, 125, 0.2);
-  --technical-color-darker: rgb(214, 169, 46);
+  --technical-color-darker: rgba(152, 112, 10, 0.4);
 
   --subtitle-color: rgba(0, 0, 0, 0.6);
 }

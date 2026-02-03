@@ -1,9 +1,9 @@
 import { createSlice, type PayloadAction, createSelector } from '@reduxjs/toolkit';
-import type { fileData } from '@/config/types';
+import type { fileExtension, fileRecord } from '@/config/types';
 import type { RootState } from "@/store/rootReducer";
 
 type FilesState = {
-    byId: Record<string, fileData>;
+    byId: Record<string, fileRecord>;
     allIds: string[];
     activeFileId: string | null;
 };
@@ -14,7 +14,7 @@ const initialState: FilesState = {
     activeFileId: null,
 };
 
-function upsertOne(state: FilesState, file: fileData) {
+function upsertOne(state: FilesState, file: fileRecord) {
     const exists = !!state.byId[file.id];
     state.byId[file.id] = file;
     if (!exists) state.allIds.push(file.id);
@@ -31,17 +31,17 @@ export const filesSlice = createSlice({
     name: "files",
     initialState,
     reducers: {
-        setFiles: (state, action: PayloadAction<fileData[]>) => {
+        setFiles: (state, action: PayloadAction<fileRecord[]>) => {
             state.byId = {};
             state.allIds = [];
             state.activeFileId = null;
 
             for (const f of action.payload) upsertOne(state, f);
         },
-        upsertFile: (state, action: PayloadAction<fileData>) => {
+        upsertFile: (state, action: PayloadAction<fileRecord>) => {
             upsertOne(state, action.payload);
         },
-        upsertMany: (state, action: PayloadAction<fileData[]>) => {
+        upsertMany: (state, action: PayloadAction<fileRecord[]>) => {
             for (const f of action.payload) upsertOne(state, f);
         },
         removeFile: (state, action: PayloadAction<string>) => {
@@ -55,7 +55,7 @@ export const filesSlice = createSlice({
             const f = state.byId[fileId];
             if (!f) return;
             f.name = name;
-            f.ext = name.split(".").pop()?.toLowerCase() as string;
+            f.ext = name.split(".").pop()?.toLowerCase() as fileExtension;
         },
         updateFileContent: (
             state,

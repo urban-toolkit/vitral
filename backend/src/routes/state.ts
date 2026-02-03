@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
+import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 
 type SaveBody = {
@@ -7,8 +8,12 @@ type SaveBody = {
     state: unknown;
 };
 
-function sha256Hex(input: string): string {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
+function sha256HexFromBuffer(buf: Buffer) {
+    return crypto.createHash("sha256").update(buf).digest("hex");
+}
+
+function bufferFromContent(content: string, contentKind: "text" | "base64") {
+    return contentKind === "base64" ? Buffer.from(content, "base64") : Buffer.from(content, "utf8");
 }
 
 export const stateRoutes: FastifyPluginAsync = async (app) => {
@@ -373,49 +378,104 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.post("/state/:docId/files", async (request, reply) => {
         const { docId } = request.params as { docId: string };
 
-        const { id, name, mimeType, sizeBytes, content } = request.body as { id: string, name: string; mimeType: string; sizeBytes: number; content: string };
+        const parts = request.parts();
 
-        // Dedupe key = sha256 of stored content string
-        const hash = sha256Hex(content);
+        let filePart:
+            | { filename: string; mimetype: string; file: NodeJS.ReadableStream }
+            | null = null;
 
-        const client = await app.pg.connect();
+        const fields: Record<string, string> = {};
+
+        for await (const part of parts) {
+            if (part.type === "file") {
+                if (part.fieldname !== "file") continue;
+                filePart = {
+                    filename: part.filename,
+                    mimetype: part.mimetype,
+                    file: part.file,
+                };
+            } else {
+                fields[part.fieldname] = part.value as string;
+            }
+        }
+
+        if (!filePart) {
+            return reply.code(400).send({ error: 'Missing multipart file field "file"' });
+        }
+
+        const id = fields.id;
+        const name = fields.name ?? filePart.filename;
+        const mimeType = fields.mimeType ?? filePart.mimetype;
+
+        if (!id || !name) {
+            return reply.code(400).send({ error: "Missing required fields: id, name" });
+        }
+
+        const bucket = process.env.S3_BUCKET!;
+
+        const hasher = crypto.createHash("sha256");
+        let size = 0;
+
+        const chunks: Buffer[] = [];
+        for await (const chunk of filePart.file) {
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            chunks.push(buf);
+            hasher.update(buf);
+            size += buf.length;
+        }
+        const bytes = Buffer.concat(chunks);
+        const hash = hasher.digest("hex");
+
+        const objectKey = `sha256/${hash}`;
+
         try {
+            await request.server.s3.send(new HeadObjectCommand({ Bucket: bucket, Key: objectKey }));
+        } catch {
+            await request.server.s3.send(
+                new PutObjectCommand({
+                    Bucket: bucket,
+                    Key: objectKey,
+                    Body: bytes,
+                    ContentType: mimeType || "application/octet-stream",
+                    Metadata: { originalname: name, sha256: hash },
+                })
+            );
+        }
 
-            const result = await client.query<{id: string}>(
+        const client = await request.server.pg.connect();
+        try {
+            const result = await client.query<{ id: string }>(
                 `
                 INSERT INTO document_files (
-                    id,
-                    document_id,
-                    name,
-                    mime_type,
-                    size_bytes,
-                    sha256,
+                    id, document_id, name, mime_type, ext, size_bytes, sha256,
                     content_text,
-                    created_at
+                    storage_backend, storage_bucket, storage_key, created_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+                VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,'minio',$8,$9,now())
                 ON CONFLICT (document_id, sha256)
                 DO UPDATE SET
-                    name = document_files.name
-                RETURNING id
+                    name = EXCLUDED.name,
+                    mime_type = EXCLUDED.mime_type,
+                    size_bytes = EXCLUDED.size_bytes,
+                    storage_backend = 'minio',
+                    storage_bucket = EXCLUDED.storage_bucket,
+                    storage_key = EXCLUDED.storage_key
+                RETURNING id, created_at
                 `,
                 [
                     id,
                     docId,
                     name,
                     mimeType,
-                    sizeBytes,
+                    name.includes(".") ? name.split(".").pop()?.toLowerCase() : null,
+                    size,
                     hash,
-                    content,
+                    bucket,
+                    objectKey,
                 ]
             );
 
-            const fileId = result.rows[0]?.id;
-            if (!fileId) {
-                return reply.code(500).send();
-            }
-
-            return reply.send({ fileId });
+            return reply.send({ fileId: result.rows[0]?.id, createdAt: result.rows[0]?.created_at, sha256: hash, sizeBytes: size });
         } finally {
             client.release();
         }
@@ -429,26 +489,32 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const { id } = request.params as { id: string };
 
         const client = await app.pg.connect();
-
         try {
             const res = await client.query<{
                 id: string;
                 name: string;
-                content: string;
                 mime_type: string | null;
                 size_bytes: number | null;
                 sha256: string | null;
-                created_at: string; 
+                created_at: string;
+
+                content_text: string | null;
+                storage_backend: "postgres" | "minio";
+                storage_bucket: string | null;
+                storage_key: string | null;
             }>(
                 `
                 SELECT
                     id,
                     name,
-                    content_text,
                     mime_type,
                     size_bytes,
                     sha256,
-                    created_at
+                    created_at,
+                    content_text,
+                    storage_backend,
+                    storage_bucket,
+                    storage_key
                 FROM document_files
                 WHERE document_id = $1
                 ORDER BY created_at DESC
@@ -456,7 +522,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 [id]
             );
 
-            const files = res.rows.map((r: any) => {
+            const files = res.rows.map((r) => {
                 const ext = r.name.includes(".")
                     ? r.name.split(".").pop()?.toLowerCase()
                     : undefined;
@@ -464,12 +530,26 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 return {
                     id: r.id,
                     name: r.name,
-                    content: r.content_text,
                     mimeType: r.mime_type ?? undefined,
                     ext,
                     sizeBytes: r.size_bytes ?? undefined,
                     sha256: r.sha256 ?? undefined,
                     createdAt: new Date(r.created_at).toISOString(),
+
+                    content:
+                        r.storage_backend === "postgres"
+                            ? r.content_text
+                            : undefined,
+
+                    contentBackend: r.storage_backend,
+
+                    storage:
+                        r.storage_backend === "minio"
+                            ? {
+                                bucket: r.storage_bucket!,
+                                key: r.storage_key!,
+                            }
+                            : undefined,
                 };
             });
 

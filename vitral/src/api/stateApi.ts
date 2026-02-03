@@ -1,4 +1,4 @@
-import type { fileData } from "@/config/types";
+import type { fileRecord } from "@/config/types";
 
 export type FlowStatePayload = {
     flow: {
@@ -100,10 +100,11 @@ export async function updateDocumentMeta(docId: string, payload: { title?: strin
 export async function createFile(docId: string, payload: {
     id: string;
     name: string;
-    mimeType?: string;
-    sizeBytes?: number;
-    content: string;
-}): Promise<{ fileId: string }> {
+    mimeType: string;
+    sizeBytes: number;
+    content?: string;
+    contentKind: 'text' | 'base64';
+}): Promise<{ fileId: string, createdAt: string }> {
 
     const res = await fetch(`${API_BASE}/api/state/${docId}/files`, {
         method: "POST",
@@ -122,7 +123,7 @@ export async function createFile(docId: string, payload: {
     return res.json();
 }
 
-export async function listFiles(docId: string): Promise<{ files: fileData[] }> {
+export async function listFiles(docId: string): Promise<{ files: fileRecord[] }> {
     const res = await fetch(`${API_BASE}/api/state/${docId}/files`, {
         method: "GET",
         credentials: "include",

@@ -1,6 +1,6 @@
 // FilePreview.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { fileData } from "@/config/types";
+import type { fileRecord } from "@/config/types";
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -23,7 +23,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 ).toString();
 
 type FilePreviewProps = {
-    file: fileData;
+    file: fileRecord;
 };
 
 const EMPTY_STR = "";
@@ -59,13 +59,15 @@ function normalizeLang(ext: string) {
     }
 }
 
-function getRenderableUrl(file: fileData): string | undefined {
+function getRenderableUrl(file: fileRecord): string | undefined {
 
-    const mt = file.mimeType || "";
+    // const mt = file.mimeType || "";
 
-    if (file.mimeType.startsWith("image/")) {
-        return `data:${mt};base64,${file.content.replace(/\s/g, "")}`;
-    }
+    // TODO: generate URL from file blob fetched from MinIO.
+
+    // if (file.mimeType.startsWith("image/")) {
+    //     return `data:${mt};base64,${file.content.replace(/\s/g, "")}`;
+    // }
 
     return undefined;
 }
@@ -114,7 +116,8 @@ export function FilePreview({ file }: FilePreviewProps) {
         if (file.mimeType.startsWith("image/")) return null;
 
         try {
-            return JSON.parse(file.content);
+            // TODO: fetch content if undefined.
+            return JSON.parse(file.content as string);
         } catch {
             return null;
         }

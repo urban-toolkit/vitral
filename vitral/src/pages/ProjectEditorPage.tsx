@@ -13,7 +13,7 @@ import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNod
 import { upsertFile } from '@/store/filesSlice';
 import { Card } from '@/components/Card';
 
-import type { edgeType, fileData, nodeType } from '@/config/types';
+import type { edgeType, filePendingUpload, nodeType } from '@/config/types';
 import type { RootState } from '@/store';
 
 import { FreeInputZone } from '@/components/FreeInputZone';
@@ -96,10 +96,12 @@ const FlowInner = () => {
     const onAttachFile = useCallback(async (nodeId: string, file: File) => {
 
         const res = await parseFile(file);
-        const { id, name, mimeType, sizeBytes, content, ...rest } = res;
-        const { fileId } = await createFile(projectId, { id, name, mimeType, sizeBytes, content });
+        const { id, name, mimeType, sizeBytes, previewText, ext, ...rest } = res;
+        const { fileId, createdAt } = await createFile(projectId, { id, name, mimeType, sizeBytes, content: previewText, contentKind: previewText ? 'text' : 'base64'});
 
-        dispatch(upsertFile({ id: fileId, name, mimeType, sizeBytes, content, ...rest }));
+        // TODO: if there is storage pass it to the upsertFile.
+
+        dispatch(upsertFile({ id: fileId, name, mimeType, sizeBytes, ext, content: previewText, contentBackend: previewText ? 'postgres' : 'minio', createdAt }));
         dispatch(attachFileIdToNode({ nodeId, fileId }));
 
     }, [dispatch, projectId]);
@@ -126,7 +128,7 @@ const FlowInner = () => {
     const processFile = async (file: File) => {
         setLoading(true);
 
-        const data: fileData = await parseFile(file);
+        const data: filePendingUpload = await parseFile(file);
         const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLM(data);
 
         console.log(response);

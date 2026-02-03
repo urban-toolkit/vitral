@@ -1,6 +1,3 @@
-import React, { useMemo } from "react";
-import type { fileData } from "@/config/types";
-
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 

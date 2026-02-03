@@ -65,6 +65,16 @@
 
 .socialCardBack {
 	background-color: var(--social-color-darker);
+	border-radius: 16px;
+	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+	backdrop-filter: blur(4px);
+	-webkit-backdrop-filter: blur(4px);
+	border: 1px solid rgba(255, 255, 255, 0.39);
+}
+
+.backBody {
+	flex: 1;
+	padding: 5px;
 }
 
 .techCard {
@@ -78,21 +88,23 @@
 
 .techCardBack {
 	background-color: var(--technical-color-darker);
+	border-radius: 16px;
+	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+	backdrop-filter: blur(4px);
+	-webkit-backdrop-filter: blur(4px);
+	border: 1px solid rgba(255, 255, 255, 0.39);
 }
 
 .backText {
 	font-size: var(--font-size-xs);
 	overflow-y: auto;
 	text-align: left;
-	padding: 5px;
 	margin: 0;
 }
 
 .labelIcon {
 	border-radius: 50%;
 	position: absolute;
-	top: -10px;
-	left: -3px;
 	width: 30px;
 	height: 30px;
 	display: flex;
@@ -146,6 +158,8 @@
 	border: var(--border-style);
 	transform: rotateY(180deg);
 	color: white;
+	display: flex;
+	flex-direction: column;
 }
 
 /* ============================= */

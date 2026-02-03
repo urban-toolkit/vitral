@@ -1,4 +1,4 @@
-import type { fileData, fileExtension } from "@/config/types";
+import type { fileRecord, fileExtension } from "@/config/types";
 import { useEffect, useRef } from "react";
 import classes from './FileCarousel.module.css';
 import { FilePreview } from "./FilePreview";
@@ -22,7 +22,7 @@ const extToIcon = (ext: fileExtension): IconDefinition  => {
     return faFileLines;
 }
 
-export function FileCarousel({ files, children }: { files: fileData[], children?: React.ReactNode }) {
+export function FileCarousel({ files, children }: { files: fileRecord[], children?: React.ReactNode }) {
     const scrollerRef = useRef<HTMLDivElement | null>(null);
 
     const scrollBySlides = (dir: -1 | 1) => {

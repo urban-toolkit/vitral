@@ -8,7 +8,7 @@ import { faRepeat, faPerson, faCalendar, faCube, faListCheck, faLinesLeaning, fa
 import { Position, Handle } from '@xyflow/react';
 import { AttachFileZone } from './AttachFileZone';
 import { shallowEqual, useSelector } from 'react-redux';
-import type { fileData } from '@/config/types';
+import type { fileRecord } from '@/config/types';
 import { makeSelectFilesForNode } from '@/store/flowSlice';
 import { FileCarousel } from '@/components/FileCarousel';
 
@@ -45,7 +45,7 @@ export function Card(props: any) {
         [props.id]
     );
 
-    const files: fileData[] = useSelector(selectFiles, shallowEqual);
+    const files: fileRecord[] = useSelector(selectFiles, shallowEqual);
 
     const dropZoneCSS = useMemo<React.CSSProperties>(() => ({
         border: "2px dashed #ccc",
@@ -71,7 +71,7 @@ export function Card(props: any) {
                         <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => {setFlipped(true)}}/>
                     </div>
                     <div className={classes.attachments}>
-                        <div className={classes.labelIcon} style={{backgroundColor: headerColor[props.data.label as string]}}>
+                        <div className={classes.labelIcon} style={{backgroundColor: headerColor[props.data.label as string], top: "-10px", left: "-3px"}}>
                             <LabelIcon
                                 label={props.data.label}
                             />
@@ -95,11 +95,18 @@ export function Card(props: any) {
                 </div>
 
                 <div className={`${classes.flipCardBack} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>
-                    <div className={classes.header} style={{backgroundColor: headerColor[props.data.label as string]}}>
+                    <div className={classes.header}>
                         <p>{`${props.data.label[0].toUpperCase()}${props.data.label.slice(1)}`}</p>
                         <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => {setFlipped(false)}}/>
                     </div>
-                    <p className={classes.backText}>{props.data.description}</p>
+                    <div className={classes.backBody}>
+                        <div className={classes.labelIcon} style={{backgroundColor: headerColor[props.data.label as string], top: "-4px", left: "-5px"}}>
+                            <LabelIcon
+                                label={props.data.label}
+                            />
+                        </div>
+                        <p className={classes.backText}>{props.data.description}</p>
+                    </div>
                 </div>
 
             </div>

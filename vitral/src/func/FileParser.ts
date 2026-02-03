@@ -1,68 +1,34 @@
-import type { fileData } from '@/config/types';
+import type { filePendingUpload, fileExtension } from '@/config/types';
 
-function readAsDataURL(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+const TEXT_EXTENSIONS = new Set([
+    "txt", "json", "ipynb", "csv", "py", "js", "ts", "html", "css", "md",
+]);
+
+function getExt(name: string): fileExtension {
+    return (name.includes(".") ? name.split(".").pop()!.toLowerCase() : "") as fileExtension;
 }
 
-async function readFile(file:File): Promise<{mimeType: string, content: string}> {
-    const ext = file.name.split(".").pop()?.toLowerCase();
-    const mime = file.type;
-
-    // TODO: support .pdf, .docx
-
-    if (mime.startsWith("image/") && ext != undefined) {
-        const dataUrl = await readAsDataURL(file);
-        return {
-            mimeType: mime,
-            content: dataUrl
-        };
-    }
-
-    const textExtensions = [
-        "txt",
-        "json",
-        "ipynb",
-        "csv",
-        "py",
-        "js",
-        "ts",
-        "html",
-        "css",
-        "md",
-    ];
-
-    if (ext && textExtensions.includes(ext)) {
-        return {
-            mimeType: mime || "text/plain",
-            content: await file.text()
-        };
-    }
-
-    return {
-        mimeType: mime || "text/plain",
-        content: await file.text()
-    };
+function isTextLike(file: File, ext: string) {
+    return TEXT_EXTENSIONS.has(ext) || (file.type?.startsWith("text/") ?? false);
 }
 
-export async function parseFile(file: File): Promise<fileData> {
-    const fileContentAndType: {mimeType: string, content: string} = await readFile(file);
+export async function parseFile(file: File): Promise<filePendingUpload> {
+    const ext = getExt(file.name);
+    const mimeType = file.type || (TEXT_EXTENSIONS.has(ext) ? "text/plain" : "application/octet-stream");
 
-    const ext = file.name.split(".").pop()?.toLowerCase() as string;
 
-    const data: fileData = {
+    const data: filePendingUpload = {
         id: crypto.randomUUID(),
         name: file.name,
         ext,
         sizeBytes: file.size,
-        mimeType: fileContentAndType.mimeType,
-        content: fileContentAndType.content,
-        // sha256: TODO: dedupe
-    } 
+        mimeType,
+        file,
+    };
+
+    if (isTextLike(file, ext)) {
+        data.previewText = await file.text();
+    }
 
     return data;
 }
