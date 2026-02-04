@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 import classes from './GithubFiles.module.css';
 import { getGitHubContents, getGithubDocumentLink, getGitHubRepos, linkRepoToDocument, type GitHubContentItem, type GitHubDocumentResponse, type GitHubRepo } from '@/api/githubApi';
-import { GitRepoModal } from '@/components/GitRepoModal';
+import { GitRepoModal } from '@/components/github/GitRepoModal';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faFolder, faFile } from '@fortawesome/free-solid-svg-icons';
 

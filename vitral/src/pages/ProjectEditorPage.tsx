@@ -5,22 +5,26 @@ import { ReactFlow, useReactFlow, ReactFlowProvider, Background, BackgroundVaria
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
 
-import { Title } from '@/components/Title';
-import { Toolbar } from '@/components/Toolbar';
+import { Title } from '@/components/project/Title';
+import { Toolbar } from '@/components/toolbar/Toolbar';
 import { parseFile } from '@/func/FileParser';
 import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
 import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNode, addNode, updateNode } from '@/store/flowSlice';
 import { upsertFile } from '@/store/filesSlice';
-import { Card } from '@/components/Card';
+import { Card } from '@/components/cards/Card';
 
 import type { cardType, edgeType, filePendingUpload, nodeType } from '@/config/types';
 import type { RootState } from '@/store';
 
-import { FreeInputZone } from '@/components/FreeInputZone';
+import { FreeInputZone } from '@/components/toolbar/FreeInputZone';
 import { createFile, updateDocumentMeta } from '@/api/stateApi';
-import { GitHubFiles } from '@/components/GithubFiles';
+import { GitHubFiles } from '@/components/github/GithubFiles';
 import { githubStatus } from '@/api/githubApi';
-import { LoadSpinner } from '@/components/LoadSpinner';
+import { LoadSpinner } from '@/components/project/LoadSpinner';
+import { Timeline } from '@/components/timeline/Timeline';
+
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faAnglesUp } from '@fortawesome/free-solid-svg-icons';
 
 type FlowCanvasProps = {
     projectId: string;
@@ -108,39 +112,46 @@ const FlowInner = () => {
 
     }, [dispatch, projectId]);
 
-    const onLabelChange = useCallback(async (nodeProps: nodeType, newLabel: string) => {
+    const onDataPropertyChange = useCallback(async (nodeProps: nodeType, value: any, propertyName: string) => {
+
+        let data: Record<string, any> = {...nodeProps.data};
 
         let cardType: cardType = 'social';
 
-        switch (newLabel) {
+        switch (value) {
             case 'requirement':
                 cardType = 'technical';
                 break;
             case 'insight':
                 cardType = 'technical';
-                break
+                break;
         }
+
+        if(propertyName == "label")
+            data.type = cardType;
+
+        data[propertyName] = value;
 
         let newNode = {
             ...nodeProps,
-            data: {
-                ...nodeProps.data,
-                label: newLabel,
-                type: cardType
-            }
+            data
         };
 
-        dispatch(updateNode(newNode));
+        dispatch(updateNode(newNode as nodeType));
     }, [dispatch]);
 
     const nodeTypes = useMemo(() => ({
-        card: (nodeProps: any) => <Card {...nodeProps} onAttachFile={onAttachFile} onLabelChange={onLabelChange} />
+        card: (nodeProps: any) => <Card {...nodeProps} onAttachFile={onAttachFile} onDataPropertyChange={onDataPropertyChange} />
     }), [onAttachFile]);
 
     const checkGitStatus = async () => {
         const status = await githubStatus();
         setGitConnectionStatus(status);
     }
+
+    // Timeline
+
+    const [timelineOpen, setTimelineOpen] = useState(false);
 
     // Drag + Drop functions
 
@@ -223,7 +234,7 @@ const FlowInner = () => {
                 data: {
                     label: 'activity',
                     type: 'social',
-                    title: ''
+                    title: 'Untitled'
                 }
             }));
         }
@@ -359,6 +370,83 @@ const FlowInner = () => {
         <LoadSpinner
             loading={loading}
         />
+
+        <div
+            style={{
+                ...(timelineOpen 
+                    ? 
+                    {bottom: "200px"} 
+                    : 
+                    {bottom: 0})
+                ,
+                cursor: "pointer",
+                height: "25px",
+                padding: "5px",
+                position: "fixed",
+                backgroundColor: "white",
+                zIndex: 2,
+                border: "1px solid rgba(174, 172, 172, 0.39)",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center"
+            }}
+            onClick={() => {setTimelineOpen(!timelineOpen)}}
+        >
+            <p
+                style={{
+                    margin: 0
+                }}
+            >Events</p>
+            
+            <FontAwesomeIcon
+                icon={faAnglesUp} 
+                style={timelineOpen ? {transform: "rotateX(180deg)"} : {}}
+            />
+        </div>
+
+        <div 
+            style={
+                {
+                    ...(timelineOpen
+                        ?
+                        {bottom: 0}
+                        :
+                        {bottom: "-200px"}
+                    ),
+                    position: "fixed",
+                    backgroundColor: "rgba(255, 255, 255, 0.7)",
+                    height: "200px",
+                    width: "100vw",
+                    boxShadow: "0 4px 30px rgba(0, 0, 0, 0.1)",
+                    border: "1px solid rgba(255, 255, 255, 0.39)",
+                    backdropFilter: "blur(4px)"
+                }
+            }
+        >
+            <Timeline 
+                startMarker={new Date("January 15, 2026 03:24:00")}
+                endMarker={new Date("June 04, 2026 00:24:00")}
+                codebaseEvents={[
+                    {id: crypto.randomUUID(), date: new Date("January 04, 2026 12:24:00"), kind: "codebase", subtype: "repo_created"},
+                    {id: crypto.randomUUID(), date: new Date("January 06, 2026 12:24:00"), kind: "codebase", subtype: "commit"},
+                ]}
+                knowledgeBaseEvents={[
+                    {id: crypto.randomUUID(), date: new Date("February 04, 2026 12:24:00"), kind: "knowledge", subtype: "activity_created"},
+                    {id: crypto.randomUUID(), date: new Date("February 13, 2026 12:24:00"), kind: "knowledge", subtype: "requirement_created"},
+                ]}
+                designStudyEvents={[
+                    {id: crypto.randomUUID(), date: new Date("January 01, 2026 03:24:00"), kind: "designStudy", subtype: "study_started"},
+                ]}
+                stages={[
+                    {name: "Learn", start: new Date("January 15, 2026 03:24:00"), end: new Date("February 05, 2026 03:24:00")},
+                    {name: "Design", start: new Date("February 05, 2026 03:24:00"), end: new Date("March 26, 2026 03:24:00")},
+                    {name: "Implement", start: new Date("March 26, 2026 03:24:00"), end: new Date("April 16, 2026 03:24:00")},
+                    {name: "Evaluate", start: new Date("April 16, 2026 03:24:00"), end: new Date("May 21, 2026 03:24:00")},
+                    {name: "Reflect and Communicate", start: new Date("May 21, 2026 03:24:00"), end: new Date("June 04, 2026 03:24:00")}
+                ]}
+            />
+        </div>
+
     </>
 
 }

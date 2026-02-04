@@ -11,12 +11,12 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
-import { NotebookRenderer } from "@/components/NotebookRenderer";
+import { NotebookRenderer } from "@/components/cards/NotebookRenderer";
 
 import classes from './FilePreview.module.css';
-import FileModal from "@/components/FileModal";
-import { FilePreviewCard } from "@/components/FilePreviewCard";
-import { LoadSpinner } from "@/components/LoadSpinner";
+import FileModal from "@/components/files/FileModal";
+import { FilePreviewCard } from "@/components/files/FilePreviewCard";
+import { LoadSpinner } from "@/components/project/LoadSpinner";
 import { getFileContent } from "@/api/stateApi";
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";

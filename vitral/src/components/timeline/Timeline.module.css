@@ -1,0 +1,90 @@
+.container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    font-size: var(--font-size-md);
+}
+
+.svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* axis */
+.axis path {
+    opacity: 0.4;
+}
+
+.axis line {
+    opacity: 0.25;
+}
+
+.axis text {
+    opacity: 0.85;
+    font-size: 12px;
+}
+
+/* stages */
+.stageBand {
+    fill: transparent;
+    stroke: rgba(0, 0, 0, 0.15);
+}
+
+.stage {
+    fill: rgba(0, 0, 0, 0.04);
+    stroke: rgba(0, 0, 0, 0.1);
+}
+
+.stageLabel {
+    font-size: 12px;
+    opacity: 0.9;
+    pointer-events: none;
+    text-anchor: middle;
+    opacity: 0.4;
+}
+
+/* markers */
+.markerLine {
+    stroke: rgba(128, 127, 127, 0.3);
+    stroke-dasharray: 4 3;
+    stroke-width: 2px;
+}
+
+.markerLabel {
+    font-size: 12px;
+    opacity: 0.85;
+    text-anchor: middle;
+}
+
+/* lanes */
+.laneLine {
+    stroke: rgba(0, 0, 0, 0.15);
+}
+
+.laneLabel {
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+/* events */
+.event {
+    cursor: pointer;
+}
+
+.eventShape {
+    fill: rgba(0, 0, 0, 0.8);
+    stroke: rgba(255, 255, 255, 0.85);
+    stroke-width: 1;
+}
+
+/* tooltip */
+.tooltipBg {
+    fill: rgba(0, 0, 0, 0.8);
+}
+
+.tooltipText {
+    fill: white;
+    font-size: 12px;
+    pointer-events: none;
+}

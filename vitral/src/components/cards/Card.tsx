@@ -6,11 +6,11 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRepeat, faPerson, faCalendar, faCube, faListCheck, faLinesLeaning, faLightbulb, type IconDefinition } from '@fortawesome/free-solid-svg-icons';
 
 import { Position, Handle } from '@xyflow/react';
-import { AttachFileZone } from './AttachFileZone';
+import { AttachFileZone } from '@/components/files/AttachFileZone';
 import { shallowEqual, useSelector } from 'react-redux';
 import type { fileRecord, nodeType } from '@/config/types';
 import { makeSelectFilesForNode } from '@/store/flowSlice';
-import { FileCarousel } from '@/components/FileCarousel';
+import { FileCarousel } from '@/components/files/FileCarousel';
 
 const headerColor: Record<string, string> = {
     person: "rgba(231, 174, 255, 0.70)",
@@ -63,6 +63,11 @@ export function Card(props: any) {
     }, [props.onAttachFile, props.id]);
 
     const [isEditingLabel, setIsEditingLabel] = useState(false);
+    const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [isEditingDescription, setIsEditingDescription] = useState(false);
+
+    const [draftTitle, setDraftTitle] = useState(props.data.title);
+    const [draftDescription, setDraftDescription] = useState(props.data.description ?? '');
 
     return (
         <div className={`${classes.card} ${classes.flipCard}`}>
@@ -80,9 +85,9 @@ export function Card(props: any) {
                                     const newLabel = e.target.value;
 
                                     // Removing callback functions from props
-                                    const {onAttachFile, onLabelChange, ...cleanProps } = props;
+                                    const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
 
-                                    props.onLabelChange(cleanProps, newLabel);
+                                    props.onDataPropertyChange(cleanProps, newLabel, "label");
                                     setIsEditingLabel(false);
                                 }}
                                 onBlur={() => setIsEditingLabel(false)}
@@ -123,7 +128,45 @@ export function Card(props: any) {
                         </FileCarousel>
                     </div>
                     <div className={classes.title}>
-                        <p>{props.data.title}</p>
+                        {isEditingTitle ? (
+                            <textarea
+                                className={classes.fieldTextEditor}
+                                value={draftTitle}
+                                autoFocus
+                                rows={1}
+                                onChange={(e) => setDraftTitle(e.target.value)}
+                                onBlur={() => {
+                                    const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
+
+                                    props.onDataPropertyChange(cleanProps, draftTitle.trim(), "title");
+                                    setIsEditingTitle(false);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter" && !e.shiftKey) {
+                                        e.preventDefault();
+
+                                        const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
+
+                                        props.onDataPropertyChange(cleanProps, draftTitle.trim(), "title");
+                                        setIsEditingTitle(false);
+                                    }
+                                    if (e.key === "Escape") {
+                                        setDraftTitle(props.data.title);
+                                        setIsEditingTitle(false);
+                                    }
+                                }}
+                            />
+                        ) : (
+                            <p
+                                className={classes.title}
+                                onClick={() => {
+                                    setDraftTitle(props.data.title);
+                                    setIsEditingTitle(true);
+                                }}
+                            >
+                                {props.data.title || "Untitled"}
+                            </p>
+                        )}
                     </div>
 
                 </div>
@@ -139,7 +182,49 @@ export function Card(props: any) {
                                 label={props.data.label}
                             />
                         </div>
-                        <p className={classes.backText}>{props.data.description}</p>
+
+                        {/* <p className={classes.backText}>{props.data.description}</p> */}
+                        {isEditingDescription ? (
+                            <textarea
+                                className={classes.fieldTextEditor}
+                                style={{fontSize: "var(--font-size-xs)", color: "white"}}
+                                value={draftDescription}
+                                autoFocus
+                                rows={1}
+                                onChange={(e) => setDraftDescription(e.target.value)}
+                                onBlur={() => {
+                                    const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
+
+                                    props.onDataPropertyChange(cleanProps, draftDescription.trim(), "description");
+                                    setIsEditingDescription(false);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter" && !e.shiftKey) {
+                                        e.preventDefault();
+
+                                        const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
+
+                                        props.onDataPropertyChange(cleanProps, draftDescription.trim(), "description");
+                                        setIsEditingDescription(false);
+                                    }
+                                    if (e.key === "Escape") {
+                                        setDraftDescription(props.data.description);
+                                        setIsEditingDescription(false);
+                                    }
+                                }}
+                            />
+                        ) : (
+                            <p
+                                className={classes.backText}
+                                onClick={() => {
+                                    setDraftDescription(props.data.description);
+                                    setIsEditingDescription(true);
+                                }}
+                            >
+                                {props.data.description || "Empty description."}
+                            </p>
+                        )}
+
                     </div>
                 </div>
 

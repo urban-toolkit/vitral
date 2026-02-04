@@ -1,7 +1,7 @@
 import type { fileRecord, fileExtension } from "@/config/types";
 import { useEffect, useRef } from "react";
 import classes from './FileCarousel.module.css';
-import { FilePreview } from "./FilePreview";
+import { FilePreview } from "@/components/files/FilePreview";
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faImage, faDatabase, faFileCode, faFileLines, type IconDefinition } from '@fortawesome/free-solid-svg-icons';
 
