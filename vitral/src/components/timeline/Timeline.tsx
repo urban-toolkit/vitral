@@ -14,6 +14,7 @@ export type TimelineEventBase = {
     id: string;
     date: Date | ISODate;
     label?: string;
+    description?: string;
 };
 
 export type CodebaseEvent = TimelineEventBase & {

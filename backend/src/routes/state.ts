@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { PutObjectCommand, HeadObjectCommand, GetObjectCommand, ListBucketsCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import type { Readable } from "node:stream";
 import { streamToString } from "../utils/streams.ts";

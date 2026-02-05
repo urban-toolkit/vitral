@@ -160,7 +160,6 @@ export function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
                 repos={githubRepos}
                 onClose={closeModal}
                 onSelectRepo={async (repo: GitHubRepo) => {
-                    console.log("Selected repo", repo);
                     await linkRepoToDocument(projectId, repo.owner, repo.repo);
                     closeModal();
                     retrieveGithubLinkInformation();

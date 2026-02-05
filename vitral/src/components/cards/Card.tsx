@@ -191,7 +191,9 @@ export function Card(props: any) {
                                 value={draftDescription}
                                 autoFocus
                                 rows={1}
-                                onChange={(e) => setDraftDescription(e.target.value)}
+                                onChange={(e) => {
+                                    setDraftDescription(e.target.value);
+                                }}
                                 onBlur={() => {
                                     const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
 
@@ -208,7 +210,10 @@ export function Card(props: any) {
                                         setIsEditingDescription(false);
                                     }
                                     if (e.key === "Escape") {
-                                        setDraftDescription(props.data.description);
+                                        if(props.data.description == '' || !props.data.description)
+                                            setDraftDescription("Empty description.");
+                                        else
+                                            setDraftDescription(props.data.description);
                                         setIsEditingDescription(false);
                                     }
                                 }}
@@ -217,7 +222,10 @@ export function Card(props: any) {
                             <p
                                 className={classes.backText}
                                 onClick={() => {
-                                    setDraftDescription(props.data.description);
+                                    if(props.data.description == '' || !props.data.description)
+                                        setDraftDescription("Empty description.");
+                                    else
+                                        setDraftDescription(props.data.description);
                                     setIsEditingDescription(true);
                                 }}
                             >

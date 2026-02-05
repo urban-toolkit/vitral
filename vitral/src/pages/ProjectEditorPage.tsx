@@ -25,6 +25,7 @@ import { Timeline } from '@/components/timeline/Timeline';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faAnglesUp } from '@fortawesome/free-solid-svg-icons';
+import { getGitHubEvents } from '@/api/eventsApi';
 
 type FlowCanvasProps = {
     projectId: string;
@@ -144,17 +145,23 @@ const FlowInner = () => {
         card: (nodeProps: any) => <Card {...nodeProps} onAttachFile={onAttachFile} onDataPropertyChange={onDataPropertyChange} />
     }), [onAttachFile]);
 
+    const fetchGithubEvents = async (connected: boolean) => {
+        if(connected){
+            const githubEvents = await getGitHubEvents(projectId);
+            console.log("githubEvents", githubEvents);
+        }
+    }
+
     const checkGitStatus = async () => {
         const status = await githubStatus();
         setGitConnectionStatus(status);
+        fetchGithubEvents(status.connected);
     }
 
     // Timeline
-
     const [timelineOpen, setTimelineOpen] = useState(false);
 
     // Drag + Drop functions
-
     const [ghostScreen, setGhostScreen] = useState<{ x: number; y: number } | null>(null);
     const [dragActive, setDragActive] = useState(false);
 
@@ -287,7 +294,6 @@ const FlowInner = () => {
         <Title
             textTitle={title}
             onSetTitle={(newTitle: string) => {
-                console.log("newTitle", newTitle);
                 updateDocumentMeta(projectId, { title: newTitle });
             }}
         />
@@ -304,6 +310,8 @@ const FlowInner = () => {
             onPointerClicked={() => {
                 cursorMode.current = '';
             }}
+
+            shifted={timelineOpen}
         />
 
         <GitHubFiles

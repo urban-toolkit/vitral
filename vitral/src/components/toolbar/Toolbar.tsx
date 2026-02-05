@@ -7,12 +7,22 @@ type ToolbarProps = {
     onFreeInputClicked: () => void;
     onNodeInputClicked: () => void;
     onPointerClicked: () => void;
+    shifted?: boolean;
 };
 
-export function Toolbar({ onFreeInputClicked, onNodeInputClicked, onPointerClicked }: ToolbarProps) {
+export function Toolbar({ onFreeInputClicked, onNodeInputClicked, onPointerClicked, shifted }: ToolbarProps) {
 
     return (
-        <div className={classes.container}>
+        <div 
+            className={classes.container}
+            style={
+                shifted
+                ?
+                {bottom: "215px"}
+                :
+                {bottom: "15px"}
+            }    
+        >
             <div className={classes.tool}>
                 <FontAwesomeIcon icon={faArrowPointer} className={classes.toolIcon} onClick={() => { onPointerClicked() }} />
             </div>

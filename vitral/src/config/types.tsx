@@ -64,3 +64,30 @@ export type edgeType = {
     source: string,
     target: string
 }
+
+export type GitHubEventType =
+    | "commit"
+    | "issue_opened"
+    | "issue_closed"
+    | "pr_opened"
+    | "pr_closed"
+    | "pr_merged";
+
+export interface GitHubEvent {
+    id: string;
+    type: GitHubEventType;
+    key: string;
+
+    occurredAt: string; // ISO timestamp
+
+    actor: string | null;
+    title: string | null;
+    url: string | null;
+
+    issueNumber: number | null;
+    prNumber: number | null;
+    commitSha: string | null;
+    branch: string | null;
+
+    payload: any;
+}
