@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import classes from "./Timeline.module.css";
+import type { GitHubEvent } from "@/config/types";
 
 type ISODate = string;
 
@@ -12,14 +13,9 @@ export type Stage = {
 
 export type TimelineEventBase = {
     id: string;
-    date: Date | ISODate;
+    occurredAt: Date | ISODate;
     label?: string;
     description?: string;
-};
-
-export type CodebaseEvent = TimelineEventBase & {
-    kind: "codebase";
-    subtype?: string;
 };
 
 export type KnowledgeBaseEvent = TimelineEventBase & {
@@ -32,13 +28,13 @@ export type DesignStudyEvent = TimelineEventBase & {
     subtype?: string;
 };
 
-type AnyEvent = CodebaseEvent | KnowledgeBaseEvent | DesignStudyEvent;
+type AnyEvent = GitHubEvent | KnowledgeBaseEvent | DesignStudyEvent;
 
 export type TimelineProps = {
     startMarker: Date | ISODate;
     endMarker: Date | ISODate;
     stages?: Stage[];
-    codebaseEvents?: CodebaseEvent[];
+    codebaseEvents?: GitHubEvent[];
     knowledgeBaseEvents?: KnowledgeBaseEvent[];
     designStudyEvents?: DesignStudyEvent[];
     margin?: { top: number; right: number; bottom: number; left: number };
@@ -75,9 +71,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     }, []);
 
     const parsed = useMemo(() => {
-        const parseEvents = <T extends TimelineEventBase>(arr: T[]) =>
+        const parseEvents = (arr: any[]) =>
             arr
-                .map(e => ({ ...e, date: toDate(e.date) }))
+                .map(e => ({ ...e, date: toDate(e.occurredAt) }))
                 .filter(e => !isNaN(e.date.getTime()));
 
         const cb = parseEvents(codebaseEvents);

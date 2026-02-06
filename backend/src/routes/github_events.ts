@@ -31,25 +31,104 @@ function isoWithSafetyWindow(dt: Date, safetyMs = 2 * 60 * 1000) {
     return new Date(dt.getTime() - safetyMs).toISOString();
 }
 
-async function ghFetchJSON<T>(
+function parseNextLink(linkHeader: string | null): string | null {
+    if (!linkHeader) return null;
+
+    const parts = linkHeader.split(",");
+    for (const part of parts) {
+        const m = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+        if (m?.[1]) return m[1];
+    }
+    return null;
+}
+
+// async function ghFetchJSON<T>(
+//     request: any,
+//     url: string,
+//     token: string
+// ): Promise<T> {
+//     const res = await fetch(url, {
+//         headers: {
+//             Authorization: `Bearer ${token}`,
+//             Accept: "application/vnd.github+json",
+//             "User-Agent": "Vitral (Dev)"
+//         },
+//     });
+
+//     if (!res.ok) {
+//         const text = await res.text();
+//         request.log.error({ status: res.status, text, url }, "GitHub API failed");
+//         throw Object.assign(new Error("GitHub API failed"), { status: res.status, text });
+//     }
+
+//     return (await res.json()) as T;
+
+// }
+
+async function ghFetchPage<T extends any[]>(
     request: any,
     url: string,
     token: string
-): Promise<T> {
+): Promise<{ items: T; nextUrl: string | null }> {
     const res = await fetch(url, {
         headers: {
             Authorization: `Bearer ${token}`,
             Accept: "application/vnd.github+json",
+            "User-Agent": "Vitral (Dev)",
+            "X-GitHub-Api-Version": "2022-11-28",
         },
     });
 
+    const text = await res.text();
+
+    console.log("url", url);
+    console.log("text", text);
+
     if (!res.ok) {
-        const text = await res.text();
-        request.log.error({ status: res.status, text, url }, "GitHub API failed");
-        throw Object.assign(new Error("GitHub API failed"), { status: res.status, text });
+        request.log.error({ status: res.status, url, text }, "GitHub API failed");
+        throw Object.assign(new Error("GitHub API failed"), {
+            status: res.status,
+            url,
+            text,
+        });
     }
 
-    return (await res.json()) as T;
+    const items = JSON.parse(text) as T;
+    const nextUrl = parseNextLink(res.headers.get("link"));
+    return { items, nextUrl };
+}
+
+/**
+ * Fetch all pages up to maxPages.
+ */
+async function ghFetchAllPages<T extends any[]>(
+    request: any,
+    url: string,
+    token: string,
+    opts?: {
+        maxPages?: number; // safety cap
+        stopWhen?: (items: T) => boolean;
+    }
+): Promise<T> {
+    const maxPages = opts?.maxPages ?? 50;
+
+    let all: any[] = [];
+    let nextUrl: string | null = url;
+    let page = 0;
+
+    while (nextUrl && page < maxPages) {
+        page++;
+        const { items, nextUrl: n } = await ghFetchPage<T>(request, nextUrl, token);
+        all.push(...items);
+
+        if (opts?.stopWhen?.(items)) break;
+
+        if (!items || items.length === 0) break;
+
+        nextUrl = n;
+    }
+
+    return all as T;
 }
 
 // Events: commit
@@ -200,8 +279,7 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
         const { id } = request.params as { id: string };
         const {
             limit = 200,
-            force = "0",
-        } = request.query as { limit?: number; force?: "0" | "1" };
+        } = request.query as { limit?: number };
 
         const token = request.cookies["gh_access_token"];
         if (!token) return reply.status(401).send({ error: "Not connected to GitHub" });
@@ -226,60 +304,35 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
         const doc = rows[0];
         const owner = doc.github_owner as string | null;
         const repo = doc.github_repo as string | null;
+        let defaultBranch: string | null = doc.github_default_branch ?? null;
 
-        if (!owner || !repo) {
+
+        if (!owner || !repo || !defaultBranch) {
             return reply.status(400).send({ error: "No GitHub repo linked to document" });
         }
 
-        // Resolve default branch
-        let defaultBranch: string | null = doc.github_default_branch ?? null;
-
-        // If not stored, fetch repo metadata once and persist it
-        if (!defaultBranch) {
-            const repoUrl = `https://api.github.com/repos/${owner}/${repo}`;
-            try {
-                const repoMeta = await ghFetchJSON<any>(request, repoUrl, token);
-                defaultBranch = repoMeta.default_branch ?? "main";
-
-                await app.pg.query(
-                    `
-                    UPDATE documents
-                    SET github_default_branch = $2
-                    WHERE id = $1
-                    `,
-                    [id, defaultBranch]
-                );
-            } catch (e: any) {
-                request.log.warn({ err: e }, "Failed to fetch repo metadata; defaulting branch to main");
-                defaultBranch = "main";
-            }
-        }
-
         // Compute "since"
-        const now = new Date();
         const lastSynced: Date | null = doc.github_last_synced_at
             ? new Date(doc.github_last_synced_at)
             : null;
 
-        // force=1 for deeper refresh
-        const baseSince = lastSynced ?? new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // default: 7d window
-        const sinceIso = isoWithSafetyWindow(
-            force === "1" ? new Date(baseSince.getTime() - 24 * 60 * 60 * 1000) : baseSince
-        );
+        // const baseSince = lastSynced ?? new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // default: 7d window
+        const baseSince = lastSynced ?? undefined;
+        const sinceIso = baseSince ? isoWithSafetyWindow(baseSince) : undefined;
 
         // Fetch from GitHub (only default branch)
         // Commits on default branch since cursor
         const commitsUrl =
             `https://api.github.com/repos/${owner}/${repo}/commits` +
             `?sha=${encodeURIComponent(defaultBranch as string)}` +
-            `&since=${encodeURIComponent(sinceIso)}` +
+            (sinceIso ? `&since=${encodeURIComponent(sinceIso)}` : "") +
             `&per_page=100`;
 
         // Issues updated since cursor (includes PRs)
         const issuesUrl =
             `https://api.github.com/repos/${owner}/${repo}/issues` +
             `?state=all` +
-            `&since=${encodeURIComponent(sinceIso)}` +
+            (sinceIso ? `&since=${encodeURIComponent(sinceIso)}` : "") +
             `&per_page=100`;
 
         // PRs: GitHub doesn't offer "since" on pulls list; filter on client-side by updated_at >= since
@@ -291,30 +344,37 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
         let issues: any[] = [];
         let pulls: any[] = [];
 
+        const sinceMs = sinceIso ? new Date(sinceIso).getTime() : undefined;
+
         try {
             [commits, issues, pulls] = await Promise.all([
-                ghFetchJSON<any[]>(request, commitsUrl, token).catch((e) => {
-                    request.log.warn({ err: e }, "Failed to fetch commits");
-                    return [];
+                ghFetchAllPages<any[]>(request, commitsUrl, token, {
+                    maxPages: 50, 
                 }),
-                ghFetchJSON<any[]>(request, issuesUrl, token).catch((e) => {
-                    request.log.warn({ err: e }, "Failed to fetch issues");
-                    return [];
+
+                ghFetchAllPages<any[]>(request, issuesUrl, token, {
+                    maxPages: 50,
                 }),
-                ghFetchJSON<any[]>(request, pullsUrl, token).catch((e) => {
-                    request.log.warn({ err: e }, "Failed to fetch pulls");
-                    return [];
+
+                ghFetchAllPages<any[]>(request, pullsUrl, token, {
+                    maxPages: 50,
+                    stopWhen: (pageItems) => {
+                        if (!sinceMs) return false; // first sync: fetch all (up to cap)
+
+                        // If GitHub returns PRs sorted by updated desc, the last item in the page is oldest in that page
+                        const last = pageItems[pageItems.length - 1];
+                        const lastUpdated = last?.updated_at
+                            ? new Date(last.updated_at).getTime()
+                            : Infinity;
+
+                        return lastUpdated < sinceMs;
+                    },
                 }),
             ]);
+
         } catch (e) {
-            return reply.status(502).send({ error: "Failed to fetch GitHub events" });
+            return reply.status(502).send({ error: `Failed to fetch GitHub events ${(e as any).message}` });
         }
-
-        console.log("commits", commits);
-        console.log("issues", issues);
-        console.log("pulls", pulls);
-
-        const sinceMs = new Date(sinceIso).getTime();
 
         const normalized: NormalizedEvent[] = [];
 
@@ -327,11 +387,11 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
             normalized.push(...normalizeIssue(id, owner, repo, it));
         }
 
-        // pulls: only PRs whose base is default branch, and updated recently enough
+        // pulls: only PRs whose base is default branch
         for (const pr of pulls) {
             if (pr?.base?.ref !== defaultBranch) continue;
             const updated = pr.updated_at ? new Date(pr.updated_at).getTime() : 0;
-            if (updated && updated < sinceMs) continue;
+            if(sinceMs && updated < sinceMs) continue;
             normalized.push(...normalizePull(id, owner, repo, defaultBranch as string, pr));
         }
 

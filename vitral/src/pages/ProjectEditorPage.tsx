@@ -19,13 +19,14 @@ import type { RootState } from '@/store';
 import { FreeInputZone } from '@/components/toolbar/FreeInputZone';
 import { createFile, updateDocumentMeta } from '@/api/stateApi';
 import { GitHubFiles } from '@/components/github/GithubFiles';
-import { githubStatus } from '@/api/githubApi';
+import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from '@/api/githubApi';
 import { LoadSpinner } from '@/components/project/LoadSpinner';
 import { Timeline } from '@/components/timeline/Timeline';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faAnglesUp } from '@fortawesome/free-solid-svg-icons';
 import { getGitHubEvents } from '@/api/eventsApi';
+import { selectAllGitHubEvents, setGithubEvents } from '@/store/gitEventsSlice';
 
 type FlowCanvasProps = {
     projectId: string;
@@ -97,6 +98,8 @@ const FlowInner = () => {
     const edges = useSelector((state: RootState) => state.flow.edges);
     const title = useSelector((state: RootState) => state.flow.title);
 
+    const gitEvents = useSelector(selectAllGitHubEvents);
+
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => dispatch(onNodesChange(changes)), [dispatch]);
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => dispatch(onEdgesChange(changes)), [dispatch]);
 
@@ -147,8 +150,12 @@ const FlowInner = () => {
 
     const fetchGithubEvents = async (connected: boolean) => {
         if(connected){
-            const githubEvents = await getGitHubEvents(projectId);
-            console.log("githubEvents", githubEvents);
+            const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
+            if(info.github_repo && info.github_repo != ""){
+                const githubEvents = await getGitHubEvents(projectId);
+
+                dispatch(setGithubEvents(githubEvents));
+            }
         }
     }
 
@@ -432,25 +439,22 @@ const FlowInner = () => {
             }
         >
             <Timeline 
-                startMarker={new Date("January 15, 2026 03:24:00")}
-                endMarker={new Date("June 04, 2026 00:24:00")}
-                codebaseEvents={[
-                    {id: crypto.randomUUID(), date: new Date("January 04, 2026 12:24:00"), kind: "codebase", subtype: "repo_created"},
-                    {id: crypto.randomUUID(), date: new Date("January 06, 2026 12:24:00"), kind: "codebase", subtype: "commit"},
-                ]}
+                startMarker={new Date("June 15, 2023 03:24:00")}
+                endMarker={new Date("December 04, 2023 00:24:00")}
+                codebaseEvents={gitEvents}
                 knowledgeBaseEvents={[
-                    {id: crypto.randomUUID(), date: new Date("February 04, 2026 12:24:00"), kind: "knowledge", subtype: "activity_created"},
-                    {id: crypto.randomUUID(), date: new Date("February 13, 2026 12:24:00"), kind: "knowledge", subtype: "requirement_created"},
+                    {id: crypto.randomUUID(), occurredAt: new Date("July 04, 2023 12:24:00"), kind: "knowledge", subtype: "activity_created"},
+                    {id: crypto.randomUUID(), occurredAt: new Date("July 13, 2023 12:24:00"), kind: "knowledge", subtype: "requirement_created"},
                 ]}
                 designStudyEvents={[
-                    {id: crypto.randomUUID(), date: new Date("January 01, 2026 03:24:00"), kind: "designStudy", subtype: "study_started"},
+                    {id: crypto.randomUUID(), occurredAt: new Date("July 01, 2023 03:24:00"), kind: "designStudy", subtype: "study_started"},
                 ]}
                 stages={[
-                    {name: "Learn", start: new Date("January 15, 2026 03:24:00"), end: new Date("February 05, 2026 03:24:00")},
-                    {name: "Design", start: new Date("February 05, 2026 03:24:00"), end: new Date("March 26, 2026 03:24:00")},
-                    {name: "Implement", start: new Date("March 26, 2026 03:24:00"), end: new Date("April 16, 2026 03:24:00")},
-                    {name: "Evaluate", start: new Date("April 16, 2026 03:24:00"), end: new Date("May 21, 2026 03:24:00")},
-                    {name: "Reflect and Communicate", start: new Date("May 21, 2026 03:24:00"), end: new Date("June 04, 2026 03:24:00")}
+                    {name: "Learn", start: new Date("June 15, 2023 03:24:00"), end: new Date("July 05, 2023 03:24:00")},
+                    {name: "Design", start: new Date("July 05, 2023 03:24:00"), end: new Date("August 26, 2023 03:24:00")},
+                    {name: "Implement", start: new Date("August 26, 2023 03:24:00"), end: new Date("September 16, 2023 03:24:00")},
+                    {name: "Evaluate", start: new Date("September 16, 2023 03:24:00"), end: new Date("October 21, 2023 03:24:00")},
+                    {name: "Reflect and Communicate", start: new Date("October 21, 2023 03:24:00"), end: new Date("December 04, 2023 03:24:00")}
                 ]}
             />
         </div>
