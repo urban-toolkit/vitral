@@ -1,9 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import classes from "./Timeline.module.css";
-import type { GitHubEvent } from "@/config/types";
+import type { GitHubEvent, GitHubEventType } from "@/config/types";
 
 type ISODate = string;
+
+const GIT_LABELS: Record<GitHubEventType, string> = {
+  commit: "Commit",
+  issue_opened: "Issue opened",
+  issue_closed: "Issue closed",
+  pr_opened: "PR opened",
+  pr_closed: "PR closed",
+  pr_merged: "PR merged",
+};
+
+function GitHubEventPill({ type }: { type: GitHubEventType }) {
+  return (
+    <span className={`${classes.ghPill} ${classes[`ghPill_${type}`]}`} title={GIT_LABELS[type]}>
+      {GIT_LABELS[type]}
+    </span>
+  );
+}
 
 export type Stage = {
     name: string;
@@ -38,7 +55,6 @@ export type TimelineProps = {
     knowledgeBaseEvents?: KnowledgeBaseEvent[];
     designStudyEvents?: DesignStudyEvent[];
     margin?: { top: number; right: number; bottom: number; left: number };
-    onEventClick?: (event: AnyEvent) => void;
 };
 
 const toDate = (d: Date | ISODate) => (d instanceof Date ? d : new Date(d));
@@ -51,12 +67,16 @@ export const Timeline: React.FC<TimelineProps> = ({
     knowledgeBaseEvents = [],
     designStudyEvents = [],
     margin = { top: 22, right: 16, bottom: 34, left: 16 },
-    onEventClick,
 }) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const svgRef = useRef<SVGSVGElement | null>(null);
+    const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
     const [width, setWidth] = useState(0);
     const [height, setHeight] = useState(0);
+
+    const [selectedEvent, setSelectedEvent] = useState<{kind: "codeBase" | "knowledge" | "designStudy", event: AnyEvent} | null>(null);
+    const [tooltipPosition, setTooltipPosition] = useState<{x: number, y: number}>({x: 0, y: 0});
+    const [showTooltip, setShowTooltip] = useState<boolean>(false);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -117,19 +137,20 @@ export const Timeline: React.FC<TimelineProps> = ({
     ]);
 
     useEffect(() => {
-        if (!svgRef.current || width === 0) return;
+        if (!svgRef.current || width === 0 || height === 0) return;
 
         const svgWidth = width;
         const svgHeight = height;
 
-        const svg = d3.select(svgRef.current)
-                    .attr("viewBox", `0 0 ${svgWidth} ${svgHeight}`);
+        const svg = d3
+            .select(svgRef.current)
+            .attr("viewBox", `0 0 ${svgWidth} ${svgHeight}`);
+
         svg.selectAll("*").remove();
 
         const innerW = width - margin.left - margin.right;
         const innerH = height - margin.top - margin.bottom;
 
-        const stageBandH = innerH - 20;
         const lanesTop = margin.top;
         const laneH = 28;
         const laneGap = 12;
@@ -140,89 +161,20 @@ export const Timeline: React.FC<TimelineProps> = ({
             designStudy: lanesTop + 2 * (laneH + laneGap) + laneH / 2,
         };
 
-        const x = d3
+        const x0 = d3
             .scaleTime()
             .domain(parsed.domain)
             .range([margin.left, margin.left + innerW]);
 
-        const axis = d3.axisBottom<Date>(x).ticks(Math.max(3, Math.floor(innerW / 120)));
-
-        svg
+        const axisG = svg
             .append("g")
             .attr("class", classes.axis)
-            .attr("transform", `translate(0, ${svgHeight - margin.bottom - margin.top})`)
-            .call(axis);
+            .attr("transform", `translate(0, ${svgHeight - margin.bottom - margin.top})`);
 
-        // svg
-        //     .append("rect")
-        //     .attr("class", classes.stageBand)
-        //     .attr("x", margin.left)
-        //     .attr("y", margin.top)
-        //     .attr("width", innerW)
-        //     .attr("height", stageBandH);
-
-        const stageG = svg.append("g");
-
-        // stageG
-        //     .selectAll("rect")
-        //     .data(parsed.stages)
-        //     .enter()
-        //     .append("rect")
-        //     .attr("class", classes.stage)
-        //     .attr("x", d => x(d.start))
-        //     .attr("y", margin.top)
-        //     .attr("width", d => Math.max(1, x(d.end) - x(d.start)))
-        //     .attr("height", stageBandH);
-
-        stageG
-            .selectAll("line")
-            .data(parsed.stages)
-            .enter()
-            .append("line")
-            .attr("class", classes.markerLine)
-            .attr("x1", d => x(d.start))
-            .attr("x2", d => x(d.start))
-            .attr("y1", margin.top)
-            .attr("y2", svgHeight - margin.bottom - margin.top);
-
-        stageG
-            .selectAll("text")
-            .data(parsed.stages)
-            .enter()
-            .append("text")
-            .attr("class", classes.stageLabel)
-            .attr("x", (d) => {
-                let startPosition = x(d.start);
-                let endPosition = x(d.end);
-
-                return (endPosition + startPosition) / 2;
-            })
-            .attr("y", margin.top)
-            .text(d => d.name);
-
-        const markerG = svg.append("g");
-
-        const drawMarker = (date: Date, label: string) => {
-            const px = x(date);
-
-            markerG
-                .append("line")
-                .attr("class", classes.markerLine)
-                .attr("x1", px)
-                .attr("x2", px)
-                .attr("y1", margin.top)
-                .attr("y2", svgHeight - margin.bottom - margin.top);
-
-            markerG
-                .append("text")
-                .attr("class", classes.markerLabel)
-                .attr("x", px)
-                .attr("y", margin.top - 6)
-                .text(label);
-        };
-
-        drawMarker(parsed.start, "Start");
-        drawMarker(parsed.end, "End");
+        const stageG = svg.append("g").attr("class", "stage-layer");
+        const markerG = svg.append("g").attr("class", "marker-layer");
+        const lanesG = svg.append("g").attr("class", "lanes-layer");
+        const eventsG = svg.append("g").attr("class", "events-layer");
 
         const lanes = [
             { key: "codebase", label: "Codebase" },
@@ -230,9 +182,10 @@ export const Timeline: React.FC<TimelineProps> = ({
             { key: "designStudy", label: "Design study" },
         ] as const;
 
-        lanes.forEach(l => {
+        lanes.forEach((l) => {
             const y = laneY[l.key];
-            svg
+
+            lanesG
                 .append("line")
                 .attr("class", classes.laneLine)
                 .attr("x1", margin.left)
@@ -240,7 +193,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .attr("y1", y)
                 .attr("y2", y);
 
-            svg
+            lanesG
                 .append("text")
                 .attr("class", classes.laneLabel)
                 .attr("x", margin.left + 8)
@@ -257,35 +210,162 @@ export const Timeline: React.FC<TimelineProps> = ({
         const drawDiamond = (g: d3.Selection<SVGGElement, unknown, null, undefined>) =>
             g.append("path").attr("d", "M 0 -12 L 12 0 L 0 12 L -12 0 Z");
 
-        const plot = (
-            events: AnyEvent[],
-            y: number,
-            icon: (g: d3.Selection<SVGGElement, unknown, null, undefined>) => void
-        ) => {
-            const g = svg.append("g");
+        const draw = (x: d3.ScaleTime<number, number>) => {
+            const axis = d3.axisBottom<Date>(x).ticks(Math.max(3, Math.floor(innerW / 120)));
+            axisG.call(axis);
 
-            g.selectAll("g")
-                .data(events)
+            stageG.selectAll("*").remove();
+
+            stageG
+                .selectAll("line")
+                .data(parsed.stages)
                 .enter()
-                .append("g")
-                .attr("class", classes.event)
-                .attr("transform", d => `translate(${x(toDate(d.date))}, ${y})`)
-                .each(function () {
-                    icon(d3.select(this));
-                })
-                .selectAll("rect, circle, path")
-                .attr("class", classes.eventShape)
-                .on("click", (_, d) => onEventClick?.(d));
+                .append("line")
+                .attr("class", classes.markerLine)
+                .attr("x1", (d) => x(d.start))
+                .attr("x2", (d) => x(d.start))
+                .attr("y1", margin.top)
+                .attr("y2", svgHeight - margin.bottom - margin.top);
+
+            stageG
+                .selectAll("text")
+                .data(parsed.stages)
+                .enter()
+                .append("text")
+                .attr("class", classes.stageLabel)
+                .attr("x", (d) => (x(d.start) + x(d.end)) / 2)
+                .attr("y", margin.top)
+                .text((d) => d.name);
+
+            // start/end markers
+            markerG.selectAll("*").remove();
+
+            const drawMarker = (date: Date, label: string) => {
+                const px = x(date);
+
+                markerG
+                    .append("line")
+                    .attr("class", classes.markerLine)
+                    .attr("x1", px)
+                    .attr("x2", px)
+                    .attr("y1", margin.top)
+                    .attr("y2", svgHeight - margin.bottom - margin.top);
+
+                markerG
+                    .append("text")
+                    .attr("class", classes.markerLabel)
+                    .attr("x", px)
+                    .attr("y", margin.top - 6)
+                    .text(label);
+            };
+
+            drawMarker(parsed.start, "Start");
+            drawMarker(parsed.end, "End");
+
+            // events
+            eventsG.selectAll("*").remove();
+
+            const plot = (
+                events: AnyEvent[],
+                kind: "codeBase" | "knowledge" | "designStudy",
+                y: number,
+                icon: (g: d3.Selection<SVGGElement, unknown, null, undefined>) => void
+            ) => {
+                const g = eventsG.append("g");
+
+                g.selectAll("g")
+                    .data(events)
+                    .enter()
+                    .append("g")
+                    .attr("class", classes.event)
+                    .attr("transform", (d) => `translate(${x(toDate((d as any).date))}, ${y})`)
+                    .each(function () {
+                        icon(d3.select(this));
+                    })
+                    .selectAll("rect, circle, path")
+                    .attr("class", classes.eventShape)
+                    .on("click", (e, d) => {
+                        const heightOffset = containerRef ? containerRef.current.getBoundingClientRect().top : 0;
+                        let clampedX = Math.min(Math.max(e.clientX, 0), window.innerWidth - 300);
+                        let clampedY = Math.min(Math.max(e.clientY, 0), window.innerHeight - 150) - heightOffset;
+                        console.log(d);
+                        setSelectedEvent({kind, event: d});
+                        setTooltipPosition({x: clampedX, y: clampedY});
+                        setShowTooltip(true);
+                    });
+            };
+
+            plot(parsed.cb, "codeBase", laneY.codebase, drawSquare);
+            plot(parsed.kb, "knowledge", laneY.knowledge, drawCircle);
+            plot(parsed.ds, "designStudy", laneY.designStudy, drawDiamond);
         };
 
-        plot(parsed.cb, laneY.codebase, drawSquare);
-        plot(parsed.kb, laneY.knowledge, drawCircle);
-        plot(parsed.ds, laneY.designStudy, drawDiamond);
-    }, [parsed, width, margin, onEventClick]);
+        // initial draw
+        draw(x0);
+
+        const zoom = d3
+            .zoom<SVGSVGElement, unknown>()
+            .scaleExtent([1, 50]) // zoom out/in limits
+            .translateExtent([
+                [margin.left, 0],
+                [margin.left + innerW, svgHeight],
+            ])
+            .extent([
+                [margin.left, 0],
+                [margin.left + innerW, svgHeight],
+            ])
+            .on("zoom", (event) => {
+                zoomTransformRef.current = event.transform;
+                const x = event.transform.rescaleX(x0);
+                draw(x);
+            });
+
+        svg.call(zoom as any);
+
+        svg.call(zoom.transform as any, zoomTransformRef.current);
+    }, [parsed, width, height, margin]);
+
+    const TooltipInner = useMemo(() => {
+        if(selectedEvent?.kind == "codeBase"){
+            const event = selectedEvent?.event as GitHubEvent
+
+            return <div className={classes.codeBaseTooltip}>
+                <div className={classes.tooltipHeader}>
+                    <p style={{fontWeight: "bold", fontSize: "var(--font-size-md)"}}>{event.title}</p>
+                    <GitHubEventPill type={event.type} />
+                </div>
+                <p style={{fontSize: "var(--font-size-sm)", color: "var(--subtitle-color)"}}>Author: {event.actor}</p>
+                <p>Commit <a style={{backgroundColor: "rgba(237, 237, 237, 0.251)"}} href={event.url ?? '#'} target="_blank">{event.key.slice(0,8)}</a></p>
+            </div>
+        }
+
+        return null;
+    }, [selectedEvent])
 
     return (
-        <div ref={containerRef} className={classes.container} >
-            <svg ref={svgRef} className={classes.svg} />
-        </div>
+        <>
+            <div 
+                ref={containerRef} 
+                className={classes.container} 
+                onClick={() => {setShowTooltip(false)}}
+            >
+                <svg ref={svgRef} className={classes.svg} />
+            </div>
+            <div 
+                className={classes.tooltip} 
+                style={{
+                    left: tooltipPosition.x, 
+                    top: tooltipPosition.y,
+                    ...(showTooltip
+                        ?
+                        {display: "block"}
+                        :
+                        {display: "none"}
+                    )
+                }}>
+                {TooltipInner}
+            </div>
+        </>
+
     );
 };

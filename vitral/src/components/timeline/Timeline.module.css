@@ -1,3 +1,24 @@
+.tooltip {
+    position: fixed;
+    width: 300px;
+    height: 100px;
+    background-color: white;
+    padding: 10px;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.39);
+}
+
+.codeBaseTooltip p{
+    margin: 0;
+}
+
+.tooltipHeader {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+}
+
 .container {
     width: 100%;
     height: 100%;
@@ -9,6 +30,11 @@
     display: block;
     width: 100%;
     height: 100%;
+    cursor: grab;
+}
+
+.svg:active {
+    cursor: grabbing;
 }
 
 /* axis */
@@ -87,4 +113,68 @@
     fill: white;
     font-size: 12px;
     pointer-events: none;
+}
+
+/* Github pill */
+
+.ghPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Optional: a small dot */
+.ghPill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+/* Type variants */
+.ghPill--commit {
+  color: #0b5;
+  border-color: rgba(0, 187, 85, 0.35);
+  background: rgba(0, 187, 85, 0.10);
+}
+
+.ghPill--issue_opened {
+  color: #0a7;
+  border-color: rgba(0, 170, 119, 0.35);
+  background: rgba(0, 170, 119, 0.10);
+}
+
+.ghPill--issue_closed {
+  color: #b40;
+  border-color: rgba(187, 68, 0, 0.35);
+  background: rgba(187, 68, 0, 0.10);
+}
+
+.ghPill--pr_opened {
+  color: #06c;
+  border-color: rgba(0, 102, 204, 0.35);
+  background: rgba(0, 102, 204, 0.10);
+}
+
+.ghPill--pr_closed {
+  color: #777;
+  border-color: rgba(120, 120, 120, 0.35);
+  background: rgba(120, 120, 120, 0.10);
+}
+
+.ghPill--pr_merged {
+  color: #8250df;
+  border-color: rgba(130, 80, 223, 0.35);
+  background: rgba(130, 80, 223, 0.10);
 }
