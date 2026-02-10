@@ -10,7 +10,7 @@ import { Toolbar } from '@/components/toolbar/Toolbar';
 import { parseFile } from '@/func/FileParser';
 import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
 import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNode, addNode, updateNode } from '@/store/flowSlice';
-import { upsertFile } from '@/store/filesSlice';
+import { selectAllFiles, upsertFile } from '@/store/filesSlice';
 import { Card } from '@/components/cards/Card';
 
 import type { cardType, edgeType, filePendingUpload, nodeType } from '@/config/types';
@@ -27,6 +27,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faAnglesUp } from '@fortawesome/free-solid-svg-icons';
 import { getGitHubEvents } from '@/api/eventsApi';
 import { selectAllGitHubEvents, setGithubEvents } from '@/store/gitEventsSlice';
+import AssetsPanel from '@/components/files/AssetsPanel';
 
 type FlowCanvasProps = {
     projectId: string;
@@ -99,6 +100,8 @@ const FlowInner = () => {
     const title = useSelector((state: RootState) => state.flow.title);
 
     const gitEvents = useSelector(selectAllGitHubEvents);
+    
+    const allFiles = useSelector(selectAllFiles);
 
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => dispatch(onNodesChange(changes)), [dispatch]);
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => dispatch(onEdgesChange(changes)), [dispatch]);
@@ -256,6 +259,7 @@ const FlowInner = () => {
     }, []);
         
     useEffect(() => {
+        dispatch(setGithubEvents([]));
         checkGitStatus();
     }, [])
 
@@ -325,6 +329,14 @@ const FlowInner = () => {
             projectId={projectId}
             connectionStatus={gitConnectionStatus}
         />
+
+        <div
+            style={{position: "fixed", top: "650px", right: "50px"}}
+        >
+            <AssetsPanel 
+                records={allFiles}
+            />
+        </div>
 
         {cursorMode.current == 'text'
             ?

@@ -126,7 +126,7 @@ export function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
                                 ) : itemsError ? (
                                     <p style={{ marginTop: 8, color: "crimson" }}>{itemsError}</p>
                                 ) : (
-                                    <ul style={{ marginTop: 8, paddingLeft: 16 }}>
+                                    <ul style={{ marginTop: 8, paddingLeft: 16, maxHeight: "200px", overflowY: "auto" }}>
                                         {items.map((it) => (
                                             <li key={it.path} style={{ marginBottom: 4 }} className={classes.fileList}>
                                                 {it.type === "dir" ? (

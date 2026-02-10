@@ -22,6 +22,18 @@ function GitHubEventPill({ type }: { type: GitHubEventType }) {
   );
 }
 
+function formatDate(iso: string) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
 export type Stage = {
     name: string;
     start: Date | ISODate;
@@ -156,9 +168,9 @@ export const Timeline: React.FC<TimelineProps> = ({
         const laneGap = 12;
 
         const laneY = {
-            codebase: lanesTop + laneH / 2,
+            designStudy: lanesTop + laneH / 2, 
             knowledge: lanesTop + laneH + laneGap + laneH / 2,
-            designStudy: lanesTop + 2 * (laneH + laneGap) + laneH / 2,
+            codebase: lanesTop + 2 * (laneH + laneGap) + laneH / 2,
         };
 
         const x0 = d3
@@ -177,9 +189,9 @@ export const Timeline: React.FC<TimelineProps> = ({
         const eventsG = svg.append("g").attr("class", "events-layer");
 
         const lanes = [
-            { key: "codebase", label: "Codebase" },
-            { key: "knowledge", label: "Knowledge base" },
             { key: "designStudy", label: "Design study" },
+            { key: "knowledge", label: "Knowledge base" },
+            { key: "codebase", label: "Codebase" },
         ] as const;
 
         lanes.forEach((l) => {
@@ -295,9 +307,9 @@ export const Timeline: React.FC<TimelineProps> = ({
                     });
             };
 
-            plot(parsed.cb, "codeBase", laneY.codebase, drawSquare);
-            plot(parsed.kb, "knowledge", laneY.knowledge, drawCircle);
             plot(parsed.ds, "designStudy", laneY.designStudy, drawDiamond);
+            plot(parsed.kb, "knowledge", laneY.knowledge, drawCircle);
+            plot(parsed.cb, "codeBase", laneY.codebase, drawSquare);
         };
 
         // initial draw
@@ -305,7 +317,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
         const zoom = d3
             .zoom<SVGSVGElement, unknown>()
-            .scaleExtent([1, 50]) // zoom out/in limits
+            .scaleExtent([1, 3000]) // zoom out/in limits
             .translateExtent([
                 [margin.left, 0],
                 [margin.left + innerW, svgHeight],
@@ -334,8 +346,9 @@ export const Timeline: React.FC<TimelineProps> = ({
                     <p style={{fontWeight: "bold", fontSize: "var(--font-size-md)"}}>{event.title}</p>
                     <GitHubEventPill type={event.type} />
                 </div>
+                <p style={{fontSize: "var(--font-size-xs)", color: "var(--subtitle-color)"}}>{formatDate(event.occurredAt)}</p>
                 <p style={{fontSize: "var(--font-size-sm)", color: "var(--subtitle-color)"}}>Author: {event.actor}</p>
-                <p>Commit <a style={{backgroundColor: "rgba(237, 237, 237, 0.251)"}} href={event.url ?? '#'} target="_blank">{event.key.slice(0,8)}</a></p>
+                <p><a style={{backgroundColor: "rgba(237, 237, 237, 0.251)"}} href={event.url ?? '#'} target="_blank">{event.key.slice(0,8)}</a></p>
             </div>
         }
 

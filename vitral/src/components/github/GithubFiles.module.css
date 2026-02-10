@@ -1,11 +1,11 @@
 .container {
     position: fixed;
-    top: 350px;
+    top: 150px;
     right: 50px;
     border: var(--border-style);
     z-index: 3;
     padding: 10px;
-    max-width: 250px;
+    width: 250px;
     background-color: white;
 }
 

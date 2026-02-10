@@ -1,0 +1,113 @@
+.panel {
+    display: flex;
+    flex-direction: column;
+    width: 272px;
+    height: 300px;
+    border: var(--border-style);
+    background-color: white;
+    overflow-y: auto;
+}
+
+.header {
+    padding: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+    height: 30px;
+}
+
+.titleRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: bold;
+    letter-spacing: 0.2px;
+}
+
+.count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    opacity: 0.9;
+}
+
+.list {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: auto;
+    flex: 1;
+}
+
+.empty {
+    opacity: 0.8;
+    font-size: var(--font-size-sm);
+}
+
+.card {
+    text-align: left;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(230, 230, 230, 0.486);
+    border-radius: 12px;
+    padding: 10px;
+}
+
+.cardTop {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.size {
+    font-size: var(--font-size-xs);
+    opacity: 0.85;
+}
+
+.name {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    line-height: 1.2;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.metaGrid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+}
+
+.metaRow {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 10px;
+    align-items: baseline;
+}
+
+.metaKey {
+    font-size: var(--font-size-xs);
+    opacity: 0.7;
+}
+
+.metaVal {
+    font-size: var(--font-size-xs);
+    opacity: 0.92;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

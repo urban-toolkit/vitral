@@ -5,13 +5,11 @@ import type { RootState } from "@/store/rootReducer";
 type FilesState = {
     byId: Record<string, fileRecord>;
     allIds: string[];
-    activeFileId: string | null;
 };
 
 const initialState: FilesState = {
     byId: {},
     allIds: [],
-    activeFileId: null,
 };
 
 function upsertOne(state: FilesState, file: fileRecord) {
@@ -24,7 +22,6 @@ function removeOne(state: FilesState, fileId: string) {
     if (!state.byId[fileId]) return;
     delete state.byId[fileId];
     state.allIds = state.allIds.filter((id) => id !== fileId);
-    if (state.activeFileId === fileId) state.activeFileId = null;
 }
 
 export const filesSlice = createSlice({
@@ -34,7 +31,6 @@ export const filesSlice = createSlice({
         setFiles: (state, action: PayloadAction<fileRecord[]>) => {
             state.byId = {};
             state.allIds = [];
-            state.activeFileId = null;
 
             for (const f of action.payload) upsertOne(state, f);
         },
@@ -57,13 +53,9 @@ export const filesSlice = createSlice({
             f.name = name;
             f.ext = name.split(".").pop()?.toLowerCase() as fileExtension;
         },
-        setActiveFile: (state, action: PayloadAction<string | null>) => {
-            state.activeFileId = action.payload;
-        },
         clearAllFiles: (state) => {
             state.byId = {};
             state.allIds = [];
-            state.activeFileId = null;
         },
     },
 });
@@ -75,7 +67,6 @@ export const {
     removeFile,
     removeMany,
     renameFile,
-    setActiveFile,
     clearAllFiles,
 } = filesSlice.actions;
 
@@ -88,8 +79,4 @@ export const selectFileById = (fileId: string) =>
 
 export const selectAllFiles = createSelector(selectFilesState, (s) =>
     s.allIds.map((id) => s.byId[id]).filter(Boolean)
-);
-
-export const selectActiveFile = createSelector(selectFilesState, (s) =>
-    s.activeFileId ? s.byId[s.activeFileId] : null
 );
