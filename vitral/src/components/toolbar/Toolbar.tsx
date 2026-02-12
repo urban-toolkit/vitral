@@ -18,7 +18,7 @@ export function Toolbar({ onFreeInputClicked, onNodeInputClicked, onPointerClick
             style={
                 shifted
                 ?
-                {bottom: "215px"}
+                {bottom: "315px"}
                 :
                 {bottom: "15px"}
             }    

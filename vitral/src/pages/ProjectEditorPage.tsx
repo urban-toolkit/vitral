@@ -402,7 +402,7 @@ const FlowInner = () => {
             style={{
                 ...(timelineOpen 
                     ? 
-                    {bottom: "200px"} 
+                    {bottom: "300px"} 
                     : 
                     {bottom: 0})
                 ,
@@ -438,11 +438,11 @@ const FlowInner = () => {
                         ?
                         {bottom: 0}
                         :
-                        {bottom: "-200px"}
+                        {bottom: "-300px"}
                     ),
                     position: "fixed",
                     backgroundColor: "rgba(255, 255, 255, 0.7)",
-                    height: "200px",
+                    height: "300px",
                     width: "100vw",
                     boxShadow: "0 4px 30px rgba(0, 0, 0, 0.1)",
                     border: "1px solid rgba(255, 255, 255, 0.39)",

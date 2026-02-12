@@ -163,9 +163,9 @@ export const Timeline: React.FC<TimelineProps> = ({
         const innerW = width - margin.left - margin.right;
         const innerH = height - margin.top - margin.bottom;
 
-        const lanesTop = margin.top;
-        const laneH = 28;
-        const laneGap = 12;
+        const lanesTop = margin.top + 32;
+        const laneH = 65;
+        const laneGap = 6;
 
         const laneY = {
             designStudy: lanesTop + laneH / 2, 
@@ -181,7 +181,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         const axisG = svg
             .append("g")
             .attr("class", classes.axis)
-            .attr("transform", `translate(0, ${svgHeight - margin.bottom - margin.top})`);
+            .attr("transform", `translate(0, ${margin.top + 14})`);
 
         const stageG = svg.append("g").attr("class", "stage-layer");
         const markerG = svg.append("g").attr("class", "marker-layer");
@@ -194,22 +194,30 @@ export const Timeline: React.FC<TimelineProps> = ({
             { key: "codebase", label: "Codebase" },
         ] as const;
 
-        lanes.forEach((l) => {
+        lanes.forEach((l, index) => {
             const y = laneY[l.key];
 
+            // lanesG
+            //     .append("line")
+            //     .attr("class", classes.laneLine)
+            //     .attr("x1", margin.left)
+            //     .attr("x2", margin.left + innerW)
+            //     .attr("y1", y)
+            //     .attr("y2", y);
+
             lanesG
-                .append("line")
+                .append("rect")
                 .attr("class", classes.laneLine)
-                .attr("x1", margin.left)
-                .attr("x2", margin.left + innerW)
-                .attr("y1", y)
-                .attr("y2", y);
+                .attr("x", margin.left)
+                .attr("y", y)
+                .attr("width", innerW)
+                .attr("height", 65);
 
             lanesG
                 .append("text")
                 .attr("class", classes.laneLabel)
                 .attr("x", margin.left + 8)
-                .attr("y", y - 8)
+                .attr("y", y + 18)
                 .text(l.label);
         });
 
@@ -226,7 +234,30 @@ export const Timeline: React.FC<TimelineProps> = ({
             const axis = d3.axisBottom<Date>(x).ticks(Math.max(3, Math.floor(innerW / 120)));
             axisG.call(axis);
 
+            // Dates header
+            axisG
+                .selectAll("rect")
+                .data(["placeholder"])
+                .enter()
+                .append("rect")
+                .attr("class", classes.laneLine)
+                .attr("x", margin.left)
+                .attr("y", 0)
+                .attr("width", innerW)
+                .attr("height", 30);
+
             stageG.selectAll("*").remove();
+
+            stageG
+                .selectAll("rect")
+                .data(parsed.stages)
+                .enter()
+                .append("rect")
+                .attr("class", classes.stageLine)
+                .attr("x", (d) => x(d.start))
+                .attr("y", margin.top + 44)
+                .attr("width", (d) => (x(d.end) - x(d.start)))
+                .attr("height", 20);
 
             stageG
                 .selectAll("line")
@@ -236,8 +267,8 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .attr("class", classes.markerLine)
                 .attr("x1", (d) => x(d.start))
                 .attr("x2", (d) => x(d.start))
-                .attr("y1", margin.top)
-                .attr("y2", svgHeight - margin.bottom - margin.top);
+                .attr("y1", margin.top + 65)
+                .attr("y2", svgHeight);
 
             stageG
                 .selectAll("text")
@@ -246,7 +277,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .append("text")
                 .attr("class", classes.stageLabel)
                 .attr("x", (d) => (x(d.start) + x(d.end)) / 2)
-                .attr("y", margin.top)
+                .attr("y", margin.top + 58)
                 .text((d) => d.name);
 
             // start/end markers
@@ -260,8 +291,8 @@ export const Timeline: React.FC<TimelineProps> = ({
                     .attr("class", classes.markerLine)
                     .attr("x1", px)
                     .attr("x2", px)
-                    .attr("y1", margin.top)
-                    .attr("y2", svgHeight - margin.bottom - margin.top);
+                    .attr("y1", margin.top + 20)
+                    .attr("y2", svgHeight);
 
                 markerG
                     .append("text")
@@ -290,7 +321,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                     .enter()
                     .append("g")
                     .attr("class", classes.event)
-                    .attr("transform", (d) => `translate(${x(toDate((d as any).date))}, ${y})`)
+                    .attr("transform", (d) => `translate(${x(toDate((d as any).date))}, ${y + 32})`)
                     .each(function () {
                         icon(d3.select(this));
                     })
