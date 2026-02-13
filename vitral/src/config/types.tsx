@@ -91,3 +91,5 @@ export interface GitHubEvent {
 
     payload: any;
 }
+
+export type LaneType = "codebase" | "knowledge" | "designStudy";

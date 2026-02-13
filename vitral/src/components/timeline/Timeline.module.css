@@ -37,6 +37,12 @@
     cursor: grabbing;
 }
 
+.marker {
+    position: absolute;
+    color: red;
+    transform: translate(-50%, -50%);
+}
+
 /* axis */
 .axis path {
     fill: none;
@@ -66,13 +72,45 @@
 
 .stageLine {
     stroke: #E3E3E3;
-    fill: none;
 }
 
 .stageLabel {
     font-size: 12px;
     pointer-events: none;
     text-anchor: middle;
+}
+
+/* sub-stages */
+.subStage {
+    stroke: #b8b8b8;
+}
+
+.subStageText {
+    font-size: var(--font-size-xs);
+}
+
+.subStageDelete {
+  font-size: 12px;
+  fill: #333;
+}
+
+.subStageDelete:hover {
+  fill: red;
+}
+
+.stageDropdown {
+  position: absolute;
+  z-index: 10;
+}
+.stageDropdown select {
+  font-size: 12px;
+}
+
+.nameEditor {
+  position: absolute;
+  z-index: 20;
+  font-size: 12px;
+  padding: 2px 6px;
 }
 
 /* markers */

@@ -1,0 +1,41 @@
+.root {
+  position: absolute;
+  z-index: 50;
+  background: white;
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 10px;
+  padding: 8px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.14);
+  min-width: 220px;
+}
+
+.header {
+  margin-bottom: 8px;
+}
+
+.input {
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.15);
+  outline: none;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill {
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pillActive {
+  outline: 2px solid rgba(0,0,0,0.25);
+}

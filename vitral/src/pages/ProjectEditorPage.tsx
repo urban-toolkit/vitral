@@ -462,11 +462,18 @@ const FlowInner = () => {
                     {id: crypto.randomUUID(), occurredAt: new Date("July 01, 2023 03:24:00"), kind: "designStudy", subtype: "study_started"},
                 ]}
                 stages={[
-                    {name: "Learn", start: new Date("June 15, 2023 03:24:00"), end: new Date("July 05, 2023 03:24:00")},
-                    {name: "Design", start: new Date("July 05, 2023 03:24:00"), end: new Date("August 26, 2023 03:24:00")},
-                    {name: "Implement", start: new Date("August 26, 2023 03:24:00"), end: new Date("September 16, 2023 03:24:00")},
-                    {name: "Evaluate", start: new Date("September 16, 2023 03:24:00"), end: new Date("October 21, 2023 03:24:00")},
-                    {name: "Reflect and Communicate", start: new Date("October 21, 2023 03:24:00"), end: new Date("December 04, 2023 03:24:00")}
+                    {id: "1", name: "Learn", start: new Date("June 15, 2023 03:24:00"), end: new Date("July 05, 2023 03:24:00")},
+                    {id: "2", name: "Design", start: new Date("July 05, 2023 03:24:00"), end: new Date("August 26, 2023 03:24:00")},
+                    {id: "3", name: "Implement", start: new Date("August 26, 2023 03:24:00"), end: new Date("September 16, 2023 03:24:00")},
+                    {id: "4", name: "Evaluate", start: new Date("September 16, 2023 03:24:00"), end: new Date("October 21, 2023 03:24:00")},
+                    {id: "5", name: "Reflect and Communicate", start: new Date("October 21, 2023 03:24:00"), end: new Date("December 04, 2023 03:24:00")}
+                ]}
+                defaultStages={[
+                    "Learn",
+                    "Design",
+                    "Implement",
+                    "Evaluate",
+                    "Reflect and Communicate"
                 ]}
             />
         </div>
