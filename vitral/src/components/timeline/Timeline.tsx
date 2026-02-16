@@ -5,6 +5,8 @@ import type { GitHubEvent, GitHubEventType, LaneType, Stage } from "@/config/typ
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCaretDown, faPlus } from "@fortawesome/free-solid-svg-icons";
 import { StagePicker } from "@/components/timeline/StagePicker";
+import { useDispatch, useSelector } from "react-redux";
+import { addSubStage, deleteSubStage, selectAllSubStages, updateSubStage } from "@/store/timelineSlice";
 
 const GIT_LABELS: Record<GitHubEventType, string> = {
     commit: "Commit",
@@ -38,15 +40,6 @@ function formatDate(iso: string) {
     });
 }
 
-type SubStage = {
-    id: string;
-    lane: LaneType;
-    start: Date;
-    end: Date;
-    name: string;
-    stage: string;
-};
-
 export type TimelineEventBase = {
     id: string;
     occurredAt: Date | string;
@@ -70,7 +63,7 @@ export type TimelineProps = {
     startMarker: Date | string;
     endMarker: Date | string;
     defaultStages: string[];
-    onStageUpdate: (stage: {id: string, newName: string}) => void; 
+    onStageUpdate: (stage: Stage) => void; 
     onStageCreation: (name: string) => void;
     onStageLaneCreation: (name: string) => void;
     onStageLaneDeletion: (id: string) => void;
@@ -83,6 +76,7 @@ export type TimelineProps = {
 };
 
 const toDate = (d: Date | string) => (d instanceof Date ? d : new Date(d));
+const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
 
 export const Timeline: React.FC<TimelineProps> = ({
     startMarker,
@@ -99,6 +93,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     onStageBoundaryChange,
     margin = { top: 22, right: 16, bottom: 34, left: 16 },
 }) => {
+
+    const dispatch = useDispatch();
+
     const containerRef = useRef<HTMLDivElement | null>(null);
     const svgRef = useRef<SVGSVGElement | null>(null);
     const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
@@ -116,9 +113,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     });
     const [showTooltip, setShowTooltip] = useState<boolean>(false);
 
-    const [tagPicker, setTagPicker] = useState<null | { id: string; x: number; y: number }>(null);
+    const [tagPicker, setTagPicker] = useState<null | Stage & { x: number; y: number }>(null);
 
-    const [subStages, setSubStages] = useState<SubStage[]>([]);
+    const subStages = useSelector(selectAllSubStages);
 
     const [stageMenu, setStageMenu] = useState<null | {
         subStageId: string;
@@ -171,6 +168,10 @@ export const Timeline: React.FC<TimelineProps> = ({
             .map((s) => ({ ...s, start: toDate(s.start), end: toDate(s.end) }))
             .filter((s) => !isNaN(s.start.getTime()) && !isNaN(s.end.getTime()));
 
+        const sbtgs = subStages
+            .map((s) => ({ ...s, start: toDate(s.start), end: toDate(s.end) }))
+            .filter((s) => !isNaN(s.start.getTime()) && !isNaN(s.end.getTime()));
+
         const dates = [
             toDate(startMarker),
             toDate(endMarker),
@@ -190,11 +191,12 @@ export const Timeline: React.FC<TimelineProps> = ({
             kb,
             ds,
             stages: stgs,
+            subStages: sbtgs,
             start: toDate(startMarker),
             end: toDate(endMarker),
             domain: [new Date(min.getTime() - pad), new Date(max.getTime() + pad)] as [Date, Date],
         };
-    }, [startMarker, endMarker, stages, codebaseEvents, knowledgeBaseEvents, designStudyEvents]);
+    }, [startMarker, endMarker, stages, subStages, codebaseEvents, knowledgeBaseEvents, designStudyEvents]);
 
     useEffect(() => {
         if (!svgRef.current || width === 0 || height === 0) return;
@@ -335,7 +337,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                         .on("click", (event: any, d: any) => {
                             event.stopPropagation();
                             const [sx, sy] = d3.pointer(event, containerRef.current);
-                            setTagPicker({ id: d.id, x: sx, y: sy });
+                            setTagPicker({ ...d, x: sx, y: sy });
                         });
 
                     g.selectAll("text")
@@ -429,7 +431,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
             const subStage = subStagesG
                 .selectAll("g.subStage")
-                .data(subStages, (d: any) => d.id)
+                .data(parsed.subStages, (d: any) => d.id)
                 .enter()
                 .append("g");
 
@@ -475,7 +477,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .style("cursor", "pointer")
                 .on("click", (event, d) => {
                     event.stopPropagation();
-                    setSubStages(prev => prev.filter(s => s.id !== d.id));
+                    dispatch(deleteSubStage(d.id));
                 });
 
             subStage
@@ -499,7 +501,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 const top = laneTop(lane);
                 if (py < top || py > top + laneH) return false;
 
-                return subStages.some(a =>
+                return parsed.subStages.some(a =>
                     a.lane === lane &&
                     px >= x(a.start) &&
                     px <= x(a.end)
@@ -518,18 +520,14 @@ export const Timeline: React.FC<TimelineProps> = ({
                         if (!event.selection) return;
 
                         const [px0, px1] = event.selection as [number, number];
-                        const start = x.invert(px0);
-                        const end = x.invert(px1);
+                        const start = fromDate(x.invert(px0));
+                        const end = fromDate(x.invert(px1));
 
                         const name = "Untitled";
                         const stage = "Unstaged";
 
-                        setSubStages(prev => [
-                            ...prev,
-                            { id: crypto.randomUUID(), lane, start, end, name, stage }
-                        ]);
+                        dispatch(addSubStage({ id: crypto.randomUUID(), lane, start, end, name, stage }));
 
-                        // d3.select(this).call(brush.move as any, null);
                         d3.select(event.sourceEvent?.currentTarget ?? null);
                     });
 
@@ -729,12 +727,22 @@ export const Timeline: React.FC<TimelineProps> = ({
                     onClick={(e) => e.stopPropagation()}
                 >
                     <select
-                        value={subStages.find(s => s.id === stageMenu.subStageId)?.stage ?? ""}
+                        value={parsed.subStages.find(s => s.id === stageMenu.subStageId)?.stage ?? ""}
                         onChange={(e) => {
                             const newStage = e.target.value;
-                            setSubStages(prev =>
-                                prev.map(s => s.id === stageMenu.subStageId ? { ...s, stage: newStage } : s)
-                            );
+
+                            const subStage = parsed.subStages.filter(s => s.id == stageMenu.subStageId);
+                            
+                            if(subStage.length <= 0) return;
+
+                            let newSubStage = {
+                                ...subStage[0],
+                                start: fromDate(subStage[0].start),
+                                end: fromDate(subStage[0].end),
+                                stage: newStage
+                            };
+
+                            dispatch(updateSubStage(newSubStage))
                             setStageMenu(null);
                         }}
                         onBlur={() => setStageMenu(null)}
@@ -759,18 +767,39 @@ export const Timeline: React.FC<TimelineProps> = ({
                     onKeyDown={(e) => {
                         if (e.key === "Enter") {
                             const nextName = nameEdit.value.trim();
-                            setSubStages(prev =>
-                                prev.map(s => s.id === nameEdit.subStageId ? { ...s, name: nextName } : s)
-                            );
+
+                            const subStage = parsed.subStages.filter(s => s.id == nameEdit.subStageId);
+                            
+                            if(subStage.length <= 0) return;
+
+                            let newSubStage = {
+                                ...subStage[0],
+                                start: fromDate(subStage[0].start),
+                                end: fromDate(subStage[0].end),
+                                name: nextName
+                            };
+
+                            dispatch(updateSubStage(newSubStage))
+
                             setNameEdit(null);
                         }
                         if (e.key === "Escape") setNameEdit(null);
                     }}
                     onBlur={() => {
                         const nextName = nameEdit.value.trim();
-                        setSubStages(prev =>
-                            prev.map(s => s.id === nameEdit.subStageId ? { ...s, name: nextName } : s)
-                        );
+
+                        const subStage = parsed.subStages.filter(s => s.id == nameEdit.subStageId);
+                        
+                        if(subStage.length <= 0) return;
+
+                        let newSubStage = {
+                            ...subStage[0],
+                            start: fromDate(subStage[0].start),
+                            end: fromDate(subStage[0].end),
+                            name: nextName
+                        };
+
+                        dispatch(updateSubStage(newSubStage))
                         setNameEdit(null);
                     }}
                 />
@@ -781,7 +810,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 x={tagPicker?.x ?? 0}
                 y={tagPicker?.y ?? 0}
                 currentValue={
-                    tagPicker ? (subStages.find(s => s.id === tagPicker.id)?.stage ?? "") : ""
+                    tagPicker ? (parsed.subStages.find(s => s.id === tagPicker.id)?.stage ?? "") : ""
                 }
                 options={defaultStages}
                 onClose={() => setTagPicker(null)}
@@ -790,7 +819,11 @@ export const Timeline: React.FC<TimelineProps> = ({
                 }}
                 onSelect={(value) => {
                     if (!tagPicker) return;
-                    onStageUpdate({id: tagPicker.id, newName: value});
+                    onStageUpdate({
+                        id: tagPicker.id,
+                        end: tagPicker.end,
+                        start: tagPicker.start,
+                        name: value});
                     setTagPicker(null);
                 }}
             />

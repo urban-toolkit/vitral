@@ -1,4 +1,4 @@
-import type { filePendingUpload, fileRecord } from "@/config/types";
+import type { filePendingUpload, fileRecord, TimelineStatePayload } from "@/config/types";
 
 export type FlowStatePayload = {
     flow: {
@@ -14,6 +14,7 @@ export type DocumentResponse = {
     version: number;
     updated_at: string;
     state?: FlowStatePayload; // returned by GET
+    timeline?: TimelineStatePayload;
 };
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
@@ -58,12 +59,13 @@ export async function loadDocuments(): Promise<DocumentResponse[]> {
 export async function saveDocument(
     docId: string,
     state: FlowStatePayload,
+    timeline: TimelineStatePayload,
     title?: string
 ): Promise<DocumentResponse> {
     const res = await fetch(`${API_BASE}/api/state/${docId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, state }),
+        body: JSON.stringify({ title, state, timeline }),
     });
 
     if (!res.ok) {

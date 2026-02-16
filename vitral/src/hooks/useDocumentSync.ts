@@ -7,14 +7,19 @@ import { debounce } from "@/utils/debounce";
 
 import type { RootState } from '@/store';
 import { setFiles } from "@/store/filesSlice";
+import { selectAllStages, selectAllSubStages, selectDefaultStages, selectTimelineStartEnd, setDefaultStages, setStages, setSubStages, setTimelineStartEnd } from "@/store/timelineSlice";
+import type { Stage, SubStage } from "@/config/types";
 
 type SyncStatus = "idle" | "loading" | "saving" | "error" | "ready";
 
 export function useDocumentSync(projectId: string) {
     const dispatch = useDispatch();
     const flow = useSelector((s: RootState) => s.flow);
+    const stages = useSelector(selectAllStages);
+    const subStages = useSelector(selectAllSubStages);
+    const defaultStages = useSelector(selectDefaultStages);
+    const timelineStartEnd = useSelector(selectTimelineStartEnd);
 
-    // const [docId, setDocId] = useState<string | null>(initialDocId ?? null);
     const [status, setStatus] = useState<SyncStatus>("idle");
     const [error, setError] = useState<string | null>(null);
 
@@ -27,14 +32,27 @@ export function useDocumentSync(projectId: string) {
         return JSON.stringify({
             nodes: flow.nodes,
             edges: flow.edges,
-            title: flow.title
+            title: flow.title,
+            stages: stages,
+            subStages: subStages,
+            defaultStages: defaultStages,
+            timelineStartEnd: timelineStartEnd
         });
-    }, [flow.nodes, flow.edges, flow.title]);
+    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
         () =>
-            debounce(async (id: string, hash: string, nodes: any[], edges: any[], title?: string) => {
+            debounce(async (
+                id: string, 
+                hash: string, 
+                nodes: any[], 
+                edges: any[], 
+                stages: Stage[], 
+                subStages: SubStage[], 
+                defaultStages: string[], 
+                timelineStartEnd: {start: string, end: string},  
+                title?: string) => {
 
                 if (activeProjectIdRef.current !== id) return;
                 if (!hasLoadedRef.current) return;
@@ -45,6 +63,11 @@ export function useDocumentSync(projectId: string) {
 
                     await saveDocument(id, {
                         flow: { nodes, edges },
+                    }, {
+                        stages,
+                        subStages,
+                        defaultStages,
+                        timelineStartEnd
                     }, title);
 
                     lastSavedHashRef.current = hash;
@@ -86,7 +109,26 @@ export function useDocumentSync(projectId: string) {
 
                 dispatch(setFiles(files));
 
-                lastSavedHashRef.current = JSON.stringify({ nodes, edges, title });
+                const timeline = doc.timeline;
+
+                const stages = timeline?.stages ?? [];
+                const subStages = timeline?.subStages ?? [];
+                const defaultStages = timeline?.defaultStages ?? [];
+                const timelineStartEnd = timeline?.timelineStartEnd ?? {start: "", end: ""};
+
+                dispatch(setStages(stages));
+                dispatch(setSubStages(subStages));
+                dispatch(setDefaultStages(defaultStages));
+                dispatch(setTimelineStartEnd(timelineStartEnd));
+
+                lastSavedHashRef.current = JSON.stringify({ 
+                    nodes, 
+                    edges, 
+                    title, 
+                    stages, 
+                    subStages, 
+                    defaultStages, 
+                    timelineStartEnd });
                 hasLoadedRef.current = true;
                 setStatus("ready");
             } catch (e: any) {
@@ -111,8 +153,8 @@ export function useDocumentSync(projectId: string) {
 
         if (currentHash === lastSavedHashRef.current) return;
 
-        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave]);
+        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, subStages, defaultStages, timelineStartEnd, flow.title);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, subStages, defaultStages, timelineStartEnd]);
 
     return { status, error };
 }

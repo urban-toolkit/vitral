@@ -100,3 +100,38 @@ export type Stage = {
     start: Date | string;
     end: Date | string;
 };
+
+export type SubStage = {
+    id: string;
+    lane: LaneType;
+    start: Date | string;
+    end: Date | string;
+    name: string;
+    stage: string;
+};
+
+export type TimelineState = {
+    stages: {
+        byId: Record<string, Stage>;
+        allIds: string[];
+    };
+    subStages: {
+        byId: Record<string, SubStage>;
+        allIds: string[];
+    };
+    defaultStages: string[];
+    timelineStartEnd: {
+        start: string;
+        end: string;
+    };
+};
+
+export type TimelineStatePayload = {
+    stages: Stage[];
+    subStages: SubStage[];
+    defaultStages: string[];
+    timelineStartEnd: {
+        start: string;
+        end: string;
+    };
+}

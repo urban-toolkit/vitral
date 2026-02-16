@@ -9,6 +9,7 @@ type SaveBody = {
     title?: string;
     description?: string | null;
     state: unknown;
+    timeline: unknown;
 };
 
 const TEXT_EXTENSIONS = new Set([
@@ -51,7 +52,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.pg.query(
             `
-            SELECT id, title, description, state, version, updated_at
+            SELECT id, title, description, state, timeline, version, updated_at
             FROM documents
             WHERE id = $1
             `,
@@ -127,12 +128,13 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.pg.query(
             `
-            INSERT INTO documents (id, title, description, state, version)
+            INSERT INTO documents (id, title, description, state, timeline, version)
             VALUES (
                 $1,
                 COALESCE($2, 'Untitled'),
                 $3,
                 $4::jsonb,
+                $5::jsonb,
                 1
             )
             ON CONFLICT (id) DO UPDATE
@@ -140,10 +142,11 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 title = COALESCE(EXCLUDED.title, documents.title),
                 description = COALESCE(EXCLUDED.description, documents.description),
                 state = EXCLUDED.state,
+                timeline = EXCLUDED.timeline,
                 version = documents.version + 1
             RETURNING id, title, description, version, updated_at
             `,
-            [id, title, description, JSON.stringify(body.state)]
+            [id, title, description, JSON.stringify(body.state), JSON.stringify(body.timeline)]
         );
 
         return reply.status(200).send(rows[0]);
