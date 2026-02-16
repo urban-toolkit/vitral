@@ -43,6 +43,13 @@
     transform: translate(-50%, -50%);
 }
 
+.newStage {
+    position: absolute;
+    font-size: var(--font-size-xs);
+    opacity: 50%;
+    cursor: pointer;
+}
+
 /* axis */
 .axis path {
     fill: none;

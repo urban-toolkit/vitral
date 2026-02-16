@@ -13,7 +13,7 @@ import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNod
 import { selectAllFiles, upsertFile } from '@/store/filesSlice';
 import { Card } from '@/components/cards/Card';
 
-import type { cardType, edgeType, filePendingUpload, nodeType } from '@/config/types';
+import type { cardType, edgeType, filePendingUpload, nodeType, Stage } from '@/config/types';
 import type { RootState } from '@/store';
 
 import { FreeInputZone } from '@/components/toolbar/FreeInputZone';
@@ -28,6 +28,8 @@ import { faAnglesUp } from '@fortawesome/free-solid-svg-icons';
 import { getGitHubEvents } from '@/api/eventsApi';
 import { selectAllGitHubEvents, setGithubEvents } from '@/store/gitEventsSlice';
 import AssetsPanel from '@/components/files/AssetsPanel';
+
+const toDate = (d: Date | string) => (d instanceof Date ? d : new Date(d));
 
 type FlowCanvasProps = {
     projectId: string;
@@ -92,6 +94,25 @@ const FlowInner = () => {
     const [loading, setLoading] = useState(false);
     const cursorMode = useRef<'node' | 'text' | 'tree' | 'related' | ''>('');
 
+    const [timelineStages, setTimelineStages] = useState<Stage[]>([
+        { id: "1", name: "Learn", start: new Date("June 15, 2023 03:24:00"), end: new Date("July 05, 2023 03:24:00") },
+        { id: "2", name: "Design", start: new Date("July 05, 2023 03:24:00"), end: new Date("August 26, 2023 03:24:00") },
+        { id: "3", name: "Implement", start: new Date("August 26, 2023 03:24:00"), end: new Date("September 16, 2023 03:24:00") },
+        { id: "4", name: "Evaluate", start: new Date("September 16, 2023 03:24:00"), end: new Date("October 21, 2023 03:24:00") },
+        { id: "5", name: "Reflect and Communicate", start: new Date("October 21, 2023 03:24:00"), end: new Date("December 04, 2023 03:24:00") }
+    ]);
+    const [defaultStages, setDefaultStages] = useState<string[]>([
+        "Learn",
+        "Design",
+        "Implement",
+        "Evaluate",
+        "Reflect and Communicate"
+    ]);
+    const [timelineStartEnd, setTimelineStartEnd] = useState<{ start: Date, end: Date }>({
+        start: new Date("June 15, 2023 03:24:00"),
+        end: new Date("December 04, 2023 00:24:00")
+    });
+
     const [gitConnectionStatus, setGitConnectionStatus] = useState<{ connected: boolean, user?: { id: number, login: string } }>({ connected: false });
 
     const dispatch = useDispatch();
@@ -100,7 +121,7 @@ const FlowInner = () => {
     const title = useSelector((state: RootState) => state.flow.title);
 
     const gitEvents = useSelector(selectAllGitHubEvents);
-    
+
     const allFiles = useSelector(selectAllFiles);
 
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => dispatch(onNodesChange(changes)), [dispatch]);
@@ -121,7 +142,7 @@ const FlowInner = () => {
 
     const onDataPropertyChange = useCallback(async (nodeProps: nodeType, value: any, propertyName: string) => {
 
-        let data: Record<string, any> = {...nodeProps.data};
+        let data: Record<string, any> = { ...nodeProps.data };
 
         let cardType: cardType = 'social';
 
@@ -134,7 +155,7 @@ const FlowInner = () => {
                 break;
         }
 
-        if(propertyName == "label")
+        if (propertyName == "label")
             data.type = cardType;
 
         data[propertyName] = value;
@@ -152,9 +173,9 @@ const FlowInner = () => {
     }), [onAttachFile]);
 
     const fetchGithubEvents = async (connected: boolean) => {
-        if(connected){
+        if (connected) {
             const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
-            if(info.github_repo && info.github_repo != ""){
+            if (info.github_repo && info.github_repo != "") {
                 const githubEvents = await getGitHubEvents(projectId);
 
                 dispatch(setGithubEvents(githubEvents));
@@ -241,9 +262,9 @@ const FlowInner = () => {
         }, []);
 
     const onClick = useCallback((e: React.MouseEvent) => {
-        if(cursorMode.current == 'node'){
+        if (cursorMode.current == 'node') {
             const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    
+
             dispatch(addNode({
                 id: crypto.randomUUID(),
                 position,
@@ -257,7 +278,7 @@ const FlowInner = () => {
         }
 
     }, []);
-        
+
     useEffect(() => {
         dispatch(setGithubEvents([]));
         checkGitStatus();
@@ -331,9 +352,9 @@ const FlowInner = () => {
         />
 
         <div
-            style={{position: "fixed", top: "650px", right: "50px"}}
+            style={{ position: "fixed", top: "650px", right: "50px" }}
         >
-            <AssetsPanel 
+            <AssetsPanel
                 records={allFiles}
             />
         </div>
@@ -400,11 +421,11 @@ const FlowInner = () => {
 
         <div
             style={{
-                ...(timelineOpen 
-                    ? 
-                    {bottom: "300px"} 
-                    : 
-                    {bottom: 0})
+                ...(timelineOpen
+                    ?
+                    { bottom: "300px" }
+                    :
+                    { bottom: 0 })
                 ,
                 cursor: "pointer",
                 height: "25px",
@@ -417,28 +438,28 @@ const FlowInner = () => {
                 justifyContent: "center",
                 alignItems: "center"
             }}
-            onClick={() => {setTimelineOpen(!timelineOpen)}}
+            onClick={() => { setTimelineOpen(!timelineOpen) }}
         >
             <p
                 style={{
                     margin: 0
                 }}
             >Events</p>
-            
+
             <FontAwesomeIcon
-                icon={faAnglesUp} 
-                style={timelineOpen ? {transform: "rotateX(180deg)"} : {}}
+                icon={faAnglesUp}
+                style={timelineOpen ? { transform: "rotateX(180deg)" } : {}}
             />
         </div>
 
-        <div 
+        <div
             style={
                 {
                     ...(timelineOpen
                         ?
-                        {bottom: 0}
+                        { bottom: 0 }
                         :
-                        {bottom: "-300px"}
+                        { bottom: "-300px" }
                     ),
                     position: "fixed",
                     backgroundColor: "rgba(255, 255, 255, 0.7)",
@@ -450,31 +471,106 @@ const FlowInner = () => {
                 }
             }
         >
-            <Timeline 
-                startMarker={new Date("June 15, 2023 03:24:00")}
-                endMarker={new Date("December 04, 2023 00:24:00")}
+            <Timeline
+                startMarker={timelineStartEnd.start}
+                endMarker={timelineStartEnd.end}
                 codebaseEvents={gitEvents}
                 knowledgeBaseEvents={[
-                    {id: crypto.randomUUID(), occurredAt: new Date("July 04, 2023 12:24:00"), kind: "knowledge", subtype: "activity_created"},
-                    {id: crypto.randomUUID(), occurredAt: new Date("July 13, 2023 12:24:00"), kind: "knowledge", subtype: "requirement_created"},
+                    { id: crypto.randomUUID(), occurredAt: new Date("July 04, 2023 12:24:00"), kind: "knowledge", subtype: "activity_created" },
+                    { id: crypto.randomUUID(), occurredAt: new Date("July 13, 2023 12:24:00"), kind: "knowledge", subtype: "requirement_created" },
                 ]}
                 designStudyEvents={[
-                    {id: crypto.randomUUID(), occurredAt: new Date("July 01, 2023 03:24:00"), kind: "designStudy", subtype: "study_started"},
+                    { id: crypto.randomUUID(), occurredAt: new Date("July 01, 2023 03:24:00"), kind: "designStudy", subtype: "study_started" },
                 ]}
-                stages={[
-                    {id: "1", name: "Learn", start: new Date("June 15, 2023 03:24:00"), end: new Date("July 05, 2023 03:24:00")},
-                    {id: "2", name: "Design", start: new Date("July 05, 2023 03:24:00"), end: new Date("August 26, 2023 03:24:00")},
-                    {id: "3", name: "Implement", start: new Date("August 26, 2023 03:24:00"), end: new Date("September 16, 2023 03:24:00")},
-                    {id: "4", name: "Evaluate", start: new Date("September 16, 2023 03:24:00"), end: new Date("October 21, 2023 03:24:00")},
-                    {id: "5", name: "Reflect and Communicate", start: new Date("October 21, 2023 03:24:00"), end: new Date("December 04, 2023 03:24:00")}
-                ]}
-                defaultStages={[
-                    "Learn",
-                    "Design",
-                    "Implement",
-                    "Evaluate",
-                    "Reflect and Communicate"
-                ]}
+                stages={timelineStages}
+                defaultStages={defaultStages}
+                onStageUpdate={(stage) => {
+                    setTimelineStages((prev) => {
+                        return prev.map((value) => {
+                            if (value.id == stage.id)
+                                return { ...value, name: stage.newName };
+                            else
+                                return value;
+                        });
+                    })
+                }}
+                onStageCreation={(name: string) => {
+                    const defaultStagesSet = new Set(defaultStages);
+                    defaultStagesSet.add(name);
+                    setDefaultStages([...defaultStagesSet]);
+                }}
+                onStageLaneCreation={(name: string) => {
+
+                    function addTwoWeeks(date: Date): Date {
+                        const result = new Date(date);
+                        result.setDate(result.getDate() + 14);
+                        return result;
+                    }
+
+                    setTimelineStages((prev) => {
+
+                        let dateOffset = timelineStartEnd.start;
+
+                        if (prev.length > 0) {
+                            const lastStage = prev[prev.length - 1];
+                            dateOffset = toDate(lastStage.end);
+                        }
+
+                        return [
+                            ...prev,
+                            {
+                                id: crypto.randomUUID(),
+                                name: name,
+                                start: dateOffset,
+                                end: addTwoWeeks(dateOffset)
+                            }
+                        ];
+
+                    });
+                }}
+                onStageLaneDeletion={(id: string) => {
+                    setTimelineStages(prev => {
+                        const sorted = [...prev].sort((a, b) => +a.start - +b.start);
+
+                        const index = sorted.findIndex(s => s.id === id);
+                        if (index === -1) return prev;
+
+                        const stageToDelete = sorted[index];
+
+                        const stageStart = toDate(stageToDelete.start);
+                        const stageEnd = toDate(stageToDelete.end);
+
+                        const duration = stageEnd.getTime() - stageStart.getTime();
+
+                        // Remove the stage
+                        const remaining = sorted.filter(s => s.id !== id);
+
+                        // Shift everything after it to the left
+                        const updated = remaining.map((s, i) => {
+                            if (i < index) return s;
+
+                            const startDate = toDate(s.start);
+                            const endDate = toDate(s.end);
+
+                            return {
+                                ...s,
+                                start: new Date(startDate.getTime() - duration),
+                                end: new Date(endDate.getTime() - duration),
+                            };
+                        });
+
+                        return updated;
+                    });
+                }}
+                onStageBoundaryChange={(prevId, nextId, date) => {
+                    setTimelineStages(prev =>
+                        prev.map(s => {
+                            if (s.id === prevId) return { ...s, end: date };
+                            if (s.id === nextId) return { ...s, start: date };
+                            return s;
+                        })
+                    )
+                }}
             />
         </div>
 

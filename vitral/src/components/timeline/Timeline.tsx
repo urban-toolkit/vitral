@@ -1,12 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import classes from "./Timeline.module.css";
-import type { GitHubEvent, GitHubEventType, LaneType } from "@/config/types";
+import type { GitHubEvent, GitHubEventType, LaneType, Stage } from "@/config/types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faCaretDown } from "@fortawesome/free-solid-svg-icons";
+import { faCaretDown, faPlus } from "@fortawesome/free-solid-svg-icons";
 import { StagePicker } from "@/components/timeline/StagePicker";
-
-type ISODate = string;
 
 const GIT_LABELS: Record<GitHubEventType, string> = {
     commit: "Commit",
@@ -40,13 +38,6 @@ function formatDate(iso: string) {
     });
 }
 
-export type Stage = {
-    id: string;
-    name: string;
-    start: Date | ISODate;
-    end: Date | ISODate;
-};
-
 type SubStage = {
     id: string;
     lane: LaneType;
@@ -58,7 +49,7 @@ type SubStage = {
 
 export type TimelineEventBase = {
     id: string;
-    occurredAt: Date | ISODate;
+    occurredAt: Date | string;
     label?: string;
     description?: string;
 };
@@ -76,18 +67,22 @@ export type DesignStudyEvent = TimelineEventBase & {
 type AnyEvent = GitHubEvent | KnowledgeBaseEvent | DesignStudyEvent;
 
 export type TimelineProps = {
-    startMarker: Date | ISODate;
-    endMarker: Date | ISODate;
+    startMarker: Date | string;
+    endMarker: Date | string;
     defaultStages: string[];
+    onStageUpdate: (stage: {id: string, newName: string}) => void; 
+    onStageCreation: (name: string) => void;
+    onStageLaneCreation: (name: string) => void;
+    onStageLaneDeletion: (id: string) => void;
+    onStageBoundaryChange: (prevId: string, nextId: string, date: Date) => void;
     stages?: Stage[];
     codebaseEvents?: GitHubEvent[];
     knowledgeBaseEvents?: KnowledgeBaseEvent[];
     designStudyEvents?: DesignStudyEvent[];
     margin?: { top: number; right: number; bottom: number; left: number };
-    onStageUpdate?: (stage: Stage) => void; 
 };
 
-const toDate = (d: Date | ISODate) => (d instanceof Date ? d : new Date(d));
+const toDate = (d: Date | string) => (d instanceof Date ? d : new Date(d));
 
 export const Timeline: React.FC<TimelineProps> = ({
     startMarker,
@@ -97,7 +92,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     knowledgeBaseEvents = [],
     designStudyEvents = [],
     defaultStages = [],
-    onStageUpdate = {},
+    onStageUpdate,
+    onStageCreation,
+    onStageLaneCreation,
+    onStageLaneDeletion,
+    onStageBoundaryChange,
     margin = { top: 22, right: 16, bottom: 34, left: 16 },
 }) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -117,7 +116,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     });
     const [showTooltip, setShowTooltip] = useState<boolean>(false);
 
-    const [tagPicker, setTagPicker] = useState<null | { subStageId: string; x: number; y: number }>(null);
+    const [tagPicker, setTagPicker] = useState<null | { id: string; x: number; y: number }>(null);
 
     const [subStages, setSubStages] = useState<SubStage[]>([]);
 
@@ -129,7 +128,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     const [nameEdit, setNameEdit] = useState<null | {
         subStageId: string;
-        x: number; // container-relative px
+        x: number; 
         y: number;
         value: string;
     }>(null);
@@ -137,8 +136,10 @@ export const Timeline: React.FC<TimelineProps> = ({
     const startCaretRef = useRef<HTMLSpanElement | null>(null);
     const endCaretRef = useRef<HTMLSpanElement | null>(null);
     const todayCaretRef = useRef<HTMLSpanElement | null>(null);
+    
+    const newStageButtonRef = useRef<HTMLSpanElement | null>(null);
 
-    const setCaretPos = (el: HTMLSpanElement | null, x: number, y: number) => {
+    const setRefPos = (el: HTMLSpanElement | null, x: number, y: number) => {
         if (!el) return;
         el.style.left = `${x}px`;
         el.style.top = `${y}px`;
@@ -226,7 +227,8 @@ export const Timeline: React.FC<TimelineProps> = ({
         const stageColor = d3
             .scaleOrdinal<string, string>()
             .domain(defaultStages)
-            .range(d3.schemePastel2);
+            .range(d3.schemePastel2)
+            .unknown("#ccc");
 
         const axisG = svg
             .append("g")
@@ -296,6 +298,21 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .attr("width", innerW)
                 .attr("height", 30);
 
+            const dividerDrag = d3.drag<SVGLineElement, any>()
+                .on("drag", function (event: any, d: any) {
+                    const px = event.x;
+                    const newDate = x.invert(px);
+
+                    const prev = parsed.stages[d.index];
+                    const next = (d.index + 1) <= parsed.stages.length ? parsed.stages[d.index + 1] : null;
+
+                    // Prevent collapsing
+                    if (+newDate <= +prev.start) return;
+                    if (next && +newDate >= +next.end) return;
+
+                    onStageBoundaryChange(prev.id, next ? next.id : '-1', newDate);
+                });
+
             stageG.selectAll("*").remove();
 
             stageG
@@ -304,7 +321,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .enter()
                 .append("g")
                 .attr("class", "stage")
-                .each(function (d) {
+                .each(function (d: any) {
                     const g = d3.select(this);
 
                     // Main rect
@@ -315,10 +332,30 @@ export const Timeline: React.FC<TimelineProps> = ({
                         .attr("y", margin.top + 44)
                         .attr("width", x(d.end) - x(d.start))
                         .attr("height", 20)
-                        .on("click", (event, d: any) => {
+                        .on("click", (event: any, d: any) => {
                             event.stopPropagation();
                             const [sx, sy] = d3.pointer(event, containerRef.current);
-                            setTagPicker({ subStageId: d.id, x: sx, y: sy });
+                            setTagPicker({ id: d.id, x: sx, y: sy });
+                        });
+
+                    g.selectAll("text")
+                        .data(parsed.stages)
+                        .enter()
+                        .append("text")
+                        .attr("class", classes.stageLabel)
+                        .attr("x", (x(d.start) + x(d.end)) / 2)
+                        .attr("y", margin.top + 58)
+                        .text(d.name + "▾");
+
+                    g.append("text")
+                        .attr("class", classes.subStageDelete)
+                        .attr("x", x(d.end) - 20)
+                        .attr("y", margin.top + 58)
+                        .text("X")
+                        .style("cursor", "pointer")
+                        .on("click", (event: any, d: any) => {
+                            event.stopPropagation();
+                            onStageLaneDeletion(d.id);
                         });
 
                     g.append("rect")
@@ -347,19 +384,38 @@ export const Timeline: React.FC<TimelineProps> = ({
 
                 });
 
+            stageG.selectAll("line.divider")
+                .data(parsed.stages.map((s, i) => ({ ...s, index: i })))
+                .enter()
+                .append("line")
+                .attr("class", "divider")
+                .attr("x1", (d: any) => x(parsed.stages[d.index].end))
+                .attr("x2", (d: any) => x(parsed.stages[d.index].end))
+                .attr("y1", margin.top + 44)
+                .attr("y2", margin.top + 272)
+                .attr("stroke", "transparent")
+                .attr("stroke-width", 10)
+                .attr("cursor", "ew-resize")
+                .call(dividerDrag as any);
+
             let augmentedStages = [...parsed.stages];
 
             if (parsed.stages.length > 0) {
                 const lastStage = parsed.stages[parsed.stages.length - 1];
                 augmentedStages.push({
+                    id: "-1",
                     name: "lastStage",
                     start: lastStage.end,
                     end: lastStage.end
                 });
+
+                setRefPos(newStageButtonRef.current, x(lastStage.end) + 3, margin.top + 45);
+            }else{
+                setRefPos(newStageButtonRef.current, x(parsed.start) + 3, margin.top + 45);
             }
 
             stageG
-                .selectAll("line")
+                .selectAll("line.markerLine")
                 .data(augmentedStages)
                 .enter()
                 .append("line")
@@ -368,16 +424,6 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .attr("x2", (d) => x(d.start))
                 .attr("y1", margin.top + 65)
                 .attr("y2", svgHeight);
-
-            stageG
-                .selectAll("text")
-                .data(parsed.stages)
-                .enter()
-                .append("text")
-                .attr("class", classes.stageLabel)
-                .attr("x", (d) => (x(d.start) + x(d.end)) / 2)
-                .attr("y", margin.top + 58)
-                .text((d) => d.name);
 
             subStagesG.selectAll("*").remove();
 
@@ -508,9 +554,9 @@ export const Timeline: React.FC<TimelineProps> = ({
                     .attr("y", margin.top - 6)
                     .text(label);
 
-                if (label === "Start") setCaretPos(startCaretRef.current, px, margin.top);
-                if (label === "End") setCaretPos(endCaretRef.current, px, margin.top);
-                if (label === "Today") setCaretPos(todayCaretRef.current, px, margin.top);
+                if (label === "Start") setRefPos(startCaretRef.current, px, margin.top);
+                if (label === "End") setRefPos(endCaretRef.current, px, margin.top);
+                if (label === "Today") setRefPos(todayCaretRef.current, px, margin.top);
             };
 
             drawMarker(parsed.start, "Start");
@@ -652,6 +698,17 @@ export const Timeline: React.FC<TimelineProps> = ({
                 <span ref={todayCaretRef} className={classes.marker} style={{ left: 0, top: margin.top, display: "none" }}>
                     <FontAwesomeIcon icon={faCaretDown} />
                 </span>
+
+                <span 
+                    ref={newStageButtonRef} 
+                    className={classes.newStage}
+                    onClick={(e) => {
+                        onStageLaneCreation("Untitled");
+                    }}
+                >
+                    <FontAwesomeIcon icon={faPlus} />
+                </span>
+
             </div>
 
             <div
@@ -724,14 +781,16 @@ export const Timeline: React.FC<TimelineProps> = ({
                 x={tagPicker?.x ?? 0}
                 y={tagPicker?.y ?? 0}
                 currentValue={
-                    tagPicker ? (subStages.find(s => s.id === tagPicker.subStageId)?.stage ?? "") : ""
+                    tagPicker ? (subStages.find(s => s.id === tagPicker.id)?.stage ?? "") : ""
                 }
                 options={defaultStages}
                 onClose={() => setTagPicker(null)}
-                onCreate={(value) => {console.log("creating new stage", value)}}
+                onCreate={(value) => {
+                    onStageCreation(value);
+                }}
                 onSelect={(value) => {
                     if (!tagPicker) return;
-                    setSubStages(prev => prev.map(s => s.id === tagPicker.subStageId ? { ...s, stage: value } : s));
+                    onStageUpdate({id: tagPicker.id, newName: value});
                     setTagPicker(null);
                 }}
             />

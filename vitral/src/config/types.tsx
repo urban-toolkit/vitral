@@ -93,3 +93,10 @@ export interface GitHubEvent {
 }
 
 export type LaneType = "codebase" | "knowledge" | "designStudy";
+
+export type Stage = {
+    id: string;
+    name: string;
+    start: Date | string;
+    end: Date | string;
+};
