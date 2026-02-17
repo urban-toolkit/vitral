@@ -1,24 +1,24 @@
-import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType } from '@/config/types';
+import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType, DesignStudyEvent, Stage } from '@/config/types';
 import type { filePendingUpload } from '@/config/types';
 import { readAsDataURL } from './FileParser';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
-export async function requestCardsLLM(fileData: filePendingUpload): Promise<{cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]}>{
+export async function requestCardsLLM(fileData: filePendingUpload): Promise<{ cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] }> {
 
-    let {name, ext, previewText} = fileData;
+    let { name, ext, previewText } = fileData;
 
     let content = previewText;
 
     // TODO: deal with other formats like .docx or .pdf
 
-    if(content == undefined && fileData.mimeType.startsWith("image/")){
+    if (content == undefined && fileData.mimeType.startsWith("image/")) {
         content = await readAsDataURL(fileData.file);
     }
 
-    const userText = JSON.stringify({name, ext, content});
+    const userText = JSON.stringify({ name, ext, content });
 
-    const response = await fetch(API_BASE_URL+"/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -36,11 +36,11 @@ export async function requestCardsLLM(fileData: filePendingUpload): Promise<{car
 
     const data = await response.json();
 
-    try{
+    try {
         const parsedData = JSON.parse(data.output);
 
         return parsedData;
-    }catch{
+    } catch {
         alert("Request failed");
     }
 
@@ -50,9 +50,9 @@ export async function requestCardsLLM(fileData: filePendingUpload): Promise<{car
     }
 }
 
-export async function requestCardsLLMTextInput(userText: string): Promise<{cards: {id: number, entity: string, title: string, description?: string}[], connections: {source: number, target: number}[]}>{
+export async function requestCardsLLMTextInput(userText: string): Promise<{ cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] }> {
 
-    const response = await fetch(API_BASE_URL+"/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -70,11 +70,11 @@ export async function requestCardsLLMTextInput(userText: string): Promise<{cards
 
     const data = await response.json();
 
-    try{
+    try {
         const parsedData = JSON.parse(data.output);
 
         return parsedData;
-    }catch{
+    } catch {
         alert("Request failed");
     }
 
@@ -100,22 +100,22 @@ export async function requestCardsLLMTextInput(userText: string): Promise<{cards
 //     }
 // }
 
-export function llmCardsToNodes(llmCards: llmCardData[], offset?: {x: number, y: number}): {nodes: nodeType[], idMap: {[old: string]: string}} {
+export function llmCardsToNodes(llmCards: llmCardData[], offset?: { x: number, y: number }): { nodes: nodeType[], idMap: { [old: string]: string } } {
     // let id = getHighestId(nodes) + 1;
 
     let positionX = 0;
     let positionY = 0;
 
-    if(offset){
+    if (offset) {
         positionX = offset.x;
         positionY = offset.y;
     }
 
     let resultingNodes: nodeType[] = [];
 
-    let idMapping: {[old: string]: string} = {};
+    let idMapping: { [old: string]: string } = {};
 
-    for(const card of llmCards){
+    for (const card of llmCards) {
 
         let cardType = 'social';
 
@@ -147,26 +147,63 @@ export function llmCardsToNodes(llmCards: llmCardData[], offset?: {x: number, y:
 
         positionX += 300;
         idMapping[card.id] = newId;
-        // id += 1;
     }
 
-    return {nodes: resultingNodes, idMap: idMapping};
+    return { nodes: resultingNodes, idMap: idMapping };
 }
 
-export function llmConnectionsToEdges(llmConnections: llmConnectionData[], idMap: {[old: string]: string}): edgeType[] {
+export function llmConnectionsToEdges(llmConnections: llmConnectionData[], idMap: { [old: string]: string }): edgeType[] {
     let resultingEdges: edgeType[] = []
-    
-    try{
-        for(const connection of llmConnections) {
+
+    try {
+        for (const connection of llmConnections) {
             resultingEdges.push({
                 id: crypto.randomUUID(),
                 source: idMap[connection.source],
                 target: idMap[connection.target]
             });
         }
-    }catch(err){
-        console.log("Edge generation failed for some connections in: "+llmConnections)
+    } catch (err) {
+        console.log("Edge generation failed for some connections in: " + llmConnections)
     }
 
     return resultingEdges;
+}
+
+export async function requestMilestonesLLM(milestones: DesignStudyEvent[]): Promise<DesignStudyEvent[]> {
+    const contentMilestones = JSON.stringify(milestones);
+
+    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ input: contentMilestones, prompt: "Milestones" }),
+    });
+
+    if (!response.ok) {
+        alert("Request failed");
+        return []
+    }
+
+    const data = await response.json();
+
+    try {
+        const parsedData = JSON.parse(data.output);
+
+        let milestones: DesignStudyEvent[] = parsedData.milestones;
+
+        milestones = milestones.map((milestone) => {
+            return {
+                ...milestone,
+                id: crypto.randomUUID()
+            }
+        });
+
+        return milestones;
+    } catch {
+        alert("Request failed");
+    }
+
+    return [];
 }

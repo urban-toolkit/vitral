@@ -7,8 +7,8 @@ import { debounce } from "@/utils/debounce";
 
 import type { RootState } from '@/store';
 import { setFiles } from "@/store/filesSlice";
-import { selectAllStages, selectAllSubStages, selectDefaultStages, selectTimelineStartEnd, setDefaultStages, setStages, setSubStages, setTimelineStartEnd } from "@/store/timelineSlice";
-import type { Stage, SubStage } from "@/config/types";
+import { selectAllDesignStudyEvents, selectAllStages, selectAllSubStages, selectDefaultStages, selectTimelineStartEnd, setDefaultStages, setDesignStudyEvents, setStages, setSubStages, setTimelineStartEnd } from "@/store/timelineSlice";
+import type { DesignStudyEvent, Stage, SubStage } from "@/config/types";
 
 type SyncStatus = "idle" | "loading" | "saving" | "error" | "ready";
 
@@ -17,6 +17,7 @@ export function useDocumentSync(projectId: string) {
     const flow = useSelector((s: RootState) => s.flow);
     const stages = useSelector(selectAllStages);
     const subStages = useSelector(selectAllSubStages);
+    const designStudyEvents = useSelector(selectAllDesignStudyEvents);
     const defaultStages = useSelector(selectDefaultStages);
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
 
@@ -35,10 +36,11 @@ export function useDocumentSync(projectId: string) {
             title: flow.title,
             stages: stages,
             subStages: subStages,
+            designStudyEvents: designStudyEvents,
             defaultStages: defaultStages,
             timelineStartEnd: timelineStartEnd
         });
-    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd]);
+    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
@@ -49,6 +51,7 @@ export function useDocumentSync(projectId: string) {
                 nodes: any[], 
                 edges: any[], 
                 stages: Stage[], 
+                designStudyEvents: DesignStudyEvent[],
                 subStages: SubStage[], 
                 defaultStages: string[], 
                 timelineStartEnd: {start: string, end: string},  
@@ -65,6 +68,7 @@ export function useDocumentSync(projectId: string) {
                         flow: { nodes, edges },
                     }, {
                         stages,
+                        designStudyEvents,
                         subStages,
                         defaultStages,
                         timelineStartEnd
@@ -112,11 +116,13 @@ export function useDocumentSync(projectId: string) {
                 const timeline = doc.timeline;
 
                 const stages = timeline?.stages ?? [];
+                const designStudyEvents = timeline?.designStudyEvents ?? [];
                 const subStages = timeline?.subStages ?? [];
                 const defaultStages = timeline?.defaultStages ?? [];
-                const timelineStartEnd = timeline?.timelineStartEnd ?? {start: "", end: ""};
+                const timelineStartEnd = timeline?.timelineStartEnd ?? {start: "June 15, 2023 03:24:00", end: "December 04, 2023 00:24:00"};
 
                 dispatch(setStages(stages));
+                dispatch(setDesignStudyEvents(designStudyEvents));
                 dispatch(setSubStages(subStages));
                 dispatch(setDefaultStages(defaultStages));
                 dispatch(setTimelineStartEnd(timelineStartEnd));
@@ -126,6 +132,7 @@ export function useDocumentSync(projectId: string) {
                     edges, 
                     title, 
                     stages, 
+                    designStudyEvents,
                     subStages, 
                     defaultStages, 
                     timelineStartEnd });
@@ -153,8 +160,8 @@ export function useDocumentSync(projectId: string) {
 
         if (currentHash === lastSavedHashRef.current) return;
 
-        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, subStages, defaultStages, timelineStartEnd, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, subStages, defaultStages, timelineStartEnd]);
+        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, subStages, defaultStages, timelineStartEnd, flow.title);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, designStudyEvents, subStages, defaultStages, timelineStartEnd]);
 
     return { status, error };
 }

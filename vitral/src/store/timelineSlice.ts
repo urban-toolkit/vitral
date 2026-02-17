@@ -1,6 +1,6 @@
 import { createSelector, createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/store/rootReducer";
-import type { Stage, SubStage, TimelineState } from "@/config/types";
+import type { DesignStudyEvent, Stage, SubStage, TimelineState } from "@/config/types";
 
 const toDate = (d: Date | string) => (d instanceof Date ? d : new Date(d));
 const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
@@ -13,6 +13,10 @@ const initialState: TimelineState = {
     subStages: {
         byId: {},
         allIds: [],
+    },
+    designStudyEvents: {
+        byId: {},
+        allIds: []
     },
     defaultStages: [],
     timelineStartEnd: {
@@ -41,6 +45,16 @@ function setAllSubStages(state: TimelineState, subStages: SubStage[]) {
     }
 }
 
+function setAllDesignStudyEvents(state: TimelineState, designStudyEvents: DesignStudyEvent[]) {
+    state.designStudyEvents.byId = {};
+    state.designStudyEvents.allIds = [];
+
+    for (const s of designStudyEvents) {
+        state.designStudyEvents.byId[s.id] = s;
+        state.designStudyEvents.allIds.push(s.id);
+    }
+}
+
 export const timelineSlice = createSlice({
     name: "timeline",
     initialState,
@@ -51,7 +65,7 @@ export const timelineSlice = createSlice({
 
             let stages = action.payload.map((stage) => {
                 return {
-                    ...stage, 
+                    ...stage,
                     start: fromDate(stage.start),
                     end: fromDate(stage.end)
                 }
@@ -103,7 +117,7 @@ export const timelineSlice = createSlice({
             const id = action.payload;
 
             const index = state.stages.allIds.findIndex(s => s === id);
-            if(!state.stages.byId[id]) return;
+            if (!state.stages.byId[id]) return;
 
             const stageToDelete = state.stages.byId[id];
 
@@ -113,9 +127,9 @@ export const timelineSlice = createSlice({
 
             const remaining = state.stages.allIds.filter(s => s !== id);
 
-            for(let i = 0; i < remaining.length; i++){
+            for (let i = 0; i < remaining.length; i++) {
                 if (i < index) continue;
-                
+
                 const s = state.stages.byId[remaining[i]];
 
                 state.stages.byId[remaining[i]] = {
@@ -126,8 +140,8 @@ export const timelineSlice = createSlice({
             }
 
             state.stages.allIds = remaining;
-            const { [id]: _, ...newObj } = state.stages.byId;    
-            state.stages.byId = newObj;        
+            const { [id]: _, ...newObj } = state.stages.byId;
+            state.stages.byId = newObj;
         },
 
         changeStageBoundary: (
@@ -140,11 +154,11 @@ export const timelineSlice = createSlice({
         ) => {
             const { prevId, nextId, date } = action.payload;
 
-            for(let i = 0; i < state.stages.allIds.length; i++){
-                if(state.stages.allIds[i] == prevId)
+            for (let i = 0; i < state.stages.allIds.length; i++) {
+                if (state.stages.allIds[i] == prevId)
                     state.stages.byId[prevId] = { ...state.stages.byId[prevId], start: fromDate(state.stages.byId[prevId].start), end: fromDate(date) };
 
-                if(state.stages.allIds[i] == nextId)
+                if (state.stages.allIds[i] == nextId)
                     state.stages.byId[nextId] = { ...state.stages.byId[nextId], start: fromDate(date), end: fromDate(state.stages.byId[nextId].end) };
 
             }
@@ -154,7 +168,7 @@ export const timelineSlice = createSlice({
         setSubStages: (state, action: PayloadAction<SubStage[]>) => {
             let subStages = action.payload.map((subStage) => {
                 return {
-                    ...subStage, 
+                    ...subStage,
                     start: fromDate(subStage.start),
                     end: fromDate(subStage.end)
                 }
@@ -191,6 +205,44 @@ export const timelineSlice = createSlice({
                 state.subStages.allIds.filter(sid => sid !== id);
         },
 
+        // Design Study Events
+        setDesignStudyEvents: (state, action: PayloadAction<DesignStudyEvent[]>) => {
+            let designStudyEvents = action.payload.map((designStudyEvent) => {
+                return {
+                    ...designStudyEvent,
+                    occurredAt: fromDate(designStudyEvent.occurredAt)
+                }
+            });
+
+            setAllDesignStudyEvents(state, designStudyEvents);
+        },
+
+        addDesignStudyEvent: (state, action: PayloadAction<DesignStudyEvent>) => {
+            const s = action.payload;
+            state.designStudyEvents.byId[s.id] = {
+                ...s,
+                occurredAt: fromDate(s.occurredAt)
+            };
+            state.designStudyEvents.allIds.push(s.id);
+        },
+
+        updateDesignStudyEvent: (state, action: PayloadAction<DesignStudyEvent>) => {
+            const s = action.payload;
+            if (state.designStudyEvents.byId[s.id]) {
+                state.designStudyEvents.byId[s.id] = {
+                    ...s,
+                    occurredAt: fromDate(s.occurredAt)
+                };
+            }
+        },
+
+        deleteDesignStudyEvent: (state, action: PayloadAction<string>) => {
+            const id = action.payload;
+            delete state.designStudyEvents.byId[id];
+            state.designStudyEvents.allIds =
+                state.designStudyEvents.allIds.filter(sid => sid !== id);
+        },
+
         // Default stages
         setDefaultStages: (state, action: PayloadAction<string[]>) => {
             state.defaultStages = action.payload;
@@ -205,7 +257,7 @@ export const timelineSlice = createSlice({
         // Project range
         setTimelineStartEnd: (
             state,
-            action: PayloadAction<{ start: Date | string; end: Date | string}>
+            action: PayloadAction<{ start: Date | string; end: Date | string }>
         ) => {
             state.timelineStartEnd = {
                 start: fromDate(action.payload.start),
@@ -230,7 +282,11 @@ export const {
     addDefaultStage,
     setTimelineStartEnd,
     clearTimeline,
-    changeStageBoundary
+    changeStageBoundary,
+    setDesignStudyEvents,
+    addDesignStudyEvent,
+    updateDesignStudyEvent,
+    deleteDesignStudyEvent
 } = timelineSlice.actions;
 
 export default timelineSlice.reducer;
@@ -255,6 +311,15 @@ export const selectSubStageById = (id: string) =>
 export const selectAllSubStages = createSelector(
     selectTimelineState,
     s => s.subStages.allIds.map(id => s.subStages.byId[id]).filter(Boolean)
+);
+
+// Design study events 
+export const selectDesignStudyEventById = (id: string) =>
+    createSelector(selectTimelineState, s => s.designStudyEvents.byId[id]);
+
+export const selectAllDesignStudyEvents = createSelector(
+    selectTimelineState,
+    s => s.designStudyEvents.allIds.map(id => s.designStudyEvents.byId[id]).filter(Boolean)
 );
 
 // Default and range

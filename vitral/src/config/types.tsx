@@ -110,6 +110,12 @@ export type SubStage = {
     stage: string;
 };
 
+export type DesignStudyEvent = {
+    id: string;
+    name: string;
+    occurredAt: string; // ISO timestamp
+}
+
 export type TimelineState = {
     stages: {
         byId: Record<string, Stage>;
@@ -117,6 +123,10 @@ export type TimelineState = {
     };
     subStages: {
         byId: Record<string, SubStage>;
+        allIds: string[];
+    };
+    designStudyEvents: {
+        byId: Record<string, DesignStudyEvent>;
         allIds: string[];
     };
     defaultStages: string[];
@@ -129,6 +139,7 @@ export type TimelineState = {
 export type TimelineStatePayload = {
     stages: Stage[];
     subStages: SubStage[];
+    designStudyEvents: DesignStudyEvent[],
     defaultStages: string[];
     timelineStartEnd: {
         start: string;

@@ -28,7 +28,7 @@ import { faAnglesUp } from '@fortawesome/free-solid-svg-icons';
 import { getGitHubEvents } from '@/api/eventsApi';
 import { selectAllGitHubEvents, setGithubEvents } from '@/store/gitEventsSlice';
 import AssetsPanel from '@/components/files/AssetsPanel';
-import { addDefaultStage, addStage, changeStageBoundary, deleteStage, selectAllStages, selectDefaultStages, selectTimelineStartEnd, updateStage } from '@/store/timelineSlice';
+import { addDefaultStage, addStage, changeStageBoundary, deleteStage, selectAllDesignStudyEvents, selectAllStages, selectDefaultStages, selectTimelineStartEnd, updateStage } from '@/store/timelineSlice';
 
 const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
 
@@ -98,6 +98,7 @@ const FlowInner = () => {
     const timelineStages = useSelector(selectAllStages);
     const defaultStages = useSelector(selectDefaultStages);
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
+    const designStudyEvents = useSelector(selectAllDesignStudyEvents);
 
     const [gitConnectionStatus, setGitConnectionStatus] = useState<{ connected: boolean, user?: { id: number, login: string } }>({ connected: false });
 
@@ -465,9 +466,7 @@ const FlowInner = () => {
                     { id: crypto.randomUUID(), occurredAt: new Date("July 04, 2023 12:24:00"), kind: "knowledge", subtype: "activity_created" },
                     { id: crypto.randomUUID(), occurredAt: new Date("July 13, 2023 12:24:00"), kind: "knowledge", subtype: "requirement_created" },
                 ]}
-                designStudyEvents={[
-                    { id: crypto.randomUUID(), occurredAt: new Date("July 01, 2023 03:24:00"), kind: "designStudy", subtype: "study_started" },
-                ]}
+                designStudyEvents={designStudyEvents}
                 stages={timelineStages}
                 defaultStages={defaultStages}
                 onStageUpdate={(stage) => {

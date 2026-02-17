@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import classes from "./Timeline.module.css";
-import type { GitHubEvent, GitHubEventType, LaneType, Stage } from "@/config/types";
+import type { DesignStudyEvent, GitHubEvent, GitHubEventType, LaneType, Stage } from "@/config/types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faCaretDown, faPlus } from "@fortawesome/free-solid-svg-icons";
+import { faCaretDown, faPlus, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
 import { StagePicker } from "@/components/timeline/StagePicker";
 import { useDispatch, useSelector } from "react-redux";
-import { addSubStage, deleteSubStage, selectAllSubStages, updateSubStage } from "@/store/timelineSlice";
+import { addDesignStudyEvent, addSubStage, deleteDesignStudyEvent, deleteSubStage, selectAllSubStages, updateDesignStudyEvent, updateSubStage } from "@/store/timelineSlice";
+import { MilestoneMenu } from "./MilestoneMenu";
+import { requestMilestonesLLM } from "@/func/LLMRequest";
 
 const GIT_LABELS: Record<GitHubEventType, string> = {
     commit: "Commit",
@@ -49,11 +51,6 @@ export type TimelineEventBase = {
 
 export type KnowledgeBaseEvent = TimelineEventBase & {
     kind: "knowledge";
-    subtype?: string;
-};
-
-export type DesignStudyEvent = TimelineEventBase & {
-    kind: "designStudy";
     subtype?: string;
 };
 
@@ -113,7 +110,10 @@ export const Timeline: React.FC<TimelineProps> = ({
     });
     const [showTooltip, setShowTooltip] = useState<boolean>(false);
 
-    const [tagPicker, setTagPicker] = useState<null | Stage & { x: number; y: number }>(null);
+    const [milestoneMenu, setMilestoneMenu] = useState<null | {x: number, y: number, date: string}>(null);
+    const [selectedMilestone, setSelectedMilestone] = useState<null | DesignStudyEvent>(null);
+
+    const [tagPicker, setTagPicker] = useState<null | Stage & { x: number, y: number }>(null);
 
     const subStages = useSelector(selectAllSubStages);
 
@@ -124,9 +124,10 @@ export const Timeline: React.FC<TimelineProps> = ({
     }>(null);
 
     const [nameEdit, setNameEdit] = useState<null | {
-        subStageId: string;
+        id: string;
         x: number; 
         y: number;
+        key: 'designStudyEvent' | 'subStage';
         value: string;
     }>(null);
 
@@ -135,6 +136,8 @@ export const Timeline: React.FC<TimelineProps> = ({
     const todayCaretRef = useRef<HTMLSpanElement | null>(null);
     
     const newStageButtonRef = useRef<HTMLSpanElement | null>(null);
+
+    const llmButtonRef = useRef<HTMLSpanElement | null>(null);
 
     const setRefPos = (el: HTMLSpanElement | null, x: number, y: number) => {
         if (!el) return;
@@ -151,7 +154,11 @@ export const Timeline: React.FC<TimelineProps> = ({
         });
 
         ro.observe(containerRef.current);
-        return () => ro.disconnect();
+
+        return () => {
+            ro.disconnect();
+        };
+
     }, []);
 
     const parsed = useMemo(() => {
@@ -241,7 +248,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         const markerG = svg.append("g");
         const lanesG = svg.append("g");
         const brushG = svg.append("g")
-            .style("pointer-events", "all");
+            .style("display", "none");
         const subStagesG = svg.append("g");
         const eventsG = svg.append("g");
 
@@ -276,14 +283,37 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .text(l.label);
         });
 
-        const drawSquare = (g: d3.Selection<SVGGElement, unknown, null, undefined>) =>
+        const drawSquare = (g: d3.Selection<SVGGElement, unknown, null, undefined>, d: any) => {
             g.append("rect").attr("x", -7).attr("y", -7).attr("width", 15).attr("height", 15).attr("rx", 4);
+        }
 
-        const drawCircle = (g: d3.Selection<SVGGElement, unknown, null, undefined>) =>
+        const drawCircle = (g: d3.Selection<SVGGElement, unknown, null, undefined>, d: any) => {
             g.append("circle").attr("r", 10);
+        }
 
-        const drawDiamond = (g: d3.Selection<SVGGElement, unknown, null, undefined>) =>
-            g.append("path").attr("d", "M 0 -12 L 12 0 L 0 12 L -12 0 Z");
+        const drawDiamond = (g: d3.Selection<SVGGElement, unknown, null, undefined>, d: any) => {
+            g.append("path")
+                .attr("d", "M 0 -12 L 12 0 L 0 12 L -12 0 Z")
+                .style("fill", "#ff4545")
+                .style("stroke", "black")
+                .on("contextmenu", (event: any) => {
+                    event.preventDefault();
+
+                    const [sx, sy] = d3.pointer(event, containerRef.current);
+                    setMilestoneMenu({ x: sx, y: sy, date: "" });
+                    setSelectedMilestone(d);
+                });
+            g.append("text")
+                .attr("class", classes.diamondText)
+                .attr("x", 0)
+                .attr("y", -15)
+                .text(d.name)
+                .on("click", (event: any) => {
+                    event.stopPropagation();
+                    const [sx, sy] = d3.pointer(event, containerRef.current);
+                    setNameEdit({ id: d.id, x: sx, y: sy, value: d.name, key: 'designStudyEvent' });
+                });
+        }
 
         const draw = (x: d3.ScaleTime<number, number>) => {
             const axis = d3.axisBottom<Date>(x).ticks(Math.max(3, Math.floor(innerW / 120)));
@@ -365,15 +395,21 @@ export const Timeline: React.FC<TimelineProps> = ({
                         .attr("y", margin.top + 65)
                         .attr("width", x(d.end) - x(d.start))
                         .attr("height", 65)
-                        .attr("fill", d => stageColor(d.name))
-                        .attr("opacity", 0.5);
+                        .attr("fill", (d: any) => stageColor(d.name))
+                        .attr("opacity", 0.5)
+                        .on("contextmenu", (event: any) => {
+                            event.preventDefault();
+
+                            const [sx, sy] = d3.pointer(event, containerRef.current);
+                            setMilestoneMenu({ x: sx, y: sy, date: fromDate(x.invert(sx)) });
+                        });
 
                     g.append("rect")
                         .attr("x", x(d.start))
                         .attr("y", margin.top + 135)
                         .attr("width", x(d.end) - x(d.start))
                         .attr("height", 65)
-                        .attr("fill", d => stageColor(d.name))
+                        .attr("fill", (d: any) => stageColor(d.name))
                         .attr("opacity", 0.5);
 
                     g.append("rect")
@@ -381,7 +417,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                         .attr("y", margin.top + 207)
                         .attr("width", x(d.end) - x(d.start))
                         .attr("height", 65)
-                        .attr("fill", d => stageColor(d.name))
+                        .attr("fill", (d: any) => stageColor(d.name))
                         .attr("opacity", 0.5);
 
                 });
@@ -422,8 +458,8 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .enter()
                 .append("line")
                 .attr("class", classes.markerLine)
-                .attr("x1", (d) => x(d.start))
-                .attr("x2", (d) => x(d.start))
+                .attr("x1", (d: any) => x(d.start))
+                .attr("x2", (d: any) => x(d.start))
                 .attr("y1", margin.top + 65)
                 .attr("y2", svgHeight);
 
@@ -438,11 +474,11 @@ export const Timeline: React.FC<TimelineProps> = ({
             subStage
                 .append("rect")
                 .attr("class", classes.subStage)
-                .attr("x", d => x(d.start))
-                .attr("y", d => laneY[d.lane as LaneType] + 5)
-                .attr("width", d => x(d.end) - x(d.start))
+                .attr("x", (d: any) => x(d.start))
+                .attr("y", (d: any) => laneY[d.lane as LaneType] + 5)
+                .attr("width", (d: any) => x(d.end) - x(d.start))
                 .attr("height", laneH - 10)
-                .attr("fill", (d) => {
+                .attr("fill", (d: any) => {
                     if (defaultStages.includes(d.stage))
                         return stageColor(d.stage);
                     else
@@ -453,17 +489,17 @@ export const Timeline: React.FC<TimelineProps> = ({
             subStage
                 .append("text")
                 .attr("class", classes.subStageText)
-                .attr("x", d => x(d.start) + 5)
-                .attr("y", d => laneY[d.lane as LaneType] + 20)
-                .text((d) => d.name);
+                .attr("x", (d: any) => x(d.start) + 5)
+                .attr("y", (d: any) => laneY[d.lane as LaneType] + 20)
+                .text((d: any) => d.name);
 
             subStage.append("text")
                 .attr("class", classes.subStageCaret)
-                .attr("x", d => x(d.end) - 35)
-                .attr("y", d => laneY[d.lane as LaneType] + 20)
+                .attr("x", (d: any) => x(d.end) - 35)
+                .attr("y", (d: any) => laneY[d.lane as LaneType] + 20)
                 .text("▾")
                 .style("cursor", "pointer")
-                .on("click", (event, d: any) => {
+                .on("click", (event: any, d: any) => {
                     event.stopPropagation();
                     const [sx, sy] = d3.pointer(event, containerRef.current);
                     setStageMenu({ subStageId: d.id, x: sx, y: sy });
@@ -471,11 +507,11 @@ export const Timeline: React.FC<TimelineProps> = ({
 
             subStage.append("text")
                 .attr("class", classes.subStageDelete)
-                .attr("x", d => x(d.end) - 16)
-                .attr("y", d => laneY[d.lane as LaneType] + 18)
+                .attr("x", (d: any) => x(d.end) - 16)
+                .attr("y", (d: any) => laneY[d.lane as LaneType] + 18)
                 .text("X")
                 .style("cursor", "pointer")
-                .on("click", (event, d) => {
+                .on("click", (event: any, d: any) => {
                     event.stopPropagation();
                     dispatch(deleteSubStage(d.id));
                 });
@@ -483,14 +519,14 @@ export const Timeline: React.FC<TimelineProps> = ({
             subStage
                 .append("text")
                 .attr("class", classes.subStageText)
-                .attr("x", d => x(d.start) + 5)
-                .attr("y", d => laneY[d.lane as LaneType] + 20)
-                .text(d => d.name)
+                .attr("x", (d: any) => x(d.start) + 5)
+                .attr("y", (d: any) => laneY[d.lane as LaneType] + 20)
+                .text((d: any) => d.name)
                 .style("cursor", "text")
-                .on("click", (event, d: any) => {
+                .on("click", (event: any, d: any) => {
                     event.stopPropagation();
                     const [sx, sy] = d3.pointer(event, containerRef.current);
-                    setNameEdit({ subStageId: d.id, x: sx, y: sy, value: d.name });
+                    setNameEdit({ id: d.id, x: sx, y: sy, value: d.name, key: 'subStage' });
                 });
 
             brushG.selectAll("*").remove();
@@ -511,12 +547,10 @@ export const Timeline: React.FC<TimelineProps> = ({
             const brush = (lane: LaneType, top: number) =>
                 d3.brushX()
                     .extent([[margin.left, top], [margin.left + innerW, top + laneH]])
-                    .filter((event) => {
-                        if (!event.shiftKey) return false;
-
+                    .filter((event: any) => {
                         return !isOverArea(event, x, lane)
                     })
-                    .on("end", (event) => {
+                    .on("end", (event: any) => {
                         if (!event.selection) return;
 
                         const [px0, px1] = event.selection as [number, number];
@@ -536,7 +570,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 .data(laneDefs)
                 .enter()
                 .append("g")
-                .each(function (d) {
+                .each(function (d: any) {
                     d3.select(this).call(brush(d.lane, d.top) as any);
                 });
 
@@ -579,7 +613,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 events: AnyEvent[],
                 kind: LaneType,
                 y: number,
-                icon: (g: d3.Selection<SVGGElement, unknown, null, undefined>) => void
+                icon: (g: d3.Selection<SVGGElement, unknown, null, undefined>, d: any) => void
             ) => {
                 const g = eventsG.append("g");
 
@@ -588,13 +622,15 @@ export const Timeline: React.FC<TimelineProps> = ({
                     .enter()
                     .append("g")
                     .attr("class", classes.event)
-                    .attr("transform", (d) => `translate(${x(toDate((d as any).date))}, ${y + 32})`)
-                    .each(function () {
-                        icon(d3.select(this));
+                    .attr("transform", (d: any) => `translate(${x(toDate((d as any).date))}, ${y + 32})`)
+                    .each(function (d: any) {
+                        icon(d3.select(this), d);
                     })
                     .selectAll("rect, circle, path")
                     .attr("class", classes.eventShape)
-                    .on("click", (e, d) => {
+                    .on("click", (e: any, d: any) => {
+                        if(kind != 'codebase') return;
+
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
                             : 0;
@@ -619,7 +655,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         const zoom = d3
             .zoom<SVGSVGElement, unknown>()
             .scaleExtent([1, 3000])
-            .filter((event) => {
+            .filter((event: any) => {
                 if (event.shiftKey) return false;
                 return !event.ctrlKey || event.type === "wheel";
             })
@@ -631,7 +667,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 [margin.left, 0],
                 [margin.left + innerW, svgHeight],
             ])
-            .on("zoom", (event) => {
+            .on("zoom", (event: any) => {
                 zoomTransformRef.current = event.transform;
                 const x = event.transform.rescaleX(x0);
                 draw(x);
@@ -639,6 +675,24 @@ export const Timeline: React.FC<TimelineProps> = ({
 
         svg.call(zoom as any);
         svg.call(zoom.transform as any, zoomTransformRef.current);
+
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Shift") brushG.style("display", "block");
+        };
+
+        const handleKeyUp = (e: KeyboardEvent) => {
+            if (e.key === "Shift") brushG.style("display", "none");
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        window.addEventListener("keyup", handleKeyUp);
+
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown);
+            window.removeEventListener("keyup", handleKeyUp);
+        }
+
     }, [parsed, width, height, margin]);
 
     const TooltipInner = useMemo(() => {
@@ -681,6 +735,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 className={classes.container}
                 onClick={() => {
                     setShowTooltip(false);
+                    setMilestoneMenu(null);
                 }}
             >
                 <svg ref={svgRef} className={classes.svg} />
@@ -705,6 +760,35 @@ export const Timeline: React.FC<TimelineProps> = ({
                     }}
                 >
                     <FontAwesomeIcon icon={faPlus} />
+                </span>
+
+                <span 
+                    ref={llmButtonRef} 
+                    style={{ left: 125, top: margin.top + 67, position: "absolute", cursor: "pointer" }}
+                    onClick={async () => {
+
+                        document.body.style.cursor = "wait";
+
+                        const milestones = await requestMilestonesLLM(
+                            parsed.ds.map((designStudyEvent) => {
+                                return {
+                                    id: designStudyEvent.id,
+                                    name: designStudyEvent.name,
+                                    occurredAt: fromDate(designStudyEvent.occurredAt)
+                                }
+                            })
+                        );
+
+                        document.body.style.cursor = "default";
+
+                        console.log("milestones", milestones);
+
+                        for(const milestone of milestones){
+                            dispatch(addDesignStudyEvent(milestone));
+                        }
+                    }}
+                >
+                    <FontAwesomeIcon icon={faWandSparkles} />
                 </span>
 
             </div>
@@ -768,8 +852,49 @@ export const Timeline: React.FC<TimelineProps> = ({
                         if (e.key === "Enter") {
                             const nextName = nameEdit.value.trim();
 
-                            const subStage = parsed.subStages.filter(s => s.id == nameEdit.subStageId);
-                            
+                            if(nameEdit.key == "subStage"){
+
+                                const subStage = parsed.subStages.filter(s => s.id == nameEdit.id);
+    
+                                if(subStage.length <= 0) return;
+    
+                                let newSubStage = {
+                                    ...subStage[0],
+                                    start: fromDate(subStage[0].start),
+                                    end: fromDate(subStage[0].end),
+                                    name: nextName
+                                };
+    
+                                dispatch(updateSubStage(newSubStage))
+
+                            }
+
+                            if(nameEdit.key == "designStudyEvent") {
+
+                                const designStudyEvent = parsed.ds.filter(s => s.id == nameEdit.id);
+    
+                                if(designStudyEvent.length <= 0) return;
+    
+                                let newDesignStudyEvent = {
+                                    ...designStudyEvent[0],
+                                    date: fromDate(designStudyEvent[0].date),
+                                    name: nextName
+                                };
+    
+                                dispatch(updateDesignStudyEvent(newDesignStudyEvent))
+                            }
+
+                            setNameEdit(null);
+                        }
+                        if (e.key === "Escape") setNameEdit(null);
+                    }}
+                    onBlur={() => {
+                        const nextName = nameEdit.value.trim();
+
+                        if(nameEdit.key == "subStage"){
+
+                            const subStage = parsed.subStages.filter(s => s.id == nameEdit.id);
+
                             if(subStage.length <= 0) return;
 
                             let newSubStage = {
@@ -781,25 +906,23 @@ export const Timeline: React.FC<TimelineProps> = ({
 
                             dispatch(updateSubStage(newSubStage))
 
-                            setNameEdit(null);
                         }
-                        if (e.key === "Escape") setNameEdit(null);
-                    }}
-                    onBlur={() => {
-                        const nextName = nameEdit.value.trim();
 
-                        const subStage = parsed.subStages.filter(s => s.id == nameEdit.subStageId);
-                        
-                        if(subStage.length <= 0) return;
+                        if(nameEdit.key == "designStudyEvent") {
 
-                        let newSubStage = {
-                            ...subStage[0],
-                            start: fromDate(subStage[0].start),
-                            end: fromDate(subStage[0].end),
-                            name: nextName
-                        };
+                            const designStudyEvent = parsed.ds.filter(s => s.id == nameEdit.id);
 
-                        dispatch(updateSubStage(newSubStage))
+                            if(designStudyEvent.length <= 0) return;
+
+                            let newDesignStudyEvent = {
+                                ...designStudyEvent[0],
+                                date: fromDate(designStudyEvent[0].date),
+                                name: nextName
+                            };
+
+                            dispatch(updateDesignStudyEvent(newDesignStudyEvent))
+                        }
+
                         setNameEdit(null);
                     }}
                 />
@@ -827,6 +950,39 @@ export const Timeline: React.FC<TimelineProps> = ({
                     setTagPicker(null);
                 }}
             />
+
+            {milestoneMenu && (
+                <MilestoneMenu
+                    x={milestoneMenu.x}
+                    y={milestoneMenu.y}
+                    onCreate={
+                        milestoneMenu && milestoneMenu.date != ""
+                        ? 
+                            () => {
+                                dispatch(addDesignStudyEvent({
+                                    id: crypto.randomUUID(),
+                                    name: "Untitled",
+                                    occurredAt: fromDate(milestoneMenu.date)
+                                }));
+                            }
+                        : 
+                            undefined
+                    }
+                    onDelete={
+                        selectedMilestone
+                        ?
+                            () => {
+                                dispatch(deleteDesignStudyEvent(selectedMilestone.id));
+                            }
+                        :
+                            undefined
+                    }   
+                    onClose={() => {
+                        setMilestoneMenu(null);
+                        setSelectedMilestone(null);
+                    }}
+                />
+            )}
 
         </>
     );
