@@ -4,6 +4,10 @@ import { readAsDataURL } from './FileParser';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
+// async function docLingFileParse(fileData: filePendingUpload) {
+
+// }
+
 export async function requestCardsLLM(fileData: filePendingUpload): Promise<{ cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] }> {
 
     let { name, ext, previewText } = fileData;

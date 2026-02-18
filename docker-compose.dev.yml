@@ -103,7 +103,18 @@ services:
       mc anonymous set none local/vitral-files || true
       "
     restart: "no"
+  docling:
+    image: ghcr.io/docling-project/docling-serve
+    container_name: docling-server
+    environment:
+      DOCLING_SERVE_ENABLE_UI: 1
+    ports:
+      - "5001:5001"
+    volumes:
+      - docling_data:/data
+    restart: "no"
 
 volumes:
   postgres_data:
   minio_data:
+  docling_data:
