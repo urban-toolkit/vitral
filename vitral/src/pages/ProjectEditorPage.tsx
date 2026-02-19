@@ -193,24 +193,24 @@ const FlowInner = () => {
 
         const data: filePendingUpload = await parseFile(file);
 
-        console.log("data", data);
+        // console.log("data", data);
 
-        docLingFileParse(data, data.ext);
+        // docLingFileParse(data, data.ext);
 
-        // const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLM(data);
+        const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLM(data);
 
-        // console.log(response);
+        console.log(response);
 
-        // if (response && response.cards) {
-        //     console.log("response", response);
-        //     let { nodes, idMap } = llmCardsToNodes(response.cards);
-        //     let edges = llmConnectionsToEdges(response.connections, idMap);
+        if (response && response.cards) {
+            console.log("response", response);
+            let { nodes, idMap } = llmCardsToNodes(response.cards);
+            let edges = llmConnectionsToEdges(response.connections, idMap);
 
-        //     console.log(nodes, edges, idMap);
+            console.log(nodes, edges, idMap);
 
-        //     dispatch(addNodes(nodes));
-        //     dispatch(connectEdges(edges));
-        // }
+            dispatch(addNodes(nodes));
+            dispatch(connectEdges(edges));
+        }
 
         setLoading(false);
     }
