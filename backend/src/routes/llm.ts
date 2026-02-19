@@ -1,16 +1,20 @@
 import { FastifyPluginAsync } from "fastify";
 import OpenAI from "openai";
 import { loadPrompt } from "../prompts/loadPrompt.ts";
+import FormData from "form-data";
+import fetch from "node-fetch";
+import { Buffer } from "node:buffer";
 
 const client = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-export const llmRoutes: FastifyPluginAsync = async (app) => {
-    app.post("/chat", async (request, reply) => {
+
+export const llmRoutes: FastifyPluginAsync = async (app: any) => {
+    app.post("/chat", async (request: any, reply: any) => {
         try {
 
-            const body = request.body as {input: string, prompt?: string};
+            const body = request.body as { input: string, prompt?: string };
 
             if (!body?.input) {
                 return reply.status(400).send({ error: "Invalid messages array" });
@@ -18,10 +22,10 @@ export const llmRoutes: FastifyPluginAsync = async (app) => {
 
             let promptContent = "";
 
-            if(body?.prompt){
+            if (body?.prompt) {
                 promptContent = await loadPrompt(body?.prompt);
-            }else{
-                promptContent = await loadPrompt("CardsFromFile");
+            } else {
+                promptContent = await loadPrompt("CardsFromText");
             }
 
             const response = await client.responses.create({
@@ -45,4 +49,5 @@ export const llmRoutes: FastifyPluginAsync = async (app) => {
             return reply.status(500).send({ error: "LLM request failed" });
         }
     });
+
 };

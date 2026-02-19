@@ -1,12 +1,37 @@
-import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType, DesignStudyEvent, Stage } from '@/config/types';
+import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType, DesignStudyEvent, fileExtension } from '@/config/types';
 import type { filePendingUpload } from '@/config/types';
 import { readAsDataURL } from './FileParser';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
-// async function docLingFileParse(fileData: filePendingUpload) {
+export async function docLingFileParse(fileData: filePendingUpload, ext: fileExtension): Promise<{ content: string, images: { name: string; content: string }[] }> {
+    const formData = new FormData();
 
-// }
+    formData.append("file", fileData.file);
+    formData.append("from_formats", JSON.stringify(["pdf"]));
+    formData.append(
+        "enable_picture_description",
+        "true"
+    );
+
+    const response = await fetch(API_BASE_URL + "/api/docling/convert/file", {
+        method: "POST",
+        body: formData,
+    });
+
+    if (!response.ok) {
+        throw new Error("Conversion failed");
+    }
+
+    const result = await response.json();
+
+    console.log(result);
+
+    return result as {
+        content: string;
+        images: { name: string; content: string }[];
+    };
+}
 
 export async function requestCardsLLM(fileData: filePendingUpload): Promise<{ cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] }> {
 
@@ -27,7 +52,7 @@ export async function requestCardsLLM(fileData: filePendingUpload): Promise<{ ca
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ input: userText, prompt: "CardsFromFile" }),
+        body: JSON.stringify({ input: userText, prompt: "CardsFromText" }),
     });
 
     if (!response.ok) {

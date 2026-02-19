@@ -1,7 +1,7 @@
 import type { filePendingUpload, fileExtension } from '@/config/types';
 
 const TEXT_EXTENSIONS = new Set([
-    "txt", "json", "ipynb", "csv", "py", "js", "ts", "html", "css", "md",
+    "txt", "json", "ipynb", "csv", "py", "js", "ts", "html", "css", "md", "docx"
 ]);
 
 function getExt(name: string): fileExtension {
@@ -9,7 +9,7 @@ function getExt(name: string): fileExtension {
 }
 
 function isTextLike(file: File, ext: string) {
-    return TEXT_EXTENSIONS.has(ext) || (file.type?.startsWith("text/") ?? false);
+    return (TEXT_EXTENSIONS.has(ext) || (file.type?.startsWith("text/") ?? false)) && ext != "pdf";
 }
 
 export function readAsDataURL(file: File): Promise<string> {

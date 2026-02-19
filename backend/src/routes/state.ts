@@ -397,8 +397,6 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     file: part.file,
                 };
 
-                console.log("part.type", part.type);
-
                 break;
             } else {
                 fields[part.fieldname] = String(part.value);

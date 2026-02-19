@@ -10,6 +10,7 @@ import { githubEventsRoutes } from "./routes/github_events.ts";
 import { githubRoutes } from "./routes/github.ts";
 import dbPlugin from "./plugins/db.ts";
 import s3Plugin from "./plugins/s3.ts";
+import { doclingRoutes } from './routes/docling.ts';
 
 const app = Fastify({ logger: true });
 
@@ -27,6 +28,7 @@ await app.register(cookie, {
 });
 
 app.register(llmRoutes, { prefix: "/api/llm" });
+app.register(doclingRoutes, { prefix: "/api/docling" });
 app.register(stateRoutes, { prefix: "/api" });
 app.register(githubEventsRoutes, { prefix: "/api" });
 app.register(githubRoutes, { prefix: "/api/auth/github" });

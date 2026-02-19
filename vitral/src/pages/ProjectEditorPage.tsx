@@ -8,7 +8,7 @@ import { useDocumentSync } from "@/hooks/useDocumentSync";
 import { Title } from '@/components/project/Title';
 import { Toolbar } from '@/components/toolbar/Toolbar';
 import { parseFile } from '@/func/FileParser';
-import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
+import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges, docLingFileParse } from '@/func/LLMRequest';
 import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNode, addNode, updateNode } from '@/store/flowSlice';
 import { selectAllFiles, upsertFile } from '@/store/filesSlice';
 import { Card } from '@/components/cards/Card';
@@ -192,20 +192,25 @@ const FlowInner = () => {
         setLoading(true);
 
         const data: filePendingUpload = await parseFile(file);
-        const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLM(data);
 
-        console.log(response);
+        console.log("data", data);
 
-        if (response && response.cards) {
-            console.log("response", response);
-            let { nodes, idMap } = llmCardsToNodes(response.cards);
-            let edges = llmConnectionsToEdges(response.connections, idMap);
+        docLingFileParse(data, data.ext);
 
-            console.log(nodes, edges, idMap);
+        // const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLM(data);
 
-            dispatch(addNodes(nodes));
-            dispatch(connectEdges(edges));
-        }
+        // console.log(response);
+
+        // if (response && response.cards) {
+        //     console.log("response", response);
+        //     let { nodes, idMap } = llmCardsToNodes(response.cards);
+        //     let edges = llmConnectionsToEdges(response.connections, idMap);
+
+        //     console.log(nodes, edges, idMap);
+
+        //     dispatch(addNodes(nodes));
+        //     dispatch(connectEdges(edges));
+        // }
 
         setLoading(false);
     }

@@ -123,7 +123,7 @@ export function Card(props: any) {
                                 onFileSelected={handleFileSelected}
                                 dropZoneCSS={dropZoneCSS}
                                 loading={false}
-                                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md'
+                                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md, .docx, .pdf'
                             />
                         </FileCarousel>
                     </div>
