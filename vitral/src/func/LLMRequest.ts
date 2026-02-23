@@ -8,11 +8,7 @@ export async function docLingFileParse(fileData: filePendingUpload, ext: fileExt
     const formData = new FormData();
 
     formData.append("file", fileData.file);
-    formData.append("from_formats", JSON.stringify(["pdf"]));
-    formData.append(
-        "enable_picture_description",
-        "true"
-    );
+    formData.append("from_formats", JSON.stringify([ext]));
 
     const response = await fetch(API_BASE_URL + "/api/docling/convert/file", {
         method: "POST",
@@ -33,26 +29,33 @@ export async function docLingFileParse(fileData: filePendingUpload, ext: fileExt
     };
 }
 
-export async function requestCardsLLM(fileData: filePendingUpload): Promise<{ cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] }> {
+export async function requestCardsLLM(file: filePendingUpload): Promise<{ cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] }> {
 
-    let { name, ext, previewText } = fileData;
+    let { name, ext, previewText } = file;
 
     let content = previewText;
 
-    // TODO: deal with other formats like .docx or .pdf
+    let prompt = "CardsFromText";
 
-    if (content == undefined && fileData.mimeType.startsWith("image/")) {
-        content = await readAsDataURL(fileData.file);
+    if(file.ext == "jpeg" || file.ext == "png" || file.ext == "jpg") {
+        content = await readAsDataURL(file.file);
+        prompt = "CardsFromImage";
     }
 
-    const userText = JSON.stringify({ name, ext, content });
+    if(file.ext == "pdf") {
+        const {content: markdown, images} = await docLingFileParse(file, ext);
+        content = markdown;
+        prompt = "CardsFromText";
+    }
+
+    const userText = JSON.stringify({ name: name, ext, content });
 
     const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ input: userText, prompt: "CardsFromText" }),
+        body: JSON.stringify({ input: userText, prompt }),
     });
 
     if (!response.ok) {

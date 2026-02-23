@@ -193,13 +193,7 @@ const FlowInner = () => {
 
         const data: filePendingUpload = await parseFile(file);
 
-        // console.log("data", data);
-
-        // docLingFileParse(data, data.ext);
-
         const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLM(data);
-
-        console.log(response);
 
         if (response && response.cards) {
             console.log("response", response);
