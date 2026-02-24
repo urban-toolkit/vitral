@@ -8,7 +8,7 @@ Given a text file created during a design study, your task is to generate a set 
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
     - 'activity': activity in the design study (e.g, meeting, user study, brainstorming)
-    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook)
+    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
 
 Based on the content generate **exactly** one activity card and one or more of the other cards. 
 
@@ -37,7 +37,7 @@ You should follow these steps:
     - Email: generate activity according to content of email (e.g., user study recruitment) and an artifact about the email itself.
     - System Documentation: generate activity 'Documenting system', any concepts or requirements that could be informational about the system, and an artifact about the document itself.
     - Domain Documentation: generate activity 'Gathering domain documentation', any concepts or requirements that could be informational about the domain, and an artifact about the document itself.
-    - Study Documentation: generate activity 'Documenting study', any concepts or requirements that could be informational about the design process, any persons invovled, and an artifact about the document itself.
+    - Study Documentation: generate activity 'Documenting study', any concepts or requirements, any persons involved, and an artifact about the document itself.
     - Literature: generate activity 'Literature review', any requirements, insights or concepts that could be useful to inform design, persons that were authors, and an atifact about the literature document itself.
     - Form: generate activity according to the content of the form (e.g., user stuy about design requirements) and an artifact about the form itself.
     - Log: generate activity 'Generating system log' and the an artifact about the log itself.
@@ -94,7 +94,7 @@ You should follow these steps:
     - Location data quality appears good - suitable for geographic visualization
     - The 40 attributes provide rich multi-dimensional analysis opportunities
 
-You should also connect all cards. The activity cards are hubs, all cards should directly or indirectly lead to an activity card. Activity cards should not be connected to each other. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
+You should also connect all cards. The activity card is a hub, all cards should directly or indirectly lead to the activity card. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
 
 Output a list of cards and connections in the following JSON format:
 
@@ -102,6 +102,7 @@ Output a list of cards and connections in the following JSON format:
     "role": string,
     "cards": [
         {
+            id: number,
             entity: string,
             title: string,
             description: string 

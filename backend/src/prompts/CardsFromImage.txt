@@ -8,7 +8,7 @@ Given an image and its metadata created during a design study, your task is to g
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
     - 'activity': activity in the design study (e.g, meeting, user study, brainstorming)
-    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook)
+    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
 
 Based on the content generate **exactly** one activity card and one or more of the other cards. 
 
@@ -18,7 +18,6 @@ You will recieve a JSON describing the image file as:
     name: string,
     content: string
 }
-
 
 You should follow these steps:
 
@@ -41,12 +40,15 @@ You should follow these steps:
     - Photograph: generate activity according to content of (e.g., workshop, field research, reference collection), and artifact about the image itself.
     - Prototype: generate activity 'Prototyping' and an artifact about the image itself.
 
+You should also connect all cards. The activity card is a hub, all cards should directly or indirectly lead to the activity card. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
+
 Output a list of cards and connections in the following JSON format:
 
 {
     role: string,
     "cards": [
         {
+            id: number,
             entity: string,
             title: string,
             description: string 

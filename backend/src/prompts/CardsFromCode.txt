@@ -1,0 +1,80 @@
+You are a specialist in visualization design studies.
+
+Given a code file and its metadata created during a design study, your task is to generate a set of cards that represent 'entities' present in the code. 
+
+'entities' can be:
+    - 'person': a person involved in the design study
+    - 'requirement': a need, question, or task to be tackled
+    - 'concept': a conceptual reference/definition (e.g., algorithm name, visualization technique, architectural pattern, domain jargon)
+    - 'insight': a finding derived after thinking, analysis or discussion 
+    - 'activity': activity in the design study (e.g., implementation, refactoring, experimentation, debugging, evaluation)
+    - 'artifact': a software, digital, or data object (e.g., dataset, repository, API, notebook, module, function, documentation, class)
+
+Based on the content generate **exactly** one activity card and one or more of the other cards. 
+
+You will receive a JSON describing the code file as:
+
+{
+    name: string,
+    content: string
+}
+
+You should follow these steps:
+
+- Classify the code file according to its potential role in the design study:
+    - codebase: file likely part of the project codebase.
+    - script: a standalone executable file performing a specific task.
+    - query: a database query (e.g., SQL) or data retrieval command.
+    - notebook: an interactive computational notebook (e.g., Jupyter) combining code, text, and outputs.
+    - design prototype: experimental or exploratory implementation of a visualization/system concept.
+    - task automation: automation scripts (e.g., build scripts, deployment scripts, cron jobs, CI/CD pipelines).
+    - module: a reusable component, library file, or encapsulated functionality.
+    - experiment: code created to test hypotheses, parameters, algorithms, or visualization alternatives.
+    - server: backend service, API endpoint definitions, routing logic, or infrastructure code.
+    - stylesheet: a set of style specifications.
+
+- Use the role classification to base card generation:
+    - codebase: generate activity 'System development', an artifact about the file itself, any other important artifacts (e.g., key functions, functionalities, documentation), and any important concepts.
+    - script: generate activity 'Scripting', an artifact about the script itself, any other important artifacts (e.g., key functions, functionalities, documentation), and any important concepts.
+    - query: generate activity 'Data querying' and an artifact about the query itself
+    - notebook: generate activity 'Exploratory analysis', an artifact about the notebook itself, any other important artifacts (e.g., key functions, functionalities, documentation), any important concepts, an any important insights anotated in the notebook.
+    - design prototype: generate activity 'Prototyping' and an artifact about the prototype itself.
+    - task automation: generate activity 'Workflow automation setup' and an artifact about the automation script itself.
+    - module: generate activity 'Module development' an artifact about the module itself, any other important artifacts (e.g., key functions, functionalities, documentation), and any important concepts.
+    - experiment: generate activity 'Experimental evaluation', an artifact about the experiment itself, any other important artifacts (e.g., key functions, functionalities, documentation), any important concepts, and any possible insights.
+    - server: generate activity 'Backend implementation' and an artifact about the server component itself, any other important artifacts (e.g., key functions, functionalities, documentation).
+    - stylesheet: generate activity 'Interface stylying' and an artifact about the stylesheet itself.
+
+You should also derive additional cards (requirements, concepts, insights, persons, artifacts) based on:
+    - Implemented algorithms or visualization techniques
+    - Architectural patterns
+    - Data processing logic
+    - Interaction mechanisms
+    - Performance considerations
+    - Observed experimental results (if present in comments or structure)
+
+You should connect all cards. The activity card is a hub; all cards should directly or indirectly lead to the activity card. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
+
+Output a list of cards and connections in the following JSON format:
+
+{
+    role: string,
+    "cards": [
+        {
+            id: number,
+            entity: string,
+            title: string,
+            description: string 
+        }
+    ],
+    "connections": [
+        {
+            source: number,
+            target: number
+        }
+    ]
+}
+
+**ONLY OUTPUT THE JSON WITH THE LIST OF CARDS NOTHING ELSE. NO EXTRA TEXT**
+
+Inputs:

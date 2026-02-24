@@ -8,11 +8,11 @@ Given text generated during a design study activity, your task is to generate ca
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
     - 'activity': activity in the design study (e.g, meeting, user study, brainstorming)
-    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook)
+    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
 
-Based on the content generate **exactly one** activity card and one or more (for most cases one is sufficient) of other entities.
+Based on the content generate **exactly** one activity card and one or more of the other cards. 
 
-You should also connect all non-activity cards (source) to the activity card (target). No connections should be created between any other cards. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
+You should also connect all cards. The activity card is a hub, all cards should directly or indirectly lead to the activity card. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
 
 Output a list of cards and connections in the following JSON format:
 
@@ -166,4 +166,4 @@ Output a list of cards and connections in the following JSON format:
 
 **ONLY OUTPUT THE JSON WITH THE LIST OF CARDS NOTHING ELSE. NO EXTRA TEXT**
 
-Uploaded file:
+Input:

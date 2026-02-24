@@ -4,6 +4,260 @@ import { readAsDataURL } from './FileParser';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
+async function resizeAndCompressImageToJpeg(
+    file: File,
+    opts?: { maxLongSide?: number; quality?: number }
+): Promise<{ file: File; ext: fileExtension }> {
+    const maxLongSide = opts?.maxLongSide ?? 1536; //px
+    const quality = opts?.quality ?? 0.78;
+
+    // If it's already reasonably small, avoid extra work/quality loss.
+    if ((file.type === "image/jpeg" || file.type === "image/jpg") && file.size <= 2 * 1024 * 1024) {
+        return { file, ext: "jpg" };
+    }
+
+    const bitmap = await createImageBitmap(file);
+    try {
+        const srcW = bitmap.width;
+        const srcH = bitmap.height;
+
+        const scale = Math.min(1, maxLongSide / Math.max(srcW, srcH));
+        const dstW = Math.max(1, Math.round(srcW * scale));
+        const dstH = Math.max(1, Math.round(srcH * scale));
+
+        const makeBlob = async (): Promise<Blob> => {
+            if (typeof OffscreenCanvas !== "undefined") {
+                const canvas = new OffscreenCanvas(dstW, dstH);
+                const ctx = canvas.getContext("2d");
+                if (!ctx) throw new Error("Could not get 2D context");
+                ctx.drawImage(bitmap, 0, 0, dstW, dstH);
+                return await canvas.convertToBlob({ type: "image/jpeg", quality });
+            }
+
+            const canvas = document.createElement("canvas");
+            canvas.width = dstW;
+            canvas.height = dstH;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) throw new Error("Could not get 2D context");
+            ctx.drawImage(bitmap, 0, 0, dstW, dstH);
+
+            const blob = await new Promise<Blob>((resolve, reject) => {
+                canvas.toBlob(
+                    (b) => (b ? resolve(b) : reject(new Error("JPEG encode failed"))),
+                    "image/jpeg",
+                    quality
+                );
+            });
+
+            return blob;
+        };
+
+        const blob = await makeBlob();
+
+        const base = file.name.includes(".") ? file.name.slice(0, file.name.lastIndexOf(".")) : file.name;
+        const outFile = new File([blob], `${base}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+
+        return { file: outFile, ext: "jpg" };
+    } finally {
+        bitmap.close?.();
+    }
+}
+
+function downloadDebugImage(file: File) {
+    if (!(import.meta as any).env?.DEV) return;
+
+    try {
+        const url = URL.createObjectURL(file);
+        const a = document.createElement("a");
+
+        const base = file.name.includes(".") ? file.name.slice(0, file.name.lastIndexOf(".")) : file.name;
+        a.href = url;
+        a.download = `${base}-compressed-debug.jpg`;
+
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        console.warn("Failed to trigger debug image download", err);
+    }
+}
+
+function base64ToFile(base64: string, mimeType: string, filename: string): File {
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return new File([bytes], filename, { type: mimeType });
+}
+
+type NotebookImage = { id: string; mime: string; base64: string };
+
+function normalizeNbText(v: any): string {
+    if (v == null) return "";
+    if (Array.isArray(v)) return (v as any[]).map(normalizeNbText).join("");
+    return String(v);
+}
+
+function truncateText(s: string, maxChars: number): string {
+    if (s.length <= maxChars) return s;
+    return s.slice(0, maxChars) + `\n...[truncated ${s.length - maxChars} chars]`;
+}
+
+async function readTextCapped(file: File, opts?: { maxBytes?: number; maxChars?: number }): Promise<string> {
+    const maxBytes = opts?.maxBytes ?? 512 * 1024; // 512KB
+    const maxChars = opts?.maxChars ?? 120_000;
+
+    const blob = file.size > maxBytes ? file.slice(0, maxBytes) : file;
+    let text = await blob.text();
+
+    if (file.size > maxBytes) {
+        text += `\n...[truncated ${file.size - maxBytes} bytes]`;
+    }
+
+    return truncateText(text, maxChars);
+}
+
+function ipynbToCompactText(nb: any, opts?: { maxChars?: number; maxOutputCharsPerCell?: number }): string {
+    const maxChars = opts?.maxChars ?? 80_000;
+    const maxOutputCharsPerCell = opts?.maxOutputCharsPerCell ?? 4_000;
+
+    if (!nb || !Array.isArray(nb.cells)) return truncateText(JSON.stringify(nb ?? {}), maxChars);
+
+    const parts: string[] = [];
+
+    let i = 0;
+    for (const cell of nb.cells) {
+        i++;
+        const cellType = String(cell?.cell_type ?? "unknown");
+        const source = normalizeNbText(cell?.source);
+
+        if (cellType === "markdown") {
+            if (source.trim()) {
+                parts.push(`\n## Cell ${i} (markdown)\n`);
+                parts.push(source);
+                parts.push("\n");
+            }
+        } else if (cellType === "code") {
+            parts.push(`\n## Cell ${i} (code)\n`);
+            parts.push("```");
+            parts.push("\n");
+            parts.push(source);
+            if (!source.endsWith("\n")) parts.push("\n");
+            parts.push("```\n");
+
+            // keep only text/plain (already stripped), but still cap it
+            if (Array.isArray(cell?.outputs) && cell.outputs.length) {
+                const outParts: string[] = [];
+                for (const out of cell.outputs) {
+                    const data = out?.data || out?.["data"];
+                    if (data && typeof data === "object" && data["text/plain"]) {
+                        outParts.push(normalizeNbText(data["text/plain"]));
+                    } else if (out?.text) {
+                        outParts.push(normalizeNbText(out.text));
+                    }
+                }
+
+                const outText = outParts.join("\n").trim();
+                if (outText) {
+                    parts.push("\nOutput:\n");
+                    parts.push(truncateText(outText, maxOutputCharsPerCell));
+                    parts.push("\n");
+                }
+            }
+        } else {
+            // raw/unknown: include minimal source if present
+            if (source.trim()) {
+                parts.push(`\n## Cell ${i} (${cellType})\n`);
+                parts.push(source);
+                parts.push("\n");
+            }
+        }
+
+        // stop early if we already hit the cap
+        if (parts.reduce((n, p) => n + p.length, 0) > maxChars) break;
+    }
+
+    return truncateText(parts.join(""), maxChars);
+}
+
+function extractNotebookImagesAndStrip(nb: any): { notebook: any; images: NotebookImage[] } {
+    if (!nb || !Array.isArray(nb.cells)) {
+        return { notebook: nb, images: [] };
+    }
+
+    const images: NotebookImage[] = [];
+    let idx = 1;
+
+    const clone = structuredClone ? structuredClone(nb) : JSON.parse(JSON.stringify(nb));
+
+    for (const cell of clone.cells) {
+        // Outputs (code cells)
+        if (Array.isArray(cell.outputs)) {
+            const filteredOutputs: any[] = [];
+
+            for (const out of cell.outputs) {
+                const data = out.data || out["data"];
+
+                if (data && typeof data === "object") {
+                    // Extract images and replace with references
+                    for (const mime of ["image/png", "image/jpeg"]) {
+                        const raw = data[mime];
+                        if (!raw) continue;
+
+                        const asString = Array.isArray(raw) ? (raw as string[]).join("") : String(raw);
+                        const id = `IMAGE_${idx++}`;
+                        images.push({ id, mime, base64: asString });
+
+                        data[mime] = [`[${id}]`];
+                    }
+
+                    // Keep only text/plain in data
+                    for (const key of Object.keys(data)) {
+                        if (key !== "text/plain") {
+                            delete data[key];
+                        }
+                    }
+                }
+
+                const hasTextPlain = !!(data && typeof data === "object" && data["text/plain"]);
+                const hasTextField =
+                    typeof out.text === "string" ||
+                    (Array.isArray(out.text) && out.text.length > 0);
+
+                if (hasTextPlain || hasTextField) {
+                    filteredOutputs.push(out);
+                }
+            }
+
+            cell.outputs = filteredOutputs;
+        }
+
+        // Attachments (markdown cells)
+        if (cell.attachments && typeof cell.attachments === "object") {
+            for (const key of Object.keys(cell.attachments)) {
+                const att = cell.attachments[key];
+                if (!att || typeof att !== "object") continue;
+
+                for (const mime of ["image/png", "image/jpeg"]) {
+                    const b64 = att[mime];
+                    if (!b64) continue;
+
+                    const asString = Array.isArray(b64) ? (b64 as string[]).join("") : String(b64);
+                    const id = `IMAGE_${idx++}`;
+                    images.push({ id, mime, base64: asString });
+
+                    att[mime] = [`[${id}]`];
+                }
+            }
+        }
+    }
+
+    return { notebook: clone, images };
+}
+
 export async function docLingFileParse(fileData: filePendingUpload, ext: fileExtension): Promise<{ content: string, images: { name: string; content: string }[] }> {
     const formData = new FormData();
 
@@ -34,21 +288,73 @@ export async function requestCardsLLM(file: filePendingUpload): Promise<{ cards:
     let { name, ext, previewText } = file;
 
     let content = previewText;
+    let imagesPayload: { id: string; dataUrl: string }[] | undefined;
 
     let prompt = "CardsFromText";
 
-    if(file.ext == "jpeg" || file.ext == "png" || file.ext == "jpg") {
-        content = await readAsDataURL(file.file);
+    if (file.ext == "jpeg" || file.ext == "png" || file.ext == "jpg") {
+        const compressed = await resizeAndCompressImageToJpeg(file.file, { maxLongSide: 1536, quality: 0.78 });
+        downloadDebugImage(compressed.file);
+        content = await readAsDataURL(compressed.file);
+        ext = compressed.ext;
+        name = compressed.file.name;
         prompt = "CardsFromImage";
     }
 
-    if(file.ext == "pdf") {
-        const {content: markdown, images} = await docLingFileParse(file, ext);
+    if(file.ext == "pdf" || file.ext == "docx") {
+        const { content: markdown } = await docLingFileParse(file, ext);
         content = markdown;
         prompt = "CardsFromText";
     }
 
-    const userText = JSON.stringify({ name: name, ext, content });
+    if (file.ext == "csv" || file.ext == "json") {
+        content = await readTextCapped(file.file, { maxBytes: 512 * 1024, maxChars: 120_000 });
+        prompt = "CardsFromData";
+    }
+
+    if (file.ext == "ipynb") {
+        try {
+            const raw = content ?? await file.file.text();
+            const nb = JSON.parse(raw!);
+            const { notebook, images } = extractNotebookImagesAndStrip(nb);
+            content = ipynbToCompactText(notebook, { maxChars: 80_000, maxOutputCharsPerCell: 4_000 });
+
+            if (images.length) {
+                const MAX_IMAGES = 0; //Images temporarily deactivated
+                const payload: { id: string; dataUrl: string }[] = [];
+
+                let i = 0;
+                for (const img of images.slice(0, MAX_IMAGES)) {
+                    const filename = `${name}-nb-image-${++i}.${img.mime === "image/png" ? "png" : "jpg"}`;
+                    const fileFromBase64 = base64ToFile(img.base64, img.mime, filename);
+                    const compressed = await resizeAndCompressImageToJpeg(fileFromBase64, { maxLongSide: 1024, quality: 0.72 });
+                    downloadDebugImage(compressed.file);
+                    const dataUrl = await readAsDataURL(compressed.file);
+                    payload.push({ id: img.id, dataUrl });
+                }
+
+                if (images.length > MAX_IMAGES) {
+                    content += `\n\n[Note: omitted ${images.length - MAX_IMAGES} additional images to fit context limits.]`;
+                }
+
+                imagesPayload = payload;
+            }
+        } catch (e) {
+            console.warn("Failed to parse/extract images from ipynb; falling back to raw text", e);
+        }
+
+        prompt = "CardsFromCode";
+    }
+
+    if(file.ext == "py" || file.ext == "js" || file.ext == "ts" || file.ext == "css" ){
+        prompt = "CardsFromCode";
+    }
+
+    const userPayload = imagesPayload
+        ? { name, ext, content, images: imagesPayload }
+        : { name, ext, content };
+
+    const userText = JSON.stringify(userPayload);
 
     const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",

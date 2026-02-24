@@ -12,7 +12,10 @@ import dbPlugin from "./plugins/db.ts";
 import s3Plugin from "./plugins/s3.ts";
 import { doclingRoutes } from './routes/docling.ts';
 
-const app = Fastify({ logger: true });
+const app = Fastify({ 
+    logger: true,
+    bodyLimit: 20 * 1024 * 1024 // 10MB
+ });
 
 await app.register(cors, { origin: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], credentials: true });
 await app.register(dbPlugin);

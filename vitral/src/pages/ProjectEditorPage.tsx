@@ -197,13 +197,43 @@ const FlowInner = () => {
 
         if (response && response.cards) {
             console.log("response", response);
-            let { nodes, idMap } = llmCardsToNodes(response.cards);
-            let edges = llmConnectionsToEdges(response.connections, idMap);
+            const { nodes, idMap } = llmCardsToNodes(response.cards);
+            const edges = llmConnectionsToEdges(response.connections, idMap);
 
             console.log(nodes, edges, idMap);
 
             dispatch(addNodes(nodes));
             dispatch(connectEdges(edges));
+
+            // Automatically attach the uploaded file to the single activity card, if present
+            const activityCards = response.cards.filter(c => c.entity === 'activity');
+            if (activityCards.length === 1) {
+                const activityCard = activityCards[0];
+                const activityNodeId = idMap[String(activityCard.id)];
+
+                if (activityNodeId) {
+                    try {
+                        const { fileId, createdAt, sha256, bucket, key } = await createFile(projectId, data);
+                        const { name, mimeType, sizeBytes, ext } = data;
+
+                        dispatch(upsertFile({
+                            id: fileId,
+                            docId: projectId,
+                            name,
+                            mimeType,
+                            sizeBytes,
+                            ext,
+                            createdAt,
+                            sha256,
+                            storage: { bucket, key }
+                        }));
+
+                        dispatch(attachFileIdToNode({ nodeId: activityNodeId, fileId }));
+                    } catch (err) {
+                        console.error("Failed to auto-attach file to activity card", err);
+                    }
+                }
+            }
         }
 
         setLoading(false);
