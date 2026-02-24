@@ -1,19 +1,19 @@
 import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { useParams } from "react-router-dom";
-import { ReactFlow, useReactFlow, ReactFlowProvider, Background, BackgroundVariant, type NodeChange, type EdgeChange } from '@xyflow/react';
+import { ReactFlow, useReactFlow, ReactFlowProvider, Background, BackgroundVariant, type NodeChange, type EdgeChange, type Connection } from '@xyflow/react';
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
 
 import { Title } from '@/components/project/Title';
 import { Toolbar } from '@/components/toolbar/Toolbar';
 import { parseFile } from '@/func/FileParser';
-import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges, docLingFileParse } from '@/func/LLMRequest';
+import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
 import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNode, addNode, updateNode } from '@/store/flowSlice';
 import { selectAllFiles, upsertFile } from '@/store/filesSlice';
 import { Card } from '@/components/cards/Card';
 
-import type { cardType, edgeType, filePendingUpload, nodeType } from '@/config/types';
+import type { cardType, edgeType, filePendingUpload, llmCardData, llmConnectionData, nodeType } from '@/config/types';
 import type { RootState } from '@/store';
 
 import { FreeInputZone } from '@/components/toolbar/FreeInputZone';
@@ -29,6 +29,8 @@ import { getGitHubEvents } from '@/api/eventsApi';
 import { selectAllGitHubEvents, setGithubEvents } from '@/store/gitEventsSlice';
 import AssetsPanel from '@/components/files/AssetsPanel';
 import { addDefaultStage, addStage, changeStageBoundary, deleteStage, selectAllDesignStudyEvents, selectAllStages, selectDefaultStages, selectTimelineStartEnd, updateStage } from '@/store/timelineSlice';
+import { RelationEdge } from '@/components/edges/RelationEdge';
+import { isAllowedConnection, relationLabelFor } from '@/utils/relationships';
 
 const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
 
@@ -37,6 +39,7 @@ type FlowCanvasProps = {
     nodes: nodeType[];
     edges: edgeType[];
     nodeTypes: any;
+    edgeTypes: any;
 
     onDragEnter: (e: React.DragEvent) => void;
     onDragOver: (e: React.DragEvent) => void;
@@ -45,6 +48,7 @@ type FlowCanvasProps = {
 
     onNodesChange: (changes: NodeChange<nodeType>[]) => any;
     onEdgesChange: (changes: EdgeChange<edgeType>[]) => any;
+    onConnect: (connection: Connection) => void;
 
     onClick: (e: React.MouseEvent) => void;
 };
@@ -54,12 +58,14 @@ export const FlowCanvas = memo(function FlowCanvas({
     nodes,
     edges,
     nodeTypes,
+    edgeTypes,
     onDragEnter,
     onDragOver,
     onDragLeave,
     onDrop,
     onNodesChange,
     onEdgesChange,
+    onConnect,
     onClick
 }: FlowCanvasProps) {
 
@@ -74,7 +80,9 @@ export const FlowCanvas = memo(function FlowCanvas({
             onDrop={onDrop}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onClick={onClick}
             fitView
         >
@@ -113,6 +121,32 @@ const FlowInner = () => {
 
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => dispatch(onNodesChange(changes)), [dispatch]);
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => dispatch(onEdgesChange(changes)), [dispatch]);
+    const handleConnect = useCallback((connection: Connection) => {
+        if (!connection.source || !connection.target) return;
+
+        const sourceNode = nodes.find((node) => node.id === connection.source);
+        const targetNode = nodes.find((node) => node.id === connection.target);
+        const sourceLabel = sourceNode?.data?.label;
+        const targetLabel = targetNode?.data?.label;
+
+        if (!isAllowedConnection(sourceLabel, targetLabel)) return;
+
+        const alreadyConnected = edges.some(
+            (edge) => edge.source === connection.source && edge.target === connection.target
+        );
+        if (alreadyConnected) return;
+
+        const label = relationLabelFor(sourceLabel!, targetLabel!);
+
+        dispatch(connectEdges([{
+            id: crypto.randomUUID(),
+            source: connection.source,
+            target: connection.target,
+            type: "relation",
+            label,
+            data: { label, from: sourceLabel, to: targetLabel }
+        }]));
+    }, [dispatch, edges, nodes]);
 
     const { screenToFlowPosition } = useReactFlow();
 
@@ -159,6 +193,10 @@ const FlowInner = () => {
         card: (nodeProps: any) => <Card {...nodeProps} onAttachFile={onAttachFile} onDataPropertyChange={onDataPropertyChange} />
     }), [onAttachFile]);
 
+    const edgeTypes = useMemo(() => ({
+        relation: RelationEdge,
+    }), []);
+
     const fetchGithubEvents = async (connected: boolean) => {
         if (connected) {
             const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
@@ -188,22 +226,68 @@ const FlowInner = () => {
         return Array.from(dt.types || []).includes("Files");
     };
 
-    const processFile = async (file: File) => {
+    const processFile = async (file: File, dropPosition?: { x: number; y: number }) => {
         setLoading(true);
 
         const data: filePendingUpload = await parseFile(file);
 
-        const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLM(data);
+        const response: { cards: llmCardData[], connections: llmConnectionData[] } =
+            await requestCardsLLM(data, allFiles);
 
         if (response && response.cards) {
             console.log("response", response);
-            const { nodes, idMap } = llmCardsToNodes(response.cards);
-            const edges = llmConnectionsToEdges(response.connections, idMap);
+
+            const cardById = new Map<number, { id: number, entity: string; title: string; description?: string }>();
+            for (const c of response.cards) {
+                cardById.set(c.id, c);
+            }
+
+            const filteredConnections = response.connections.filter(conn => {
+                const source = cardById.get(conn.source);
+                const target = cardById.get(conn.target);
+                if (!source || !target) return false;
+                return isAllowedConnection(source.entity, target.entity);
+            });
+
+            const { nodes, idMap } = llmCardsToNodes(response.cards, dropPosition, filteredConnections);
+
+            const edges: edgeType[] = filteredConnections
+                .map((conn) => {
+                    const source = cardById.get(conn.source)!;
+                    const target = cardById.get(conn.target)!;
+                    const sourceNodeId = idMap[String(conn.source)];
+                    const targetNodeId = idMap[String(conn.target)];
+                    if (!sourceNodeId || !targetNodeId) return undefined;
+
+                    const label = relationLabelFor(source.entity, target.entity);
+
+                    return {
+                        id: crypto.randomUUID(),
+                        source: sourceNodeId,
+                        target: targetNodeId,
+                        type: 'relation',
+                        label,
+                        data: { label, from: source.entity, to: target.entity },
+                    } as edgeType;
+                })
+                .filter((e): e is edgeType => !!e);
 
             console.log(nodes, edges, idMap);
 
             dispatch(addNodes(nodes));
             dispatch(connectEdges(edges));
+
+            const availableAssetIds = new Set(allFiles.map((file) => file.id));
+            for (const card of response.cards) {
+                const nodeId = idMap[String(card.id)];
+                if (!nodeId || !Array.isArray(card.assets)) continue;
+
+                const uniqueAssets = Array.from(new Set(card.assets));
+                for (const fileId of uniqueAssets) {
+                    if (!availableAssetIds.has(fileId)) continue;
+                    dispatch(attachFileIdToNode({ nodeId, fileId }));
+                }
+            }
 
             // Automatically attach the uploaded file to the single activity card, if present
             const activityCards = response.cards.filter(c => c.entity === 'activity');
@@ -274,7 +358,8 @@ const FlowInner = () => {
             const files = Array.from(e.dataTransfer.files ?? []);
             if (files.length === 0) return;
 
-            processFile(files[0]);
+            const dropPosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+            processFile(files[0], dropPosition);
         }, []);
 
     const onClick = useCallback((e: React.MouseEvent) => {
@@ -323,13 +408,15 @@ const FlowInner = () => {
             projectId={projectId}
             nodes={nodes}
             edges={edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onDragEnter={onDragEnter}
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
-            nodeTypes={nodeTypes}
+            onConnect={handleConnect}
             onClick={onClick}
         />
 
@@ -383,7 +470,7 @@ const FlowInner = () => {
 
                     setLoading(true);
 
-                    const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLMTextInput(userText);
+                    const response: { cards: llmCardData[], connections: llmConnectionData[] } = await requestCardsLLMTextInput(userText);
 
                     console.log(response);
 

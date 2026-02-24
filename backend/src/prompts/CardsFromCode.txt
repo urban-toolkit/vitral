@@ -19,6 +19,18 @@ You will receive a JSON describing the code file as:
     content: string
 }
 
+And the assets available in the system:
+
+{
+    assets: [
+        {
+            id: string,
+            name: string,
+            ext: string
+        }
+    ]
+}
+
 You should follow these steps:
 
 - Classify the code file according to its potential role in the design study:
@@ -55,6 +67,8 @@ You should also derive additional cards (requirements, concepts, insights, perso
 
 You should connect all cards. The activity card is a hub; all cards should directly or indirectly lead to the activity card. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
 
+You should also link artifact cards to appropriate related assets using a list of assets ids.
+
 Output a list of cards and connections in the following JSON format:
 
 {
@@ -64,7 +78,8 @@ Output a list of cards and connections in the following JSON format:
             id: number,
             entity: string,
             title: string,
-            description: string 
+            description: string,
+            assets: string[]
         }
     ],
     "connections": [

@@ -15,7 +15,8 @@ export type llmCardData = {
     id: number,
     entity: string,
     title: string,
-    description?: string
+    description?: string,
+    assets?: string[]
 }
 
 export type llmConnectionData = {
@@ -62,7 +63,11 @@ export type nodeType = {
 export type edgeType = {
     id: string,
     source: string,
-    target: string
+    target: string,
+    type?: string,
+    label?: string,
+    // optional metadata used by custom edges
+    data?: any
 }
 
 export type GitHubEventType =

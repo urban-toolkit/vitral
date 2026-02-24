@@ -28,10 +28,27 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                 promptContent = await loadPrompt("CardsFromText");
             }
 
+            type AssetMetadata = {
+                id: string;
+                name: string;
+                ext: string;
+            };
+
+            const formatAssetsBlock = (assets: AssetMetadata[] | undefined): string => {
+                if (!Array.isArray(assets) || assets.length === 0) return "";
+                return `\n\nAvailable assets metadata (you may reference these ids in card.assets):\n${JSON.stringify(assets)}`;
+            };
+
             let inputContent: any[] = [];
 
             if (body.prompt === "CardsFromImage" || body.prompt === "CardsFromCode") {
-                let parsed: { name?: string; ext?: string; content?: string; images?: { id: string; dataUrl: string }[] } | undefined;
+                let parsed: {
+                    name?: string;
+                    ext?: string;
+                    content?: string;
+                    images?: { id: string; dataUrl: string }[];
+                    assets?: AssetMetadata[];
+                } | undefined;
                 try {
                     parsed = JSON.parse(body.input);
                 } catch {
@@ -40,10 +57,11 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
 
                 const textContent = parsed?.content ?? "";
                 const images = Array.isArray(parsed?.images) ? parsed!.images : [];
+                const assetsBlock = formatAssetsBlock(parsed?.assets);
 
                 inputContent.push({
                     type: "input_text",
-                    text: promptContent + (textContent ? "\n" + textContent : ""),
+                    text: promptContent + (textContent ? "\n" + textContent : "") + assetsBlock,
                 });
 
                 if (images.length === 0 && parsed?.content && typeof parsed.content === "string" && parsed.content.startsWith("data:")) {
@@ -69,10 +87,23 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                     }
                 }
             } else {
+                let parsed:
+                    | { content?: string; assets?: AssetMetadata[] }
+                    | undefined;
+
+                try {
+                    parsed = JSON.parse(body.input);
+                } catch {
+                    parsed = undefined;
+                }
+
+                const parsedText = typeof parsed?.content === "string" ? parsed.content : body.input;
+                const assetsBlock = formatAssetsBlock(parsed?.assets);
+
                 inputContent = [
                     {
                         type: "input_text",
-                        text: promptContent + "\n" + body.input,
+                        text: promptContent + "\n" + parsedText + assetsBlock,
                     },
                 ];
             }

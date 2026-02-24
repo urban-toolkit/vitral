@@ -1,4 +1,4 @@
-import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType, DesignStudyEvent, fileExtension } from '@/config/types';
+import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType, DesignStudyEvent, fileExtension, fileRecord } from '@/config/types';
 import type { filePendingUpload } from '@/config/types';
 import { readAsDataURL } from './FileParser';
 
@@ -283,7 +283,10 @@ export async function docLingFileParse(fileData: filePendingUpload, ext: fileExt
     };
 }
 
-export async function requestCardsLLM(file: filePendingUpload): Promise<{ cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] }> {
+export async function requestCardsLLM(
+    file: filePendingUpload,
+    assetsMetadata: fileRecord[] = []
+): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
 
     let { name, ext, previewText } = file;
 
@@ -294,7 +297,7 @@ export async function requestCardsLLM(file: filePendingUpload): Promise<{ cards:
 
     if (file.ext == "jpeg" || file.ext == "png" || file.ext == "jpg") {
         const compressed = await resizeAndCompressImageToJpeg(file.file, { maxLongSide: 1536, quality: 0.78 });
-        downloadDebugImage(compressed.file);
+        // downloadDebugImage(compressed.file);
         content = await readAsDataURL(compressed.file);
         ext = compressed.ext;
         name = compressed.file.name;
@@ -328,7 +331,7 @@ export async function requestCardsLLM(file: filePendingUpload): Promise<{ cards:
                     const filename = `${name}-nb-image-${++i}.${img.mime === "image/png" ? "png" : "jpg"}`;
                     const fileFromBase64 = base64ToFile(img.base64, img.mime, filename);
                     const compressed = await resizeAndCompressImageToJpeg(fileFromBase64, { maxLongSide: 1024, quality: 0.72 });
-                    downloadDebugImage(compressed.file);
+                    // downloadDebugImage(compressed.file);
                     const dataUrl = await readAsDataURL(compressed.file);
                     payload.push({ id: img.id, dataUrl });
                 }
@@ -350,9 +353,15 @@ export async function requestCardsLLM(file: filePendingUpload): Promise<{ cards:
         prompt = "CardsFromCode";
     }
 
+    const serializedAssets = assetsMetadata.map((asset) => ({
+        id: asset.id,
+        name: asset.name,
+        ext: asset.ext
+    }));
+
     const userPayload = imagesPayload
-        ? { name, ext, content, images: imagesPayload }
-        : { name, ext, content };
+        ? { name, ext, content, images: imagesPayload, assets: serializedAssets }
+        : { name, ext, content, assets: serializedAssets };
 
     const userText = JSON.stringify(userPayload);
 
@@ -388,7 +397,7 @@ export async function requestCardsLLM(file: filePendingUpload): Promise<{ cards:
     }
 }
 
-export async function requestCardsLLMTextInput(userText: string): Promise<{ cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] }> {
+export async function requestCardsLLMTextInput(userText: string): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
 
     const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",
@@ -422,6 +431,125 @@ export async function requestCardsLLMTextInput(userText: string): Promise<{ card
     }
 }
 
+function computeHorizontalTreeLayout(
+    llmCards: llmCardData[],
+    llmConnections: llmConnectionData[],
+    anchor: { x: number; y: number }
+): Record<number, { x: number; y: number }> {
+    const H_SPACING = 560;
+    const V_SPACING = 300;
+
+    const cardIds = new Set<number>(llmCards.map((c) => c.id));
+    const order = new Map<number, number>(llmCards.map((c, i) => [c.id, i]));
+
+    const adjacency = new Map<number, number[]>();
+    const indegree = new Map<number, number>();
+
+    for (const card of llmCards) {
+        adjacency.set(card.id, []);
+        indegree.set(card.id, 0);
+    }
+
+    for (const conn of llmConnections) {
+        if (!cardIds.has(conn.source) || !cardIds.has(conn.target)) continue;
+        adjacency.get(conn.source)!.push(conn.target);
+        indegree.set(conn.target, (indegree.get(conn.target) ?? 0) + 1);
+    }
+
+    for (const [id, children] of adjacency.entries()) {
+        children.sort((a, b) => (order.get(a)! - order.get(b)!));
+        adjacency.set(id, children);
+    }
+
+    const activityRoots = llmCards
+        .filter((c) => c.entity.toLowerCase() === "activity")
+        .map((c) => c.id);
+
+    const roots = activityRoots.length > 0
+        ? activityRoots
+        : llmCards
+            .filter((c) => (indegree.get(c.id) ?? 0) === 0)
+            .map((c) => c.id);
+
+    const depth = new Map<number, number>();
+    const queue: number[] = [];
+
+    for (const rootId of roots) {
+        depth.set(rootId, 0);
+        queue.push(rootId);
+    }
+
+    while (queue.length > 0) {
+        const current = queue.shift()!;
+        const currentDepth = depth.get(current) ?? 0;
+        for (const child of adjacency.get(current) ?? []) {
+            const nextDepth = currentDepth + 1;
+            const previousDepth = depth.get(child);
+            if (previousDepth == null || nextDepth < previousDepth) {
+                depth.set(child, nextDepth);
+                queue.push(child);
+            }
+        }
+    }
+
+    // Place disconnected non-activity components to the right of activity roots.
+    const disconnectedRoots = llmCards
+        .filter((c) => !depth.has(c.id) && (indegree.get(c.id) ?? 0) === 0)
+        .map((c) => c.id);
+
+    const disconnectedQueue: number[] = [];
+    const disconnectedRootDepth = activityRoots.length > 0 ? 1 : 0;
+    for (const rootId of disconnectedRoots) {
+        depth.set(rootId, disconnectedRootDepth);
+        disconnectedQueue.push(rootId);
+    }
+
+    while (disconnectedQueue.length > 0) {
+        const current = disconnectedQueue.shift()!;
+        const currentDepth = depth.get(current) ?? disconnectedRootDepth;
+        for (const child of adjacency.get(current) ?? []) {
+            const nextDepth = currentDepth + 1;
+            const previousDepth = depth.get(child);
+            if (previousDepth == null || nextDepth < previousDepth) {
+                depth.set(child, nextDepth);
+                disconnectedQueue.push(child);
+            }
+        }
+    }
+
+    for (const card of llmCards) {
+        if (!depth.has(card.id)) depth.set(card.id, activityRoots.length > 0 ? 1 : 0);
+    }
+
+    const levelToIds = new Map<number, number[]>();
+    for (const card of llmCards) {
+        const d = depth.get(card.id)!;
+        if (!levelToIds.has(d)) levelToIds.set(d, []);
+        levelToIds.get(d)!.push(card.id);
+    }
+
+    for (const ids of levelToIds.values()) {
+        ids.sort((a, b) => (order.get(a)! - order.get(b)!));
+    }
+
+    const positions: Record<number, { x: number; y: number }> = {};
+    const levels = Array.from(levelToIds.keys()).sort((a, b) => a - b);
+
+    for (const level of levels) {
+        const ids = levelToIds.get(level) ?? [];
+        const startY = anchor.y - ((ids.length - 1) * V_SPACING) / 2;
+
+        for (let i = 0; i < ids.length; i++) {
+            positions[ids[i]] = {
+                x: anchor.x + level * H_SPACING,
+                y: startY + i * V_SPACING,
+            };
+        }
+    }
+
+    return positions;
+}
+
 // export function getHighestId(nodes: nodeType[]): number {
 //     let highestId = 0;
 
@@ -438,16 +566,21 @@ export async function requestCardsLLMTextInput(userText: string): Promise<{ card
 //     }
 // }
 
-export function llmCardsToNodes(llmCards: llmCardData[], offset?: { x: number, y: number }): { nodes: nodeType[], idMap: { [old: string]: string } } {
+export function llmCardsToNodes(
+    llmCards: llmCardData[],
+    offset?: { x: number, y: number },
+    llmConnections?: llmConnectionData[]
+): { nodes: nodeType[], idMap: { [old: string]: string } } {
     // let id = getHighestId(nodes) + 1;
 
-    let positionX = 0;
-    let positionY = 0;
+    const anchor = offset ?? { x: 0, y: 0 };
+    const hasConnections = Array.isArray(llmConnections) && llmConnections.length > 0;
+    const treePositions = hasConnections
+        ? computeHorizontalTreeLayout(llmCards, llmConnections, anchor)
+        : undefined;
 
-    if (offset) {
-        positionX = offset.x;
-        positionY = offset.y;
-    }
+    let positionX = anchor.x;
+    const positionY = anchor.y;
 
     let resultingNodes: nodeType[] = [];
 
@@ -467,12 +600,13 @@ export function llmCardsToNodes(llmCards: llmCardData[], offset?: { x: number, y
         }
 
         let newId = crypto.randomUUID();
+        const positioned = treePositions?.[card.id];
 
         resultingNodes.push({
             id: newId,
             position: {
-                x: positionX,
-                y: positionY
+                x: positioned?.x ?? positionX,
+                y: positioned?.y ?? positionY
             },
             type: 'card',
             data: {
@@ -483,7 +617,9 @@ export function llmCardsToNodes(llmCards: llmCardData[], offset?: { x: number, y
             }
         });
 
-        positionX += 300;
+        if (!hasConnections) {
+            positionX += 300;
+        }
         idMapping[card.id] = newId;
     }
 
