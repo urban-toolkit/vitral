@@ -8,8 +8,12 @@ const router = createBrowserRouter([
   { path: "/", element: <ProjectsPage /> },
   { path: "/projects", element: <ProjectsPage /> },
   { path: "/project/:projectId", element: <ProjectEditorPage /> },
-]);
+],
+  {
+    basename: "/vitral",
+  }
+);
 
 export default function App() {
-    return <RouterProvider router={router} />;
+  return <RouterProvider router={router} />;
 }

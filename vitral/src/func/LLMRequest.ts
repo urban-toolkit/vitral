@@ -1,10 +1,10 @@
-import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType, DesignStudyEvent, fileExtension } from '@/config/types';
+import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType, DesignStudyEvent } from '@/config/types';
 import type { filePendingUpload } from '@/config/types';
 import { readAsDataURL } from './FileParser';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
-export async function docLingFileParse(fileData: filePendingUpload, ext: fileExtension): Promise<{ content: string, images: { name: string; content: string }[] }> {
+export async function docLingFileParse(fileData: filePendingUpload): Promise<{ content: string, images: { name: string; content: string }[] }> {
     const formData = new FormData();
 
     formData.append("file", fileData.file);
