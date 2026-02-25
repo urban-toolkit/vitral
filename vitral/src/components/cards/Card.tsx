@@ -15,7 +15,7 @@ import { FileCarousel } from '@/components/files/FileCarousel';
 const headerColor: Record<string, string> = {
     person: "rgba(231, 174, 255, 0.70)",
     activity: "rgb(174, 233, 255, 0.70)",
-    artifact: "rgb(255, 243, 174, 0.70)",
+    object: "rgb(255, 243, 174, 0.70)",
     requirement: "rgb(255, 174, 174, 0.70)",
     concept: "rgb(224, 255, 174, 0.70)",
     insight: "rgb(174, 255, 198, 0.70)"
@@ -24,13 +24,13 @@ const headerColor: Record<string, string> = {
 const iconName: Record<string, IconDefinition> = {
     person: faPerson,
     activity: faCalendar,
-    artifact: faCube,
+    object: faCube,
     requirement: faListCheck,
     concept: faLinesLeaning,
     insight: faLightbulb
 }
 
-const CARD_LABELS = ["person", "activity", "requirement", "concept", "insight"]
+const CARD_LABELS = ["person", "activity", "requirement", "concept", "insight", "object"];
 
 function LabelIcon({ label }: { label: string }) {
     return (

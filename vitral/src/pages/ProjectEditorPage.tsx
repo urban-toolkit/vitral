@@ -31,8 +31,14 @@ import AssetsPanel from '@/components/files/AssetsPanel';
 import { addDefaultStage, addStage, changeStageBoundary, deleteStage, selectAllDesignStudyEvents, selectAllStages, selectDefaultStages, selectTimelineStartEnd, updateStage } from '@/store/timelineSlice';
 import { RelationEdge } from '@/components/edges/RelationEdge';
 import { isAllowedConnection, relationLabelFor } from '@/utils/relationships';
+import { CanvasSidebar, type CanvasViewMode } from '@/components/sidebar/CanvasSidebar';
+import { buildEvolutionLayoutNodes } from '@/utils/evolutionLayout';
 
 const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
+const toLocalDateTimeInputValue = (date: Date) => {
+    const offsetMs = date.getTimezoneOffset() * 60_000;
+    return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+};
 
 type FlowCanvasProps = {
     projectId: string;
@@ -40,11 +46,7 @@ type FlowCanvasProps = {
     edges: edgeType[];
     nodeTypes: any;
     edgeTypes: any;
-
-    onDragEnter: (e: React.DragEvent) => void;
-    onDragOver: (e: React.DragEvent) => void;
-    onDragLeave: (e: React.DragEvent) => void;
-    onDrop: (e: React.DragEvent) => void;
+    nodesDraggable: boolean;
 
     onNodesChange: (changes: NodeChange<nodeType>[]) => any;
     onEdgesChange: (changes: EdgeChange<edgeType>[]) => any;
@@ -59,10 +61,7 @@ export const FlowCanvas = memo(function FlowCanvas({
     edges,
     nodeTypes,
     edgeTypes,
-    onDragEnter,
-    onDragOver,
-    onDragLeave,
-    onDrop,
+    nodesDraggable,
     onNodesChange,
     onEdgesChange,
     onConnect,
@@ -74,15 +73,12 @@ export const FlowCanvas = memo(function FlowCanvas({
             key={projectId}
             nodes={nodes}
             edges={edges}
-            onDragEnter={onDragEnter}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            nodesDraggable={nodesDraggable}
             onClick={onClick}
             fitView
         >
@@ -102,6 +98,12 @@ const FlowInner = () => {
 
     const [loading, setLoading] = useState(false);
     const cursorMode = useRef<'node' | 'text' | 'tree' | 'related' | ''>('');
+    const [pendingDrop, setPendingDrop] = useState<{
+        file: File;
+        dropPosition: { x: number; y: number };
+        rootActivityNodeId?: string;
+    } | null>(null);
+    const [generatedAtInput, setGeneratedAtInput] = useState<string>(() => toLocalDateTimeInputValue(new Date()));
 
     const timelineStages = useSelector(selectAllStages);
     const defaultStages = useSelector(selectDefaultStages);
@@ -119,7 +121,13 @@ const FlowInner = () => {
 
     const allFiles = useSelector(selectAllFiles);
 
-    const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => dispatch(onNodesChange(changes)), [dispatch]);
+    const [viewMode, setViewMode] = useState<CanvasViewMode>("explore");
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+    const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
+        if (viewMode === "evolution") return;
+        dispatch(onNodesChange(changes));
+    }, [dispatch, viewMode]);
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => dispatch(onEdgesChange(changes)), [dispatch]);
     const handleConnect = useCallback((connection: Connection) => {
         if (!connection.source || !connection.target) return;
@@ -148,9 +156,28 @@ const FlowInner = () => {
         }]));
     }, [dispatch, edges, nodes]);
 
-    const { screenToFlowPosition } = useReactFlow();
+    const displayedNodes = useMemo(() => {
+        if (viewMode === "evolution") {
+            return buildEvolutionLayoutNodes(nodes, edges);
+        }
+        return nodes;
+    }, [viewMode, nodes, edges]);
+
+    const { screenToFlowPosition, fitView } = useReactFlow();
 
     const onAttachFile = useCallback(async (nodeId: string, file: File) => {
+        const targetNode = nodes.find((node) => node.id === nodeId);
+        const isActivityNode = String(targetNode?.data?.label ?? "").toLowerCase() === "activity";
+
+        if (isActivityNode && targetNode) {
+            setGeneratedAtInput(toLocalDateTimeInputValue(new Date()));
+            setPendingDrop({
+                file,
+                dropPosition: { x: targetNode.position.x, y: targetNode.position.y },
+                rootActivityNodeId: nodeId
+            });
+            return;
+        }
 
         const res = await parseFile(file);
         const { fileId, createdAt, sha256, bucket, key } = await createFile(projectId, res);
@@ -159,7 +186,7 @@ const FlowInner = () => {
         dispatch(upsertFile({ id: fileId, docId: projectId, name, mimeType, sizeBytes, ext, createdAt, sha256, storage: { bucket, key } }));
         dispatch(attachFileIdToNode({ nodeId, fileId }));
 
-    }, [dispatch, projectId]);
+    }, [dispatch, projectId, nodes]);
 
     const onDataPropertyChange = useCallback(async (nodeProps: nodeType, value: any, propertyName: string) => {
 
@@ -217,152 +244,115 @@ const FlowInner = () => {
     // Timeline
     const [timelineOpen, setTimelineOpen] = useState(false);
 
-    // Drag + Drop functions
-    const [ghostScreen, setGhostScreen] = useState<{ x: number; y: number } | null>(null);
-    const [dragActive, setDragActive] = useState(false);
-
-    const isFileDrag = (dt: DataTransfer | null) => {
-        if (!dt) return false;
-        return Array.from(dt.types || []).includes("Files");
-    };
-
-    const processFile = async (file: File, dropPosition?: { x: number; y: number }) => {
+    const processFile = async (
+        file: File,
+        generatedAt: string,
+        rootActivityNodeId: string,
+        dropPosition?: { x: number; y: number }
+    ) => {
         setLoading(true);
 
-        const data: filePendingUpload = await parseFile(file);
+        try {
+            const data: filePendingUpload = await parseFile(file);
+            const parsedGeneratedAt = generatedAt ? new Date(generatedAt) : new Date();
+            const chosenCreatedAt = Number.isNaN(parsedGeneratedAt.getTime())
+                ? new Date().toISOString()
+                : parsedGeneratedAt.toISOString();
 
-        const response: { cards: llmCardData[], connections: llmConnectionData[] } =
-            await requestCardsLLM(data, allFiles);
+            const { fileId, sha256, bucket, key } = await createFile(projectId, data);
+            const { name, mimeType, sizeBytes, ext } = data;
+            let edges: edgeType[] = [];
 
-        if (response && response.cards) {
-            console.log("response", response);
+            dispatch(upsertFile({
+                id: fileId,
+                docId: projectId,
+                name,
+                mimeType,
+                sizeBytes,
+                ext,
+                createdAt: chosenCreatedAt,
+                sha256,
+                storage: { bucket, key }
+            }));
 
-            const cardById = new Map<number, { id: number, entity: string; title: string; description?: string }>();
-            for (const c of response.cards) {
-                cardById.set(c.id, c);
-            }
-
-            const filteredConnections = response.connections.filter(conn => {
-                const source = cardById.get(conn.source);
-                const target = cardById.get(conn.target);
-                if (!source || !target) return false;
-                return isAllowedConnection(source.entity, target.entity);
-            });
-
-            const { nodes, idMap } = llmCardsToNodes(response.cards, dropPosition, filteredConnections);
-
-            const edges: edgeType[] = filteredConnections
-                .map((conn) => {
-                    const source = cardById.get(conn.source)!;
-                    const target = cardById.get(conn.target)!;
-                    const sourceNodeId = idMap[String(conn.source)];
-                    const targetNodeId = idMap[String(conn.target)];
-                    if (!sourceNodeId || !targetNodeId) return undefined;
-
-                    const label = relationLabelFor(source.entity, target.entity);
-
-                    return {
-                        id: crypto.randomUUID(),
-                        source: sourceNodeId,
-                        target: targetNodeId,
-                        type: 'relation',
-                        label,
-                        data: { label, from: source.entity, to: target.entity },
-                    } as edgeType;
-                })
-                .filter((e): e is edgeType => !!e);
-
-            console.log(nodes, edges, idMap);
-
-            dispatch(addNodes(nodes));
-            dispatch(connectEdges(edges));
-
-            const availableAssetIds = new Set(allFiles.map((file) => file.id));
-            for (const card of response.cards) {
-                const nodeId = idMap[String(card.id)];
-                if (!nodeId || !Array.isArray(card.assets)) continue;
-
-                const uniqueAssets = Array.from(new Set(card.assets));
-                for (const fileId of uniqueAssets) {
-                    if (!availableAssetIds.has(fileId)) continue;
-                    dispatch(attachFileIdToNode({ nodeId, fileId }));
+            if (rootActivityNodeId) {
+                const rootNode = nodes.find((node) => node.id === rootActivityNodeId);
+                if (rootNode) {
+                    dispatch(updateNode({
+                        ...rootNode,
+                        data: {
+                            ...rootNode.data,
+                            createdAt: chosenCreatedAt,
+                            origin: fileId
+                        }
+                    }));
                 }
             }
 
-            // Automatically attach the uploaded file to the single activity card, if present
-            const activityCards = response.cards.filter(c => c.entity === 'activity');
-            if (activityCards.length === 1) {
-                const activityCard = activityCards[0];
-                const activityNodeId = idMap[String(activityCard.id)];
+            const response: { cards: llmCardData[], connections: llmConnectionData[] } =
+                await requestCardsLLM(data, allFiles);
 
-                if (activityNodeId) {
-                    try {
-                        const { fileId, createdAt, sha256, bucket, key } = await createFile(projectId, data);
-                        const { name, mimeType, sizeBytes, ext } = data;
+            if (response && response.cards) {
+                console.log("response", response);
 
-                        dispatch(upsertFile({
-                            id: fileId,
-                            docId: projectId,
-                            name,
-                            mimeType,
-                            sizeBytes,
-                            ext,
-                            createdAt,
-                            sha256,
-                            storage: { bucket, key }
-                        }));
+                const cardById = new Map<number, { id: number, entity: string; title: string; description?: string }>();
+                for (const c of response.cards) {
+                    cardById.set(c.id, c);
+                }
 
-                        dispatch(attachFileIdToNode({ nodeId: activityNodeId, fileId }));
-                    } catch (err) {
-                        console.error("Failed to auto-attach file to activity card", err);
+                const { nodes: generatedNodes, idMap } = llmCardsToNodes(response.cards, dropPosition, {
+                    createdAt: chosenCreatedAt,
+                    origin: fileId
+                });
+
+                if (rootActivityNodeId) {
+                    for (const card of response.cards) {
+                        const targetNodeId = idMap[String(card.id)];
+                        if (!targetNodeId || targetNodeId === rootActivityNodeId) continue;
+
+                        const label = relationLabelFor("activity", card.entity);
+                        if (!label) continue;
+
+                        edges.push({
+                            id: crypto.randomUUID(),
+                            target: rootActivityNodeId,
+                            source: targetNodeId,
+                            type: "relation",
+                            label,
+                            data: { label, from: "activity", to: card.entity }
+                        });
                     }
                 }
-            }
-        }
 
-        setLoading(false);
+                console.log(generatedNodes, edges, idMap);
+
+                dispatch(addNodes(generatedNodes));
+                dispatch(connectEdges(edges));
+
+                const availableAssetIds = new Set(allFiles.map((file) => file.id));
+                availableAssetIds.add(fileId);
+
+                for (const card of response.cards) {
+                    const nodeId = idMap[String(card.id)];
+                    if (!nodeId || !Array.isArray(card.assets)) continue;
+
+                    const uniqueAssets = Array.from(new Set(card.assets));
+                    for (const cardFileId of uniqueAssets) {
+                        if (!availableAssetIds.has(cardFileId)) continue;
+                        dispatch(attachFileIdToNode({ nodeId, fileId: cardFileId }));
+                    }
+                }
+
+                dispatch(attachFileIdToNode({ nodeId: rootActivityNodeId, fileId }));
+            }
+        } finally {
+            setLoading(false);
+        }
     }
 
-    const onDragEnter = useCallback((e: React.DragEvent) => {
-        if (!isFileDrag(e.dataTransfer)) return;
-        e.preventDefault();
-        setDragActive(true);
-    }, []);
-
-    const onDragOver = useCallback(
-        (e: React.DragEvent) => {
-            if (!isFileDrag(e.dataTransfer)) return;
-
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "copy";
-
-            if (!dragActive)
-                setDragActive(true);
-
-            setGhostScreen({ x: e.clientX, y: e.clientY });
-        },
-        []);
-
-    const onDragLeave = useCallback((e: React.DragEvent) => {
-        setDragActive(false);
-    }, []);
-
-    const onDrop = useCallback(
-        async (e: React.DragEvent) => {
-            if (!isFileDrag(e.dataTransfer)) return;
-            e.preventDefault();
-
-            setDragActive(false);
-            setGhostScreen(null);
-
-            const files = Array.from(e.dataTransfer.files ?? []);
-            if (files.length === 0) return;
-
-            const dropPosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-            processFile(files[0], dropPosition);
-        }, []);
-
     const onClick = useCallback((e: React.MouseEvent) => {
+        if (viewMode === "evolution") return;
+
         if (cursorMode.current == 'node') {
             const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
 
@@ -378,7 +368,7 @@ const FlowInner = () => {
             }));
         }
 
-    }, []);
+    }, [dispatch, screenToFlowPosition, viewMode]);
 
     useEffect(() => {
         dispatch(setGithubEvents([]));
@@ -400,24 +390,48 @@ const FlowInner = () => {
 
     }, [cursorMode]);
 
+    useEffect(() => {
+        if (viewMode !== "explore") return;
+
+        const t = window.setTimeout(() => {
+            fitView({ padding: 0.2, duration: 350 });
+        }, 0);
+
+        return () => window.clearTimeout(t);
+    }, [viewMode, fitView]);
+
+    useEffect(() => {
+        if (viewMode !== "evolution") return;
+
+        const t = window.setTimeout(() => {
+            fitView({ padding: 0.2, duration: 350 });
+        }, 0);
+
+        return () => window.clearTimeout(t);
+    }, [viewMode, displayedNodes, fitView]);
+
     if (status === "loading") return <div>Loading…</div>;
     if (status === "error") return <div>Error: {error}</div>;
 
     return <>
         <FlowCanvas
             projectId={projectId}
-            nodes={nodes}
+            nodes={displayedNodes}
             edges={edges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            onDragEnter={onDragEnter}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
+            nodesDraggable={viewMode === "explore"}
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             onConnect={handleConnect}
             onClick={onClick}
+        />
+
+        <CanvasSidebar
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((prev) => !prev)}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
         />
 
         {/* Call to action */}
@@ -492,35 +506,79 @@ const FlowInner = () => {
             null
         }
 
-        {/* Ghost overlay for file dragging */}
-        {dragActive && ghostScreen && (
-            <div
-                style={{
-                    position: "fixed",
-                    left: ghostScreen.x + 12,
-                    top: ghostScreen.y + 12,
-                    transform: "translate(0, 0)",
-                    zIndex: 9999,
-                    pointerEvents: "none",
-                    opacity: "60%"
-                }}
-            >
-                <div>
-                    <Card
-                        data={{
-                            title: "",
-                            type: "social",
-                            label: "activity"
-                        }}
-                    />
-                </div>
-            </div>
-        )}
-
         {/* Load spinner */}
         <LoadSpinner
             loading={loading}
         />
+
+        {pendingDrop && (
+            <div
+                style={{
+                    position: "fixed",
+                    inset: 0,
+                    backgroundColor: "rgba(0, 0, 0, 0.35)",
+                    zIndex: 10000,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center"
+                }}
+            >
+                <div
+                    style={{
+                        backgroundColor: "white",
+                        borderRadius: "10px",
+                        padding: "18px",
+                        width: "420px",
+                        boxShadow: "0 10px 40px rgba(0, 0, 0, 0.2)"
+                    }}
+                >
+                    <h3 style={{ marginTop: 0, marginBottom: "10px" }}>Approximate file generation timestamp</h3>
+                    <p style={{ marginTop: 0, marginBottom: "12px" }}>
+                        Adjust the timestamp if needed before processing <strong>{pendingDrop.file.name}</strong>.
+                    </p>
+
+                    <input
+                        type="datetime-local"
+                        value={generatedAtInput}
+                        onChange={(e) => setGeneratedAtInput(e.target.value)}
+                        style={{
+                            width: "100%",
+                            padding: "8px",
+                            border: "1px solid #ccc",
+                            borderRadius: "6px",
+                            marginBottom: "14px"
+                        }}
+                    />
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                        <button
+                            type="button"
+                            onClick={() => setPendingDrop(null)}
+                            style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #ccc", background: "white", cursor: "pointer" }}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (!pendingDrop || !pendingDrop?.rootActivityNodeId) return;
+
+                                processFile(
+                                    pendingDrop.file,
+                                    generatedAtInput,
+                                    pendingDrop.rootActivityNodeId,
+                                    pendingDrop.dropPosition
+                                );
+                                setPendingDrop(null);
+                            }}
+                            style={{ padding: "8px 12px", borderRadius: "6px", border: "none", background: "#161616", color: "white", cursor: "pointer" }}
+                        >
+                            Process file
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
 
         <div
             style={{

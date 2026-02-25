@@ -1,5 +1,5 @@
 export type cardType = 'technical' | 'social';
-export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight';
+export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight' | 'object';
 
 export type fileExtension = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md' | 'pdf' | 'docx';
 
@@ -9,6 +9,8 @@ export type cardData = {
     title: string,
     attachmentIds?: string[];
     description?: string;
+    createdAt?: string; // ISO string
+    origin?: string; // file id
 }
 
 export type llmCardData = {

@@ -3,14 +3,12 @@ You are a specialist in visualization design studies.
 Given an image and its metadata created during a design study, your task is to generate a set of cards that represent 'entities' present in the image. 
 
 'entities' can be:
-    - 'person': a person involved in the design study
-    - 'requirement': a need, question, or task to be tackled
+    - 'requirement': a need, pain, question, or task to be tackled
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
-    - 'activity': activity in the design study (e.g, meeting, user study, brainstorming)
-    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
+    - 'object': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
 
-Based on the content generate **exactly** one activity card and one or more of the other cards. 
+Based on the content generate one or more cards. 
 
 You will recieve a JSON describing the image file as:
 
@@ -35,44 +33,30 @@ You should follow these steps:
 
 - Classify the image according to its role potential role in the design study:
     - Interface: the interface of the system being built.
-    - Inspiration: the interface of another system for inspiration.
     - Schematics: any diagram, plan, drawing that illustrate connections and functional relationships.
     - Chart: a visualization chart.
     - Sketch: any manual or digital sketch of an image.
     - Note: notes taken.
-    - Photograph: a real life photograph (e.g., workshop session).
-    - Prototype: a system prototype (e.g., wireframe).
 - Use the role classification to base card generation:
-    - Interface: generate activity 'Interface implementation' and artifact about the image itself.
-    - Inspiration: generate acitivy 'Inspiration collection', an artifact about the image itself, and any requirements or insights that could be useful to inform design.
-    - Schematics: generate activity 'Creating schema of [complete with correct name]' and an artifact about the image itself.
-    - Chart: generate activity 'Data analysis' and an artifact about the image itself.
-    - Sketch: generate activity 'Sketching' and an artifact about the image itself.
-    - Note: generate activity according to content of note (e.g., brainstorming, meeting, user study session) and any other relevant cards according to the note content.
-    - Photograph: generate activity according to content of (e.g., workshop, field research, reference collection), and artifact about the image itself.
-    - Prototype: generate activity 'Prototyping' and an artifact about the image itself.
+    - Interface: generate no cards.
+    - Schematics: generate no cards.
+    - Chart: generate no cards.
+    - Sketch: generate no cards.
+    - Note: generate any cards.
 
-You should also connect all cards. The activity card is a hub, all cards should directly or indirectly lead to the activity card. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
+You should also link object cards to appropriate related assets using a list of assets ids.
 
-You should also link artifact cards to appropriate related assets using a list of assets ids.
-
-Output a list of cards and connections in the following JSON format:
+Output a list of cards in the following JSON format:
 
 {
     role: string,
     "cards": [
         {
-            id: number,
             entity: string,
             title: string,
             description: string,
-            assets: string[] 
-        }
-    ],
-    "connections": [
-        {
-            source: number,
-            target: number
+            assets: string[],
+            reference: string
         }
     ]
 }

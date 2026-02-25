@@ -1,0 +1,83 @@
+.root {
+    position: fixed;
+    left: 16px;
+    top: 16px;
+    z-index: 12;
+    display: flex;
+    align-items: stretch;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
+    backdrop-filter: blur(4px);
+}
+
+.panel {
+    width: 280px;
+    padding: 14px 12px;
+}
+
+.collapsedPanel {
+    width: 0;
+    overflow: hidden;
+    padding: 0;
+}
+
+.title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.subtitle {
+    margin: 4px 0 12px;
+    font-size: 12px;
+    color: #646464;
+}
+
+.sectionLabel {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #676767;
+}
+
+.group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.option {
+    border: 1px solid #d9d9d9;
+    border-radius: 8px;
+    background: #fff;
+    text-align: left;
+    padding: 10px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.optionActive {
+    border-color: #111;
+    background: #111;
+    color: #fff;
+}
+
+.helper {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #6f6f6f;
+}
+
+.toggle {
+    border: none;
+    width: 36px;
+    min-width: 36px;
+    border-left: 1px solid rgba(0, 0, 0, 0.08);
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    color: #343434;
+}

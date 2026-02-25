@@ -569,15 +569,9 @@ function computeHorizontalTreeLayout(
 export function llmCardsToNodes(
     llmCards: llmCardData[],
     offset?: { x: number, y: number },
-    llmConnections?: llmConnectionData[]
+    metadata?: { createdAt?: string; origin?: string }
 ): { nodes: nodeType[], idMap: { [old: string]: string } } {
-    // let id = getHighestId(nodes) + 1;
-
     const anchor = offset ?? { x: 0, y: 0 };
-    const hasConnections = Array.isArray(llmConnections) && llmConnections.length > 0;
-    const treePositions = hasConnections
-        ? computeHorizontalTreeLayout(llmCards, llmConnections, anchor)
-        : undefined;
 
     let positionX = anchor.x;
     const positionY = anchor.y;
@@ -600,26 +594,26 @@ export function llmCardsToNodes(
         }
 
         let newId = crypto.randomUUID();
-        const positioned = treePositions?.[card.id];
 
         resultingNodes.push({
             id: newId,
             position: {
-                x: positioned?.x ?? positionX,
-                y: positioned?.y ?? positionY
+                x: positionX,
+                y: positionY
             },
             type: 'card',
             data: {
                 label: card.entity,
                 type: cardType as cardType,
                 title: card.title,
-                description: card.description
+                description: card.description,
+                createdAt: metadata?.createdAt,
+                origin: metadata?.origin
             }
         });
 
-        if (!hasConnections) {
-            positionX += 300;
-        }
+        positionX += 300;
+
         idMapping[card.id] = newId;
     }
 
