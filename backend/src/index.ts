@@ -4,13 +4,13 @@ import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 
-import { llmRoutes } from "./routes/llm.ts";
-import { stateRoutes } from "./routes/state.ts";
-import { githubEventsRoutes } from "./routes/github_events.ts";
-import { githubRoutes } from "./routes/github.ts";
-import dbPlugin from "./plugins/db.ts";
-import s3Plugin from "./plugins/s3.ts";
-import { doclingRoutes } from './routes/docling.ts';
+import { llmRoutes } from "./routes/llm.js";
+import { stateRoutes } from "./routes/state.js";
+import { githubEventsRoutes } from "./routes/github_events.js";
+import { githubRoutes } from "./routes/github.js";
+import dbPlugin from "./plugins/db.js";
+import s3Plugin from "./plugins/s3.js";
+import { doclingRoutes } from './routes/docling.js';
 
 const app = Fastify({ logger: true });
 

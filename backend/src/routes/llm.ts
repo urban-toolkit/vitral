@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from "fastify";
 import OpenAI from "openai";
-import { loadPrompt } from "../prompts/loadPrompt.ts";
+import { loadPrompt } from "../prompts/loadPrompt.js";
 import FormData from "form-data";
 import fetch from "node-fetch";
 import { Buffer } from "node:buffer";

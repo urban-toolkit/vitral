@@ -2,8 +2,8 @@ import type { FastifyPluginAsync } from "fastify";
 import { PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import type { Readable } from "node:stream";
-import { streamToString } from "../utils/streams.ts";
-import { safeFilename } from "../utils/files.ts";
+import { streamToString } from "../utils/streams.js";
+import { safeFilename } from "../utils/files.js";
 
 type SaveBody = {
     title?: string;
@@ -448,7 +448,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const client = await request.server.pg.connect();
         try {
-            const result = await client.query<{ id: string }>(
+            const result = await client.query<{ id: string;created_at: string; }>(
                 `
                 INSERT INTO document_files (
                     id, document_id, name, mime_type, ext, size_bytes, sha256,
@@ -486,6 +486,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
     });
 
+    type FileInfo = {
+      id: string;
+      docId: string;
+      name: string;
+      mime_type: string | null;
+      size_bytes: number | null;
+      sha256: string | null;
+      created_at: string;
+      storage_bucket: string | null;
+      storage_key: string | null;
+    };
+
     /**
      * Get files from a document
      * GET /api/state/:id/files
@@ -495,18 +507,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const client = await app.pg.connect();
         try {
-            const res = await client.query<{
-                id: string;
-                docId: string;
-                name: string;
-                mime_type: string | null;
-                size_bytes: number | null;
-                sha256: string | null;
-                created_at: string;
-
-                storage_bucket: string | null;
-                storage_key: string | null;
-            }>(
+            const res = await client.query<FileInfo>(
                 `
                 SELECT
                     id,
@@ -525,14 +526,14 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 [id]
             );
 
-            const files = res.rows.map((r) => {
+            const files = res.rows.map((r:FileInfo) => {
                 const ext = r.name.includes(".")
                     ? r.name.split(".").pop()?.toLowerCase()
                     : undefined;
 
                 return {
                     id: r.id,
-                    docId: r.document_id,
+                    docId: r.docId,
                     name: r.name,
                     mimeType: r.mime_type ?? undefined,
                     ext,
@@ -566,6 +567,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             const res = await client.query<{
                 id: string;
                 docId: string;
+                ext: string | null;
                 name: string;
                 mime_type: string | null;
                 size_bytes: number | null;
@@ -628,7 +630,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
             return reply.send({
                 fileId: row.id,
-                docId: row.document_id,
+                docId: row.docId,
                 name: row.name,
                 mimeType,
                 ext,

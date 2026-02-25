@@ -113,19 +113,19 @@ async function ghFetchAllPages<T extends any[]>(
     const maxPages = opts?.maxPages ?? 50;
 
     let all: any[] = [];
-    let nextUrl: string | null = url;
+    let nUrl: string | null = url;
     let page = 0;
 
-    while (nextUrl && page < maxPages) {
+    while (nUrl && page < maxPages) {
         page++;
-        const { items, nextUrl: n } = await ghFetchPage<T>(request, nextUrl, token);
+        const { items, nextUrl }: { items: T; nextUrl: string | null } = await ghFetchPage<T>(request, nUrl, token);
         all.push(...items);
 
         if (opts?.stopWhen?.(items)) break;
 
         if (!items || items.length === 0) break;
 
-        nextUrl = n;
+        nUrl = nextUrl;
     }
 
     return all as T;
@@ -482,7 +482,7 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
             [id, Number(limit)]
         );
 
-        return events.map((e) => ({
+        return events.map((e:GitHubEventRow) => ({
             id: e.id,
             type: e.event_type,
             key: e.event_key,
