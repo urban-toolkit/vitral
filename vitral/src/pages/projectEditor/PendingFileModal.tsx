@@ -38,9 +38,9 @@ export function PendingFileModal({
                     boxShadow: "0 10px 40px rgba(0, 0, 0, 0.2)",
                 }}
             >
-                <h3 style={{ marginTop: 0, marginBottom: "10px" }}>Approximate file generation timestamp</h3>
+                <h3 style={{ marginTop: 0, marginBottom: "10px" }}>File generation timestamp</h3>
                 <p style={{ marginTop: 0, marginBottom: "12px" }}>
-                    Adjust the timestamp if needed before processing <strong>{pendingDrop.file.name}</strong>.
+                    Adjust the timestamp if needed for <strong>{pendingDrop.file.name}</strong>.
                 </p>
 
                 <input

@@ -1,5 +1,6 @@
 const ALLOWED_RELATION_LABEL_BY_PAIR: Record<string, string> = {
     "activity|person": "part of",
+    "activity|activity": "related to",
     "activity|requirement": "derived from",
     "activity|concept": "relevant to",
     "activity|insight": "derived from",

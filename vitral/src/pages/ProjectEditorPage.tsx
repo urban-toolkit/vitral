@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ReactFlowProvider, useReactFlow, type Connection, type EdgeChange, type NodeChange, type NodeProps } from "@xyflow/react";
 
 import type { AppDispatch, RootState } from "@/store";
-import type { cardType, edgeType, llmCardData, llmConnectionData, nodeType, Stage } from "@/config/types";
+import type { cardLabel, cardType, edgeType, llmCardData, llmConnectionData, nodeType, Stage } from "@/config/types";
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
 import { requestCardsLLMTextInput, llmCardsToNodes, llmConnectionsToEdges } from "@/func/LLMRequest";
@@ -17,6 +17,7 @@ import { Toolbar } from "@/components/toolbar/Toolbar";
 import { FreeInputZone } from "@/components/toolbar/FreeInputZone";
 import { LoadSpinner } from "@/components/project/LoadSpinner";
 import { Card, type CardProps } from "@/components/cards/Card";
+import { CARD_LABELS } from "@/components/cards/cardVisuals";
 import { RelationEdge } from "@/components/edges/RelationEdge";
 import { GitHubFiles } from "@/components/github/GithubFiles";
 import AssetsPanel from "@/components/files/AssetsPanel";
@@ -58,6 +59,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [timelineOpen, setTimelineOpen] = useState(false);
     const [viewMode, setViewMode] = useState<CanvasViewMode>("explore");
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [selectedLabels, setSelectedLabels] = useState<cardLabel[]>([...CARD_LABELS]);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
     const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
@@ -186,12 +188,29 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         relation: RelationEdge,
     }), []);
 
+    const selectedLabelSet = useMemo(() => new Set(selectedLabels), [selectedLabels]);
+
+    const filteredNodes = useMemo(() => {
+        return nodes.filter((node) => {
+            const rawLabel = String(node.data?.label ?? "").toLowerCase();
+            if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
+            return selectedLabelSet.has(rawLabel as cardLabel);
+        });
+    }, [nodes, selectedLabelSet]);
+
+    const filteredEdges = useMemo(() => {
+        const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
+        return edges.filter((edge) => (
+            visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+        ));
+    }, [edges, filteredNodes]);
+
     const displayedNodes = useMemo(() => {
         if (viewMode === "evolution") {
-            return buildEvolutionLayoutNodes(nodes, edges);
+            return buildEvolutionLayoutNodes(filteredNodes, filteredEdges);
         }
-        return nodes;
-    }, [viewMode, nodes, edges]);
+        return filteredNodes;
+    }, [viewMode, filteredNodes, filteredEdges]);
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
         if (viewMode === "evolution") return;
@@ -300,7 +319,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }, 0);
 
         return () => window.clearTimeout(t);
-    }, [viewMode, fitView]);
+    }, [viewMode, selectedLabels, fitView]);
 
     useEffect(() => {
         if (viewMode !== "evolution") return;
@@ -331,6 +350,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const handleToggleSidebar = useCallback(() => {
         setSidebarCollapsed((prev) => !prev);
+    }, []);
+
+    const handleToggleLabel = useCallback((label: cardLabel) => {
+        setSelectedLabels((prev) => (
+            prev.includes(label)
+                ? prev.filter((current) => current !== label)
+                : [...prev, label]
+        ));
     }, []);
 
     const handleToggleTimeline = useCallback(() => {
@@ -393,7 +420,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             <FlowCanvas
                 projectId={projectId}
                 nodes={displayedNodes}
-                edges={edges}
+                edges={filteredEdges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 nodesDraggable={viewMode === "explore"}
@@ -410,6 +437,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onToggleCollapsed={handleToggleSidebar}
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}
+                selectedLabels={selectedLabels}
+                onToggleLabel={handleToggleLabel}
             />
 
             <div style={{ position: "fixed", right: "30px", top: "30px" }}>

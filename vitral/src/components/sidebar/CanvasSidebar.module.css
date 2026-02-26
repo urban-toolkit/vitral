@@ -67,6 +67,7 @@
 
 .helper {
     margin-top: 10px;
+    margin-bottom: 12px;
     font-size: 12px;
     color: #6f6f6f;
 }
@@ -80,4 +81,45 @@
     cursor: pointer;
     font-size: 14px;
     color: #343434;
+}
+
+.labelGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.labelOption {
+    border: 1px solid #d9d9d9;
+    border-radius: 10px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    text-transform: capitalize;
+    cursor: pointer;
+}
+
+.labelOptionActive {
+    border-color: #111;
+    background: #f6f6f6;
+}
+
+.labelCircle {
+    width: 26px;
+    height: 26px;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: #2f2f2f;
+}
+
+.labelText {
+    font-size: 12px;
+    color: #313131;
+    line-height: 1;
 }
