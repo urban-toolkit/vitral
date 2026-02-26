@@ -1,8 +1,3 @@
-.inactive {
-    /* display: none; */
-    opacity: 0;
-}
-
 .content {
     display: flex;
     flex-direction: column;
@@ -12,6 +7,11 @@
     align-items: center;
     /* font-size: var(--font-size-2xl); */
     color: var(--subtitle-color);
+}
+
+.content p {
+    margin: 0;
+    font-size: 12px;
 }
 
 .spinner {
@@ -46,4 +46,17 @@
 .label {
     width: 100%;
     height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: copy;
+}
+
+.zone {
+    width: 100%;
+    height: 100%;
+}
+
+.dragging {
+    background: rgba(255, 255, 255, 0.5) !important;
 }

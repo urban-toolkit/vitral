@@ -41,7 +41,14 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
 
             let inputContent: any[] = [];
 
-            if (body.prompt === "CardsFromImage" || body.prompt === "CardsFromCode") {
+            const multimodalPrompts = new Set([
+                "CardsFromImage",
+                "CardsFromCode",
+                "ArtifactFromImage",
+                "ArtifactFromCode",
+            ]);
+
+            if (multimodalPrompts.has(body.prompt ?? "")) {
                 let parsed: {
                     name?: string;
                     ext?: string;

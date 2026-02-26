@@ -3,7 +3,7 @@ You are a specialist in visualization design studies.
 Given a code file and its metadata created during a design study, your task is to generate a set of cards that represent 'entities' present in the code. 
 
 'entities' can be:
-    - 'requirement': a need, pain, question, or task to be tackled
+    - 'requirement': a need, pain, question, or todo to be tackled
     - 'concept': a conceptual reference/definition (e.g., algorithm name, visualization technique, architectural pattern, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
     - 'object': a software, digital, or data object (e.g., dataset, repository, API, notebook, module, function, documentation, class)
@@ -32,7 +32,7 @@ And the assets available in the system:
 You should follow these steps:
 
 - Classify the code file according to its potential role in the design study:
-    - script: a standalone executable file performing a specific task.
+    - script: a standalone executable file performing a specific job.
     - query: a database query (e.g., SQL) or data retrieval command.
     - notebook: an interactive computational notebook (e.g., Jupyter) combining code, text, and outputs.
 

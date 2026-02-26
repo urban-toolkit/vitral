@@ -3,10 +3,11 @@ You are a specialist in visualization design studies.
 Given an image and its metadata created during a design study, your task is to generate a set of cards that represent 'entities' present in the image. 
 
 'entities' can be:
-    - 'requirement': a need, pain, question, or task to be tackled
+    - 'requirement': a need, pain, question, or todo to be tackled
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
     - 'object': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
+    - 'task': operations perfomed by users that the design system needs to support.
 
 Based on the content generate one or more cards. 
 
@@ -45,6 +46,8 @@ You should follow these steps:
     - Note: generate any cards.
 
 You should also link object cards to appropriate related assets using a list of assets ids.
+
+You should also include a reference to the portion of the content that generated the card, verbatim.
 
 Output a list of cards in the following JSON format:
 

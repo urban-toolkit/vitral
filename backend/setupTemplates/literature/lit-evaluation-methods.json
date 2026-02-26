@@ -1,0 +1,23 @@
+{
+  "id": "lit-evaluation-methods",
+  "name": "Paper: Evaluation Methods for Visual Analytics",
+  "participants": [
+    { "name": "You", "role": "Researcher" },
+    { "name": "Evaluation Lead", "role": "Researcher" },
+    { "name": "Prototype Owner", "role": "Designer" }
+  ],
+  "timeline": {
+    "milestones": [
+      { "name": "Kickoff", "dayOffset": 0 },
+      { "name": "Protocol Ready", "dayOffset": 12 },
+      { "name": "Pilot Session", "dayOffset": 20 },
+      { "name": "Final Report", "dayOffset": 42 }
+    ],
+    "stages": [
+      { "name": "Question Framing", "startDayOffset": 0, "endDayOffset": 10 },
+      { "name": "Protocol Design", "startDayOffset": 10, "endDayOffset": 20 },
+      { "name": "Study Execution", "startDayOffset": 20, "endDayOffset": 34 },
+      { "name": "Analysis and Reporting", "startDayOffset": 34, "endDayOffset": 48 }
+    ]
+  }
+}

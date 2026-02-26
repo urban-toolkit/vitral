@@ -2,6 +2,9 @@ import type { FastifyPluginAsync } from "fastify";
 import { PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import type { Readable } from "node:stream";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { readdir, readFile } from "node:fs/promises";
 import { streamToString } from "../utils/streams.ts";
 import { safeFilename } from "../utils/files.ts";
 
@@ -16,7 +19,129 @@ const TEXT_EXTENSIONS = new Set([
     "txt", "json", "ipynb", "csv", "py", "js", "ts", "html", "css", "md",
 ]);
 
+type SetupTemplateDefinition = {
+    id?: unknown;
+    name?: unknown;
+    participants?: unknown;
+    timeline?: {
+        milestones?: unknown;
+        stages?: unknown;
+    };
+};
+
+type SetupTemplateResponse = {
+    id: string;
+    name: string;
+    file: string;
+    definition: {
+        participants: Array<{ name: string; role: string }>;
+        timeline: {
+            milestones: Array<{ name: string; dayOffset: number }>;
+            stages: Array<{ name: string; startDayOffset: number; endDayOffset: number }>;
+        };
+    };
+};
+
+function toTemplateNameFromFile(stem: string): string {
+    return stem
+        .split(/[-_]+/g)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function normalizeTemplateDefinition(raw: SetupTemplateDefinition): SetupTemplateResponse["definition"] {
+    const participants = Array.isArray(raw.participants)
+        ? raw.participants
+            .filter(isRecord)
+            .map((participant) => ({
+                name: typeof participant.name === "string" ? participant.name : "Participant",
+                role: typeof participant.role === "string" ? participant.role : "Researcher",
+            }))
+        : [];
+
+    const milestones = Array.isArray(raw.timeline?.milestones)
+        ? raw.timeline!.milestones
+            .filter(isRecord)
+            .map((milestone) => ({
+                name: typeof milestone.name === "string" ? milestone.name : "Milestone",
+                dayOffset: typeof milestone.dayOffset === "number" ? milestone.dayOffset : 0,
+            }))
+        : [];
+
+    const stages = Array.isArray(raw.timeline?.stages)
+        ? raw.timeline!.stages
+            .filter(isRecord)
+            .map((stage) => ({
+                name: typeof stage.name === "string" ? stage.name : "Stage",
+                startDayOffset: typeof stage.startDayOffset === "number" ? stage.startDayOffset : 0,
+                endDayOffset: typeof stage.endDayOffset === "number" ? stage.endDayOffset : 0,
+            }))
+        : [];
+
+    return {
+        participants,
+        timeline: {
+            milestones,
+            stages,
+        },
+    };
+}
+
+async function loadLiteratureTemplatesFromDisk(): Promise<SetupTemplateResponse[]> {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const defaultTemplatesDir = path.resolve(here, "../../setupTemplates/literature");
+    const configuredTemplatesDir = process.env.SETUP_TEMPLATES_DIR?.trim();
+    const templatesDir = configuredTemplatesDir
+        ? (path.isAbsolute(configuredTemplatesDir)
+            ? configuredTemplatesDir
+            : path.resolve(process.cwd(), configuredTemplatesDir))
+        : defaultTemplatesDir;
+
+    const entries = await readdir(templatesDir, { withFileTypes: true });
+    const jsonFiles = entries
+        .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json") && entry.name.toLowerCase() !== "index.json")
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b));
+
+    const templates = await Promise.all(jsonFiles.map(async (file): Promise<SetupTemplateResponse | null> => {
+        const fullPath = path.join(templatesDir, file);
+        const rawText = await readFile(fullPath, "utf8");
+        const parsed = JSON.parse(rawText) as SetupTemplateDefinition;
+        if (!isRecord(parsed)) return null;
+
+        const fileStem = file.replace(/\.json$/i, "");
+        const id = typeof parsed.id === "string" && parsed.id.trim() ? parsed.id.trim() : fileStem;
+        const name = typeof parsed.name === "string" && parsed.name.trim()
+            ? parsed.name.trim()
+            : toTemplateNameFromFile(fileStem);
+
+        return {
+            id,
+            name,
+            file,
+            definition: normalizeTemplateDefinition(parsed),
+        };
+    }));
+
+    return templates.filter((template): template is SetupTemplateResponse => template !== null);
+}
+
 export const stateRoutes: FastifyPluginAsync = async (app) => {
+    app.get("/setup-templates/literature", async (request, reply) => {
+        try {
+            const templates = await loadLiteratureTemplatesFromDisk();
+            return { templates };
+        } catch (error) {
+            request.log.error({ error }, "Failed to load literature setup templates");
+            return reply.status(500).send({ error: "Failed to load literature setup templates" });
+        }
+    });
+
     /**
      * Create a new document
      * POST /api/state

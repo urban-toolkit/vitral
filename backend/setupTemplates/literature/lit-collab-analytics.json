@@ -1,0 +1,23 @@
+{
+  "id": "lit-collab-analytics",
+  "name": "Paper: Collaborative Analytics in Practice",
+  "participants": [
+    { "name": "You", "role": "Researcher" },
+    { "name": "Data Engineer", "role": "Developer" },
+    { "name": "Domain Expert", "role": "Researcher" }
+  ],
+  "timeline": {
+    "milestones": [
+      { "name": "Kickoff", "dayOffset": 0 },
+      { "name": "Workflow Mapping", "dayOffset": 8 },
+      { "name": "Prototype Walkthrough", "dayOffset": 24 },
+      { "name": "Retrospective", "dayOffset": 40 }
+    ],
+    "stages": [
+      { "name": "Planning", "startDayOffset": 0, "endDayOffset": 6 },
+      { "name": "Workflow Analysis", "startDayOffset": 6, "endDayOffset": 20 },
+      { "name": "Prototype Iteration", "startDayOffset": 20, "endDayOffset": 34 },
+      { "name": "Validation", "startDayOffset": 34, "endDayOffset": 45 }
+    ]
+  }
+}

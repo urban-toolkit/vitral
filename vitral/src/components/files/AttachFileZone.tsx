@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState } from "react";
 
 import classes from './AttachFileZone.module.css'
 
@@ -79,7 +79,7 @@ export function AttachFileZone({ onFileSelected, loading, accept, dropZoneCSS }:
     );
 
     return (
-        <div style={dropZoneCSS} className={`${isDragging ? "" : classes.inactive}`}>
+        <div style={dropZoneCSS} className={`${classes.zone} ${isDragging ? classes.dragging : ""}`}>
             <label
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
@@ -91,12 +91,12 @@ export function AttachFileZone({ onFileSelected, loading, accept, dropZoneCSS }:
                     type="file"
                     accept={accept}
                     onChange={handleInputChange}
-                    onClick={(event: any) => {event.preventDefault()}}
+                    onClick={(event: React.MouseEvent<HTMLInputElement>) => { event.preventDefault(); }}
                     hidden
                 />
 
                 <div className={classes.content}>
-                    <p>Attach file</p>
+                    <p>{isDragging ? "Drop file to attach" : "Drag files to attach"}</p>
                 </div>
 
             </label>

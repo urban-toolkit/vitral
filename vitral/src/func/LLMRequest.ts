@@ -283,17 +283,63 @@ export async function docLingFileParse(fileData: filePendingUpload, ext: fileExt
     };
 }
 
-export async function requestCardsLLM(
-    file: filePendingUpload,
-    assetsMetadata: fileRecord[] = []
-): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
+type PromptSet = {
+    text: string;
+    image: string;
+    data: string;
+    code: string;
+};
 
+type PreparedLlmPayload = {
+    prompt: string;
+    userText: string;
+};
+
+export type llmArtifactData = {
+    role: string;
+    entity: string;
+    title: string;
+    description: string;
+};
+
+function tryParseJson<T>(raw: string): T | null {
+    try {
+        return JSON.parse(raw) as T;
+    } catch {
+        const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+        if (fenced?.[1]) {
+            try {
+                return JSON.parse(fenced[1]) as T;
+            } catch {
+                // no-op
+            }
+        }
+
+        const start = raw.indexOf("{");
+        const end = raw.lastIndexOf("}");
+        if (start >= 0 && end > start) {
+            try {
+                return JSON.parse(raw.slice(start, end + 1)) as T;
+            } catch {
+                // no-op
+            }
+        }
+    }
+
+    return null;
+}
+
+async function buildFilePromptRequest(
+    file: filePendingUpload,
+    assetsMetadata: fileRecord[],
+    promptSet: PromptSet
+): Promise<PreparedLlmPayload> {
     let { name, ext, previewText } = file;
 
     let content = previewText;
     let imagesPayload: { id: string; dataUrl: string }[] | undefined;
 
-    let prompt = "CardsFromText";
+    let prompt = promptSet.text;
 
     if (file.ext == "jpeg" || file.ext == "png" || file.ext == "jpg") {
         const compressed = await resizeAndCompressImageToJpeg(file.file, { maxLongSide: 1536, quality: 0.78 });
@@ -301,18 +347,18 @@ export async function requestCardsLLM(
         content = await readAsDataURL(compressed.file);
         ext = compressed.ext;
         name = compressed.file.name;
-        prompt = "CardsFromImage";
+        prompt = promptSet.image;
     }
 
-    if(file.ext == "pdf" || file.ext == "docx") {
+    if (file.ext == "pdf" || file.ext == "docx") {
         const { content: markdown } = await docLingFileParse(file, ext);
         content = markdown;
-        prompt = "CardsFromText";
+        prompt = promptSet.text;
     }
 
     if (file.ext == "csv" || file.ext == "json") {
         content = await readTextCapped(file.file, { maxBytes: 512 * 1024, maxChars: 120_000 });
-        prompt = "CardsFromData";
+        prompt = promptSet.data;
     }
 
     if (file.ext == "ipynb") {
@@ -323,7 +369,7 @@ export async function requestCardsLLM(
             content = ipynbToCompactText(notebook, { maxChars: 80_000, maxOutputCharsPerCell: 4_000 });
 
             if (images.length) {
-                const MAX_IMAGES = 0; //Images temporarily deactivated
+                const MAX_IMAGES = 0; // Images temporarily deactivated
                 const payload: { id: string; dataUrl: string }[] = [];
 
                 let i = 0;
@@ -346,24 +392,39 @@ export async function requestCardsLLM(
             console.warn("Failed to parse/extract images from ipynb; falling back to raw text", e);
         }
 
-        prompt = "CardsFromCode";
+        prompt = promptSet.code;
     }
 
-    if(file.ext == "py" || file.ext == "js" || file.ext == "ts" || file.ext == "css" ){
-        prompt = "CardsFromCode";
+    if (file.ext == "py" || file.ext == "js" || file.ext == "ts" || file.ext == "css" || file.ext == "html") {
+        prompt = promptSet.code;
     }
 
     const serializedAssets = assetsMetadata.map((asset) => ({
         id: asset.id,
         name: asset.name,
-        ext: asset.ext
+        ext: asset.ext,
     }));
 
     const userPayload = imagesPayload
         ? { name, ext, content, images: imagesPayload, assets: serializedAssets }
         : { name, ext, content, assets: serializedAssets };
 
-    const userText = JSON.stringify(userPayload);
+    return {
+        prompt,
+        userText: JSON.stringify(userPayload),
+    };
+}
+
+export async function requestCardsLLM(
+    file: filePendingUpload,
+    assetsMetadata: fileRecord[] = []
+): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
+    const { prompt, userText } = await buildFilePromptRequest(file, assetsMetadata, {
+        text: "CardsFromText",
+        image: "CardsFromImage",
+        data: "CardsFromData",
+        code: "CardsFromCode",
+    });
 
     const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",
@@ -382,19 +443,44 @@ export async function requestCardsLLM(
     }
 
     const data = await response.json();
-
-    try {
-        const parsedData = JSON.parse(data.output);
-
-        return parsedData;
-    } catch {
+    const parsedData = tryParseJson<{ cards: llmCardData[]; connections: llmConnectionData[] }>(data.output);
+    if (!parsedData) {
         alert("Request failed");
+        return {
+            cards: [],
+            connections: []
+        };
     }
 
-    return {
-        cards: [],
-        connections: []
+    return parsedData;
+}
+
+export async function requestArtifactLLM(
+    file: filePendingUpload,
+    assetsMetadata: fileRecord[] = []
+): Promise<llmArtifactData | null> {
+    const { prompt, userText } = await buildFilePromptRequest(file, assetsMetadata, {
+        text: "ArtifactFromText",
+        image: "ArtifactFromImage",
+        data: "ArtifactFromData",
+        code: "ArtifactFromCode",
+    });
+
+    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ input: userText, prompt }),
+    });
+
+    if (!response.ok) {
+        alert("Request failed");
+        return null;
     }
+
+    const data = await response.json();
+    return tryParseJson<llmArtifactData>(data.output);
 }
 
 export async function requestCardsLLMTextInput(userText: string): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {

@@ -4,10 +4,11 @@ Given text generated during a design study activity, your task is to generate ca
 
 'entities' can be:
     - 'person': a person involved in the design study
-    - 'requirement': a need, pain, question, or task to be tackled
+    - 'requirement': a need, pain, question, or todo to be tackled
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
     - 'object': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
+    - 'task': operations perfomed by users that the design system needs to support.
 
 Based on the content generate one or more cards. 
 

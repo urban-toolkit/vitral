@@ -1,5 +1,5 @@
 export type cardType = 'technical' | 'social';
-export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight' | 'object';
+export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight' | 'object' | 'task';
 
 export type fileExtension = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md' | 'pdf' | 'docx';
 

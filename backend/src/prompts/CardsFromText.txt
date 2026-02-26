@@ -4,10 +4,11 @@ Given a text file created during a design study, your task is to generate a set 
 
 'entities' can be:
     - 'person': a person involved in the design study
-    - 'requirement': a need, pain, question, or task to be tackled
+    - 'requirement': a need, pain, question, or todo to be tackled
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
     - 'object': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
+    - 'task': operations perfomed by users that the design system needs to support.
 
 Based on the content generate one or more cards. 
 
@@ -41,11 +42,13 @@ You should follow these steps:
 - Use the role classification to base card generation:
     - Transcript: generate any cards.
     - Note: generate any cards.
-    - System Documentation: generate only concepts and requirements.
-    - Study Documentation: generate only concepts, requirements, and persons.
-    - Literature: generate only requirements, insights, and concepts.
+    - System Documentation: generate only concepts, requirements, and tasks.
+    - Study Documentation: generate only concepts, requirements, persons, and tasks.
+    - Literature: generate only requirements, insights, concepts, and tasks.
 
 You should also link object cards to appropriate related assets using a list of assets ids.
+
+You should also include a reference to the portion of the content that generated the card, verbatim.
 
 Output a list of cards in the following JSON format:
 

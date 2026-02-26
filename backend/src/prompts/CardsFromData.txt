@@ -3,7 +3,7 @@ You are a specialist in visualization design studies.
 Given a data file (CSV or JSON) and its metadata created during a design study, your task is to generate a set of cards that represent 'entities' present in the data. 
 
 'entities' can be:
-    - 'requirement': a need, pain, question, or task to be tackled
+    - 'requirement': a need, pain, question, or todo to be tackled
     - 'concept': a conceptual reference/definition (e.g., data schema, variable definition, measurement unit, domain terminology)
     - 'insight': a finding derived after inspecting, analyzing, or discussing the data
     - 'object': a software, digital, or data object (e.g., dataset, data schema, derived table, processed dataset, metadata file)

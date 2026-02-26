@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 
 import classes from './GithubFiles.module.css';
 import { getGitHubContents, getGithubDocumentLink, getGitHubRepos, linkRepoToDocument, type GitHubContentItem, type GitHubDocumentResponse, type GitHubRepo } from '@/api/githubApi';
@@ -11,7 +11,7 @@ type GithubFilesProps = {
     connectionStatus: { connected: boolean, user?: { id: number, login: string } };
 };
 
-export function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
+export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
 
     const [githubDocumentLink, setGithubDocumentLink] = useState<GitHubDocumentResponse>({});
     const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
@@ -40,8 +40,9 @@ export function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
             const res = await getGitHubContents(projectId, path);
             res.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
             setItems(res);
-        } catch (e: any) {
-            setItemsError(e?.message ?? "Failed to load repo contents");
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Failed to load repo contents";
+            setItemsError(message);
             setItems([]);
         } finally {
             setItemsLoading(false);
@@ -167,4 +168,4 @@ export function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
             />
         </div>
     );
-}
+});

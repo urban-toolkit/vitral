@@ -2,8 +2,8 @@ import type { filePendingUpload, fileRecord, TimelineStatePayload } from "@/conf
 
 export type FlowStatePayload = {
     flow: {
-        nodes: any[];
-        edges: any[];
+        nodes: unknown[];
+        edges: unknown[];
     };
 };
 
@@ -17,16 +17,30 @@ export type DocumentResponse = {
     timeline?: TimelineStatePayload;
 };
 
+export type LiteratureSetupTemplate = {
+    id: string;
+    name: string;
+    file: string;
+    definition: {
+        participants: Array<{ name: string; role: string }>;
+        timeline: {
+            milestones: Array<{ name: string; dayOffset: number }>;
+            stages: Array<{ name: string; startDayOffset: number; endDayOffset: number }>;
+        };
+    };
+};
+
 const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
 
 export async function createDocument(
     title: string,
-    state: FlowStatePayload
+    state: FlowStatePayload,
+    description?: string
 ): Promise<DocumentResponse> {
     const res = await fetch(`${API_BASE}/api/state`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, state }),
+        body: JSON.stringify({ title, state, description }),
     });
 
     if (!res.ok) {
@@ -54,6 +68,17 @@ export async function loadDocuments(): Promise<DocumentResponse[]> {
     }
 
     return res.json();
+}
+
+export async function loadLiteratureSetupTemplates(): Promise<LiteratureSetupTemplate[]> {
+    const res = await fetch(`${API_BASE}/api/setup-templates/literature`);
+
+    if (!res.ok) {
+        throw new Error(`Load failed: ${res.status}`);
+    }
+
+    const payload = await res.json() as { templates?: LiteratureSetupTemplate[] };
+    return Array.isArray(payload.templates) ? payload.templates : [];
 }
 
 export async function saveDocument(
@@ -85,7 +110,7 @@ export async function deleteDocument(docId: string) {
     }
 }
 
-export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string }) {
+export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string | null }) {
     const res = await fetch(`${API_BASE}/api/state/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

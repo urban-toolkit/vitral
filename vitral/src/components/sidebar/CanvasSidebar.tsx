@@ -1,3 +1,4 @@
+import { memo } from "react";
 import styles from "./CanvasSidebar.module.css";
 
 export type CanvasViewMode = "explore" | "evolution";
@@ -9,7 +10,7 @@ type CanvasSidebarProps = {
     onViewModeChange: (mode: CanvasViewMode) => void;
 };
 
-export function CanvasSidebar({
+export const CanvasSidebar = memo(function CanvasSidebar({
     collapsed,
     onToggleCollapsed,
     viewMode,
@@ -52,5 +53,5 @@ export function CanvasSidebar({
             </button>
         </aside>
     );
-}
+});
 

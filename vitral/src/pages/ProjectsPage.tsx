@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { loadDocuments, deleteDocument, createDocument } from "@/api/stateApi";
+import { loadDocuments, deleteDocument } from "@/api/stateApi";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -32,13 +32,6 @@ export function ProjectsPage() {
         });
     };
 
-    const addDocument = async (title: string) => {
-        let res: DocumentResponse = await createDocument(title, {flow: {nodes: [], edges: []}});
-        setDocuments((prevDocuments: DocumentResponse[]) => {
-            return [...prevDocuments, res]
-        });
-    }
-
     const checkGitStatus = async () => {
         const status = await githubStatus();
         if (status.connected) {
@@ -59,7 +52,7 @@ export function ProjectsPage() {
                 <p className={classes.title}>Projects</p>
                 
                 <div className={classes.projectsGrid}>
-                    {documents.map((document, _index) => {
+                    {documents.map((document) => {
                         return <div key={document.id} className={classes.projectCard}>
                             <div className={classes.innerCard}>
                                 <p className={classes.documentTitle}>{document.title}</p>
@@ -72,7 +65,7 @@ export function ProjectsPage() {
                     })}
                     <div className={classes.newProject}>
                         <p className={classes.documentTitle}>Untitled</p>
-                        <button onClick={() => {addDocument("Untitled")}}>New project</button>
+                        <button onClick={() => navigate("/projects/new")}>New project</button>
                     </div>
                 </div>
             </div>

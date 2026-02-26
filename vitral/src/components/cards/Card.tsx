@@ -1,15 +1,15 @@
-import { useCallback, useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 import classes from './Card.module.css';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRepeat, faPerson, faCalendar, faCube, faListCheck, faLinesLeaning, faLightbulb, type IconDefinition } from '@fortawesome/free-solid-svg-icons';
+import { faRepeat, faPerson, faArrowPointer, faCalendar, faCube, faListCheck, faLinesLeaning, faLightbulb, type IconDefinition } from '@fortawesome/free-solid-svg-icons';
 
 import { Position, Handle } from '@xyflow/react';
 import { AttachFileZone } from '@/components/files/AttachFileZone';
-import { shallowEqual, useSelector } from 'react-redux';
+import { useSelector } from 'react-redux';
 import type { fileRecord, nodeType } from '@/config/types';
-import { makeSelectFilesForNode } from '@/store/flowSlice';
+import type { RootState } from '@/store';
 import { FileCarousel } from '@/components/files/FileCarousel';
 
 const headerColor: Record<string, string> = {
@@ -18,7 +18,8 @@ const headerColor: Record<string, string> = {
     object: "rgb(255, 243, 174, 0.70)",
     requirement: "rgb(255, 174, 174, 0.70)",
     concept: "rgb(224, 255, 174, 0.70)",
-    insight: "rgb(174, 255, 198, 0.70)"
+    insight: "rgb(174, 255, 198, 0.70)",
+    task: "rgb(255, 174, 239, 0.70)",
 }
 
 const iconName: Record<string, IconDefinition> = {
@@ -27,10 +28,11 @@ const iconName: Record<string, IconDefinition> = {
     object: faCube,
     requirement: faListCheck,
     concept: faLinesLeaning,
-    insight: faLightbulb
+    insight: faLightbulb,
+    task: faArrowPointer
 }
 
-const CARD_LABELS = ["person", "activity", "requirement", "concept", "insight", "object"];
+const CARD_LABELS = ["person", "activity", "requirement", "concept", "insight", "object", "task"];
 
 function LabelIcon({ label }: { label: string }) {
     return (
@@ -38,29 +40,53 @@ function LabelIcon({ label }: { label: string }) {
     )
 }
 
-export function Card(props: any) {
+export type CardProps = {
+    id?: string;
+    data: {
+        label: string;
+        type: string;
+        title: string;
+        description?: string;
+        attachmentIds?: string[];
+    };
+    onAttachFile?: (nodeId: string, file: File) => void;
+    onDataPropertyChange?: (nodeProps: nodeType, value: string, propertyName: string) => void;
+    selected?: boolean;
+    dragging?: boolean;
+    [key: string]: unknown;
+};
+
+function CardImpl(props: CardProps) {
 
     const [flipped, setFlipped] = useState(false);
 
-    const selectFiles = useMemo(
-        () => makeSelectFilesForNode(props.id),
-        [props.id]
-    );
-
-    const files: fileRecord[] = useSelector(selectFiles, shallowEqual);
+    const filesById = useSelector((state: RootState) => state.files.byId);
+    const attachmentIds = props.data?.attachmentIds;
+    const files = useMemo<fileRecord[]>(() => {
+        if (!Array.isArray(attachmentIds)) return [];
+        return attachmentIds
+            .map((fileId: string) => filesById[fileId])
+            .filter((file): file is fileRecord => Boolean(file));
+    }, [attachmentIds, filesById]);
 
     const dropZoneCSS = useMemo<React.CSSProperties>(() => ({
-        border: "2px dashed #ccc",
         borderRadius: "8",
         textAlign: "center",
         background: "transparent",
         transition: "background 0.2s ease",
-        flex: "1"
     }), []);
 
-    const handleFileSelected = useCallback((file: File) => {
+    const handleFileSelected = (file: File) => {
+        if (!props.id) return;
         props.onAttachFile?.(props.id, file);
-    }, [props.onAttachFile, props.id]);
+    };
+
+    const getCleanNodeProps = () => {
+        const cleanProps = { ...props };
+        delete cleanProps.onAttachFile;
+        delete cleanProps.onDataPropertyChange;
+        return cleanProps as unknown as nodeType;
+    };
 
     const [isEditingLabel, setIsEditingLabel] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -83,11 +109,7 @@ export function Card(props: any) {
                                 autoFocus
                                 onChange={(e) => {
                                     const newLabel = e.target.value;
-
-                                    // Removing callback functions from props
-                                    const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
-
-                                    props.onDataPropertyChange(cleanProps, newLabel, "label");
+                                    props.onDataPropertyChange?.(getCleanNodeProps(), newLabel, "label");
                                     setIsEditingLabel(false);
                                 }}
                                 onBlur={() => setIsEditingLabel(false)}
@@ -118,6 +140,7 @@ export function Card(props: any) {
 
                         <FileCarousel
                             files={files}
+                            persistKey={props.id}
                         >
                             <AttachFileZone
                                 onFileSelected={handleFileSelected}
@@ -136,18 +159,13 @@ export function Card(props: any) {
                                 rows={1}
                                 onChange={(e) => setDraftTitle(e.target.value)}
                                 onBlur={() => {
-                                    const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
-
-                                    props.onDataPropertyChange(cleanProps, draftTitle.trim(), "title");
+                                    props.onDataPropertyChange?.(getCleanNodeProps(), draftTitle.trim(), "title");
                                     setIsEditingTitle(false);
                                 }}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter" && !e.shiftKey) {
                                         e.preventDefault();
-
-                                        const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
-
-                                        props.onDataPropertyChange(cleanProps, draftTitle.trim(), "title");
+                                        props.onDataPropertyChange?.(getCleanNodeProps(), draftTitle.trim(), "title");
                                         setIsEditingTitle(false);
                                     }
                                     if (e.key === "Escape") {
@@ -195,18 +213,13 @@ export function Card(props: any) {
                                     setDraftDescription(e.target.value);
                                 }}
                                 onBlur={() => {
-                                    const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
-
-                                    props.onDataPropertyChange(cleanProps, draftDescription.trim(), "description");
+                                    props.onDataPropertyChange?.(getCleanNodeProps(), draftDescription.trim(), "description");
                                     setIsEditingDescription(false);
                                 }}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter" && !e.shiftKey) {
                                         e.preventDefault();
-
-                                        const {onAttachFile, onDataPropertyChange, ...cleanProps } = props;
-
-                                        props.onDataPropertyChange(cleanProps, draftDescription.trim(), "description");
+                                        props.onDataPropertyChange?.(getCleanNodeProps(), draftDescription.trim(), "description");
                                         setIsEditingDescription(false);
                                     }
                                     if (e.key === "Escape") {
@@ -252,3 +265,16 @@ export function Card(props: any) {
         </div>
     );
 }
+
+function areEqualCardProps(prev: CardProps, next: CardProps) {
+    return (
+        prev.id === next.id &&
+        prev.data === next.data &&
+        prev.selected === next.selected &&
+        prev.dragging === next.dragging &&
+        prev.onAttachFile === next.onAttachFile &&
+        prev.onDataPropertyChange === next.onDataPropertyChange
+    );
+}
+
+export const Card = memo(CardImpl, areEqualCardProps);
