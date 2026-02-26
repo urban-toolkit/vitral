@@ -123,3 +123,60 @@
     color: #313131;
     line-height: 1;
 }
+
+.queryForm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.queryInput {
+    width: 100%;
+    border: 1px solid #d6d6d6;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 12px;
+}
+
+.queryActions {
+    display: flex;
+    gap: 8px;
+}
+
+.queryButton {
+    flex: 1;
+    border: 1px solid #111;
+    border-radius: 8px;
+    background: #111;
+    color: #fff;
+    font-size: 12px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.queryButton:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.queryClear {
+    border: 1px solid #d6d6d6;
+    border-radius: 8px;
+    background: #fff;
+    color: #333;
+    font-size: 12px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.queryError {
+    margin: 8px 0 0;
+    color: #a42e2e;
+    font-size: 11px;
+}
+
+.queryMeta {
+    margin: 8px 0 0;
+    color: #565656;
+    font-size: 11px;
+}

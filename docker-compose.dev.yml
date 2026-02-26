@@ -57,7 +57,7 @@ services:
         - action: rebuild
           path: ./backend/package.json
   postgres:
-    image: postgres:18.1-alpine
+    image: pgvector/pgvector:pg18
     environment:
       POSTGRES_USER: vitral
       POSTGRES_PASSWORD: vitral

@@ -3,16 +3,26 @@ import { PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/
 import crypto from "node:crypto";
 import type { Readable } from "node:stream";
 import path from "node:path";
+import OpenAI from "openai";
 import { fileURLToPath } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
 import { streamToString } from "../utils/streams.ts";
 import { safeFilename } from "../utils/files.ts";
+import { computeNodeEmbeddingDelta, createNodeEmbeddingQueue } from "../services/nodeEmbeddings.ts";
+import { applyStructuredFilters, extractCardNodesForSearch, parseNaturalLanguageNodeQuery } from "../services/nodeSearch.ts";
 
 type SaveBody = {
     title?: string;
     description?: string | null;
     state: unknown;
     timeline: unknown;
+};
+
+type QueryNodesBody = {
+    query?: string;
+    limit?: number;
+    minScore?: number;
+    scopeNodeIds?: string[];
 };
 
 const TEXT_EXTENSIONS = new Set([
@@ -132,6 +142,15 @@ async function loadLiteratureTemplatesFromDisk(): Promise<SetupTemplateResponse[
 }
 
 export const stateRoutes: FastifyPluginAsync = async (app) => {
+    const nodeEmbeddingQueue = createNodeEmbeddingQueue({
+        pg: app.pg,
+        logger: app.log,
+    });
+    const openAiClient = process.env.OPENAI_API_KEY
+        ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+        : null;
+    const embeddingModel = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
+
     app.get("/setup-templates/literature", async (request, reply) => {
         try {
             const templates = await loadLiteratureTemplatesFromDisk();
@@ -165,6 +184,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             [title, description, JSON.stringify(body.state)]
         );
 
+        try {
+            const createdDocId = rows[0]?.id as string | undefined;
+            if (createdDocId) {
+                const { upserts } = computeNodeEmbeddingDelta(undefined, body.state, createdDocId);
+                if (upserts.length > 0) {
+                    nodeEmbeddingQueue.enqueue(upserts);
+                }
+            }
+        } catch (error) {
+            request.log.error({ error }, "Failed to enqueue node embeddings after document creation.");
+        }
+
         return reply.status(201).send(rows[0]);
     });
 
@@ -189,6 +220,139 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
 
         return rows[0];
+    });
+
+    /**
+     * Query nodes using natural language + structured filters + semantic vector search
+     * POST /api/state/:id/query-nodes
+     */
+    app.post("/state/:id/query-nodes", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const body = request.body as QueryNodesBody;
+        const rawQuery = typeof body?.query === "string" ? body.query.trim() : "";
+        const requestedLimit = typeof body?.limit === "number" ? body.limit : Number(body?.limit);
+        const requestedMinScore = typeof body?.minScore === "number" ? body.minScore : Number(body?.minScore);
+        const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, Math.floor(requestedLimit))) : 60;
+        const envMinScore = Number(process.env.NODE_QUERY_MIN_SCORE ?? 0.2);
+        const minScore = Number.isFinite(requestedMinScore)
+            ? Math.max(-1, Math.min(1, requestedMinScore))
+            : (Number.isFinite(envMinScore) ? Math.max(-1, Math.min(1, envMinScore)) : 0.2);
+        const scopeNodeIds = Array.isArray(body?.scopeNodeIds)
+            ? body.scopeNodeIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+            : undefined;
+
+        if (!rawQuery) {
+            return reply.status(400).send({ error: "Missing query" });
+        }
+
+        const docRes = await app.pg.query<{ state: unknown }>(
+            `
+            SELECT state
+            FROM documents
+            WHERE id = $1
+            `,
+            [id],
+        );
+
+        if (docRes.rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        let candidateNodes = extractCardNodesForSearch(docRes.rows[0]?.state);
+        if (scopeNodeIds) {
+            const scopeSet = new Set(scopeNodeIds);
+            candidateNodes = candidateNodes.filter((node) => scopeSet.has(node.id));
+        }
+
+        const parsed = await parseNaturalLanguageNodeQuery(openAiClient, rawQuery, app.log);
+        const structuredFilteredNodes = applyStructuredFilters(candidateNodes, parsed.structuredFilters);
+        const structuredNodeIds = structuredFilteredNodes.map((node) => node.id);
+
+        if (structuredNodeIds.length === 0) {
+            return reply.send({
+                parsed,
+                matchedNodeIds: [],
+                usedVectorSearch: false,
+            });
+        }
+
+        const semanticQuery = parsed.semanticQuery.trim();
+        if (!semanticQuery) {
+            return reply.send({
+                parsed,
+                matchedNodeIds: structuredNodeIds.slice(0, limit),
+                usedVectorSearch: false,
+            });
+        }
+
+        if (!openAiClient) {
+            return reply.send({
+                parsed,
+                matchedNodeIds: structuredNodeIds.slice(0, limit),
+                usedVectorSearch: false,
+            });
+        }
+
+        const embeddingTable = await app.pg.query<{ table_name: string | null }>(
+            `
+            SELECT to_regclass('public.document_node_embeddings') AS table_name
+            `,
+        );
+
+        if (!embeddingTable.rows[0]?.table_name) {
+            return reply.send({
+                parsed,
+                matchedNodeIds: structuredNodeIds.slice(0, limit),
+                usedVectorSearch: false,
+            });
+        }
+
+        let semanticVector: number[] | null = null;
+        try {
+            const embeddingResponse = await openAiClient.embeddings.create({
+                model: embeddingModel,
+                input: semanticQuery,
+            });
+            semanticVector = Array.isArray(embeddingResponse.data?.[0]?.embedding)
+                ? embeddingResponse.data[0].embedding
+                : null;
+        } catch (error) {
+            request.log.warn({ error }, "Failed to embed semantic query; falling back to structured filters only.");
+        }
+
+        if (!semanticVector) {
+            return reply.send({
+                parsed,
+                matchedNodeIds: structuredNodeIds.slice(0, limit),
+                usedVectorSearch: false,
+            });
+        }
+
+        const vectorLiteral = `[${semanticVector.join(",")}]`;
+        const vectorRows = await app.pg.query<{ node_id: string; score: number }>(
+            `
+            SELECT
+                node_id,
+                1 - (embedding <=> $3::vector) AS score
+            FROM document_node_embeddings
+            WHERE doc_id = $1
+              AND node_id = ANY($2::text[])
+              AND 1 - (embedding <=> $3::vector) >= $5
+            ORDER BY embedding <=> $3::vector
+            LIMIT $4
+            `,
+            [id, structuredNodeIds, vectorLiteral, limit, minScore],
+        );
+
+        const vectorResultRows = vectorRows.rows as Array<{ node_id: string; score: number }>;
+        const vectorMatchedIds = vectorResultRows.map((row) => row.node_id);
+        const matchedNodeIds = vectorMatchedIds;
+
+        return reply.send({
+            parsed,
+            matchedNodeIds,
+            usedVectorSearch: true,
+        });
     });
 
     /**
@@ -250,6 +414,21 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const title = body.title?.trim() ?? null;
         const description = body.description ?? null;
+        let previousState: unknown = undefined;
+
+        try {
+            const existing = await app.pg.query<{ state: unknown }>(
+                `
+                SELECT state
+                FROM documents
+                WHERE id = $1
+                `,
+                [id],
+            );
+            previousState = existing.rows[0]?.state;
+        } catch (error) {
+            request.log.error({ error }, "Failed to read previous state for embeddings diff.");
+        }
 
         const { rows } = await app.pg.query(
             `
@@ -273,6 +452,28 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             `,
             [id, title, description, JSON.stringify(body.state), JSON.stringify(body.timeline)]
         );
+
+        try {
+            const delta = computeNodeEmbeddingDelta(previousState, body.state, id);
+
+            if (delta.deletedNodeIds.length > 0) {
+                await app.pg.query(
+                    `
+                    DELETE FROM document_node_embeddings
+                    WHERE doc_id = $1
+                      AND node_id = ANY($2::text[])
+                    `,
+                    [id, delta.deletedNodeIds],
+                );
+                nodeEmbeddingQueue.discard(id, delta.deletedNodeIds);
+            }
+
+            if (delta.upserts.length > 0) {
+                nodeEmbeddingQueue.enqueue(delta.upserts);
+            }
+        } catch (error) {
+            request.log.error({ error }, "Failed to process node embedding updates.");
+        }
 
         return reply.status(200).send(rows[0]);
     });
@@ -622,7 +823,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         try {
             const res = await client.query<{
                 id: string;
-                docId: string;
+                document_id: string;
                 name: string;
                 mime_type: string | null;
                 size_bytes: number | null;
@@ -650,7 +851,19 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 [id]
             );
 
-            const files = res.rows.map((r) => {
+            const rows = res.rows as Array<{
+                id: string;
+                document_id: string;
+                name: string;
+                mime_type: string | null;
+                size_bytes: number | null;
+                sha256: string | null;
+                created_at: string;
+                storage_bucket: string | null;
+                storage_key: string | null;
+            }>;
+
+            const files = rows.map((r) => {
                 const ext = r.name.includes(".")
                     ? r.name.split(".").pop()?.toLowerCase()
                     : undefined;

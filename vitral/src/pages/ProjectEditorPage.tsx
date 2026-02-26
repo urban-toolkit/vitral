@@ -8,7 +8,7 @@ import type { cardLabel, cardType, edgeType, llmCardData, llmConnectionData, nod
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
 import { requestCardsLLMTextInput, llmCardsToNodes, llmConnectionsToEdges } from "@/func/LLMRequest";
-import { updateDocumentMeta } from "@/api/stateApi";
+import { queryDocumentNodes, updateDocumentMeta } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { getGitHubEvents } from "@/api/eventsApi";
 
@@ -60,9 +60,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [viewMode, setViewMode] = useState<CanvasViewMode>("explore");
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [selectedLabels, setSelectedLabels] = useState<cardLabel[]>([...CARD_LABELS]);
+    const [queryInput, setQueryInput] = useState("");
+    const [activeQuery, setActiveQuery] = useState("");
+    const [queryMatchedNodeIds, setQueryMatchedNodeIds] = useState<string[] | null>(null);
+    const [queryLoading, setQueryLoading] = useState(false);
+    const [queryError, setQueryError] = useState<string | null>(null);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
     const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
+    const queryRequestIdRef = useRef(0);
 
     const nodes = useSelector((state: RootState) => state.flow.nodes);
     const edges = useSelector((state: RootState) => state.flow.edges);
@@ -189,14 +195,23 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }), []);
 
     const selectedLabelSet = useMemo(() => new Set(selectedLabels), [selectedLabels]);
+    const queryMatchedNodeSet = useMemo(
+        () => (queryMatchedNodeIds ? new Set(queryMatchedNodeIds) : null),
+        [queryMatchedNodeIds],
+    );
 
-    const filteredNodes = useMemo(() => {
+    const labelFilteredNodes = useMemo(() => {
         return nodes.filter((node) => {
             const rawLabel = String(node.data?.label ?? "").toLowerCase();
             if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
             return selectedLabelSet.has(rawLabel as cardLabel);
         });
     }, [nodes, selectedLabelSet]);
+
+    const filteredNodes = useMemo(() => {
+        if (!queryMatchedNodeSet) return labelFilteredNodes;
+        return labelFilteredNodes.filter((node) => queryMatchedNodeSet.has(node.id));
+    }, [labelFilteredNodes, queryMatchedNodeSet]);
 
     const filteredEdges = useMemo(() => {
         const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
@@ -319,7 +334,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }, 0);
 
         return () => window.clearTimeout(t);
-    }, [viewMode, selectedLabels, fitView]);
+    }, [viewMode, selectedLabels, queryMatchedNodeIds, fitView]);
 
     useEffect(() => {
         if (viewMode !== "evolution") return;
@@ -352,13 +367,76 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         setSidebarCollapsed((prev) => !prev);
     }, []);
 
-    const handleToggleLabel = useCallback((label: cardLabel) => {
-        setSelectedLabels((prev) => (
-            prev.includes(label)
-                ? prev.filter((current) => current !== label)
-                : [...prev, label]
-        ));
+    const computeLabelScopedNodeIds = useCallback((labels: cardLabel[]) => {
+        const labelSet = new Set(labels);
+        return nodes
+            .filter((node) => {
+                const rawLabel = String(node.data?.label ?? "").toLowerCase();
+                if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
+                return labelSet.has(rawLabel as cardLabel);
+            })
+            .map((node) => node.id);
+    }, [nodes]);
+
+    const runNaturalLanguageQuery = useCallback(async (queryText: string, scopeNodeIds: string[]) => {
+        const trimmed = queryText.trim();
+        if (!trimmed) {
+            setActiveQuery("");
+            setQueryMatchedNodeIds(null);
+            setQueryError(null);
+            return;
+        }
+
+        const requestId = ++queryRequestIdRef.current;
+        setQueryLoading(true);
+        setQueryError(null);
+
+        try {
+            const response = await queryDocumentNodes(projectId, {
+                query: trimmed,
+                scopeNodeIds,
+                limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
+            });
+            if (requestId !== queryRequestIdRef.current) return;
+            setActiveQuery(trimmed);
+            setQueryMatchedNodeIds(response.matchedNodeIds);
+        } catch (error) {
+            if (requestId !== queryRequestIdRef.current) return;
+            const message = error instanceof Error ? error.message : "Failed to run natural language query.";
+            setQueryError(message);
+        } finally {
+            if (requestId === queryRequestIdRef.current) {
+                setQueryLoading(false);
+            }
+        }
+    }, [projectId]);
+
+    const handleQuerySubmit = useCallback(() => {
+        const scopeNodeIds = labelFilteredNodes.map((node) => node.id);
+        void runNaturalLanguageQuery(queryInput, scopeNodeIds);
+    }, [labelFilteredNodes, queryInput, runNaturalLanguageQuery]);
+
+    const handleQueryClear = useCallback(() => {
+        setQueryInput("");
+        setActiveQuery("");
+        setQueryMatchedNodeIds(null);
+        setQueryError(null);
     }, []);
+
+    const handleToggleLabelWithQueryRefresh = useCallback((label: cardLabel) => {
+        setSelectedLabels((prev) => {
+            const next = prev.includes(label)
+                ? prev.filter((current) => current !== label)
+                : [...prev, label];
+
+            if (activeQuery.trim().length > 0) {
+                const scopeNodeIds = computeLabelScopedNodeIds(next);
+                void runNaturalLanguageQuery(activeQuery, scopeNodeIds);
+            }
+
+            return next;
+        });
+    }, [activeQuery, computeLabelScopedNodeIds, runNaturalLanguageQuery]);
 
     const handleToggleTimeline = useCallback(() => {
         setTimelineOpen((prev) => !prev);
@@ -438,7 +516,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 viewMode={viewMode}
                 onViewModeChange={setViewMode}
                 selectedLabels={selectedLabels}
-                onToggleLabel={handleToggleLabel}
+                onToggleLabel={handleToggleLabelWithQueryRefresh}
+                queryValue={queryInput}
+                onQueryValueChange={setQueryInput}
+                onQuerySubmit={handleQuerySubmit}
+                onQueryClear={handleQueryClear}
+                queryLoading={queryLoading}
+                queryError={queryError}
+                queryResultCount={activeQuery ? filteredNodes.length : null}
             />
 
             <div style={{ position: "fixed", right: "30px", top: "30px" }}>

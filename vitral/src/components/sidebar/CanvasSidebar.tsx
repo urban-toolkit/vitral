@@ -13,6 +13,13 @@ type CanvasSidebarProps = {
     onViewModeChange: (mode: CanvasViewMode) => void;
     selectedLabels: cardLabel[];
     onToggleLabel: (label: cardLabel) => void;
+    queryValue: string;
+    onQueryValueChange: (value: string) => void;
+    onQuerySubmit: () => void;
+    onQueryClear: () => void;
+    queryLoading: boolean;
+    queryError: string | null;
+    queryResultCount: number | null;
 };
 
 export const CanvasSidebar = memo(function CanvasSidebar({
@@ -22,6 +29,13 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     onViewModeChange,
     selectedLabels,
     onToggleLabel,
+    queryValue,
+    onQueryValueChange,
+    onQuerySubmit,
+    onQueryClear,
+    queryLoading,
+    queryError,
+    queryResultCount,
 }: CanvasSidebarProps) {
     return (
         <aside className={styles.root}>
@@ -78,6 +92,46 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                 );
                             })}
                         </div>
+
+                        <p className={styles.sectionLabel}>Query</p>
+                        <form
+                            className={styles.queryForm}
+                            onSubmit={(event) => {
+                                event.preventDefault();
+                                onQuerySubmit();
+                            }}
+                        >
+                            <input
+                                type="text"
+                                className={styles.queryInput}
+                                placeholder="Find cards with natural language..."
+                                value={queryValue}
+                                onChange={(event) => onQueryValueChange(event.target.value)}
+                            />
+                            <div className={styles.queryActions}>
+                                <button
+                                    type="submit"
+                                    className={styles.queryButton}
+                                    disabled={queryLoading || queryValue.trim().length === 0}
+                                >
+                                    {queryLoading ? "Searching..." : "Search"}
+                                </button>
+                                <button
+                                    type="button"
+                                    className={styles.queryClear}
+                                    onClick={onQueryClear}
+                                    disabled={queryLoading}
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        </form>
+                        {queryError ? (
+                            <p className={styles.queryError}>{queryError}</p>
+                        ) : null}
+                        {queryResultCount !== null ? (
+                            <p className={styles.queryMeta}>Showing {queryResultCount} matching cards.</p>
+                        ) : null}
                     </>
                 )}
             </div>

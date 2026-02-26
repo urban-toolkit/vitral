@@ -30,6 +30,32 @@ export type LiteratureSetupTemplate = {
     };
 };
 
+export type NodeStructuredFilters = {
+    labels?: string[];
+    createdAtFrom?: string;
+    createdAtTo?: string;
+    titleContains?: string[];
+    descriptionContains?: string[];
+};
+
+export type ParsedNodeQuery = {
+    semanticQuery: string;
+    structuredFilters?: NodeStructuredFilters;
+};
+
+export type QueryDocumentNodesRequest = {
+    query: string;
+    limit?: number;
+    minScore?: number;
+    scopeNodeIds?: string[];
+};
+
+export type QueryDocumentNodesResponse = {
+    parsed: ParsedNodeQuery;
+    matchedNodeIds: string[];
+    usedVectorSearch: boolean;
+};
+
 const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
 
 export async function createDocument(
@@ -79,6 +105,24 @@ export async function loadLiteratureSetupTemplates(): Promise<LiteratureSetupTem
 
     const payload = await res.json() as { templates?: LiteratureSetupTemplate[] };
     return Array.isArray(payload.templates) ? payload.templates : [];
+}
+
+export async function queryDocumentNodes(
+    docId: string,
+    payload: QueryDocumentNodesRequest,
+): Promise<QueryDocumentNodesResponse> {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/query-nodes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Query failed: ${res.status}`);
+    }
+
+    return res.json();
 }
 
 export async function saveDocument(
