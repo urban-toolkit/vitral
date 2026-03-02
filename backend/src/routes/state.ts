@@ -774,7 +774,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const client = await request.server.pg.connect();
         try {
-            const result = await client.query<{ id: string }>(
+            const result = await client.query<{ id: string;created_at: string; }>(
                 `
                 INSERT INTO document_files (
                     id, document_id, name, mime_type, ext, size_bytes, sha256,
@@ -811,6 +811,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             client.release();
         }
     });
+
+    type FileInfo = {
+      id: string;
+      docId: string;
+      name: string;
+      mime_type: string | null;
+      size_bytes: number | null;
+      sha256: string | null;
+      created_at: string;
+      storage_bucket: string | null;
+      storage_key: string | null;
+    };
 
     /**
      * Get files from a document
@@ -870,7 +882,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
                 return {
                     id: r.id,
-                    docId: r.document_id,
+                    docId: r.docId,
                     name: r.name,
                     mimeType: r.mime_type ?? undefined,
                     ext,
@@ -904,6 +916,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             const res = await client.query<{
                 id: string;
                 docId: string;
+                ext: string | null;
                 name: string;
                 mime_type: string | null;
                 size_bytes: number | null;
@@ -966,7 +979,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
             return reply.send({
                 fileId: row.id,
-                docId: row.document_id,
+                docId: row.docId,
                 name: row.name,
                 mimeType,
                 ext,

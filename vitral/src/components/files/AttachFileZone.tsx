@@ -3,10 +3,10 @@ import { useCallback, useState } from "react";
 import classes from './AttachFileZone.module.css'
 
 type AttachFileZoneProps = {
-    onFileSelected: (file: File) => void;
-    dropZoneCSS: React.CSSProperties;
-    loading: boolean;
-    accept?: string;
+  onFileSelected: (file: File) => void;
+  dropZoneCSS: React.CSSProperties;
+  loading: boolean;
+  accept?: string;
 };
 
 export function AttachFileZone({ onFileSelected, loading, accept, dropZoneCSS }: AttachFileZoneProps) {
@@ -111,8 +111,20 @@ export function AttachFileZone({ onFileSelected, loading, accept, dropZoneCSS }:
                 : 
                 null}
 
+      </label>
 
+      {loading ?
+        <div className={classes.spinnerContainer}>
+          <div
+            className={classes.spinner}
+            aria-label="Loading"
+          />
         </div>
+        :
+        null}
 
-    );
+
+    </div>
+
+  );
 }

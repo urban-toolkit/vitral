@@ -13,7 +13,7 @@ services:
         - action: sync
           path: ./vitral/src
           target: /app/src
-          initial_sync: true
+          #initial_sync: true
           ignore:
             - node_modules/
         - action: rebuild
@@ -51,7 +51,7 @@ services:
         - action: sync
           path: ./backend/src
           target: /app/src
-          initial_sync: true
+          #initial_sync: true
           ignore:
             - node_modules/
         - action: rebuild

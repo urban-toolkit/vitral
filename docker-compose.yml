@@ -1,0 +1,159 @@
+services:
+  vitral:
+    build:
+      context: ./vitral
+      dockerfile: ./Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT}
+      VITE_BACKEND_URL: http://backend:${PORT}
+    ports:
+      #- 127.0.0.1:9898:5173
+      - 127.0.0.1:9898:80
+    depends_on:
+      - backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ./Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL}
+      COOKIE_SECRET: ${COOKIE_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      DOCLING_URL: ${DOCLING_URL}
+      S3_REGION: ${S3_REGION}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+    expose:
+      - "${PORT}"
+    depends_on:
+      - postgres
+      - minio
+      - minio-init
+  postgres:
+    image: postgres:18.1-alpine
+    environment:
+      POSTGRES_USER: vitral
+      POSTGRES_PASSWORD: vitral
+      POSTGRES_DB: vitral
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: ./Dockerfile
+    environment:
+      DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
+    depends_on:
+      - postgres
+    command: npm run migrate
+    restart: "no"
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: vitralminio
+      MINIO_ROOT_PASSWORD: vitralminio
+    expose:
+      - "9000" # S3 API
+      - "9001" # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 vitralminio vitralminio &&
+      mc mb -p local/vitral-files || true &&
+      mc anonymous set none local/vitral-files || true
+      "
+    restart: "no"
+  volume-init:
+    image: busybox
+    user: root
+    command: >
+      sh -c "
+        mkdir -p /models/huggingface/hub /models/docling-artifacts &&
+        chmod -R 777 /models &&
+        echo '==> Volume permissions set.'
+      "
+    volumes:
+      - docling_models:/models
+    restart: "no"
+    healthcheck:
+      disable: true
+  model-downloader:
+    image: quay.io/docling-project/docling-serve:latest
+    entrypoint: []
+    command: >
+      sh -c "
+        echo '==> Starting Docling model download...' &&
+        docling-tools models download --output-dir /models layout tableformer code_formula picture_classifier smolvlm granite_vision easyocr rapidocr &&
+        docling-tools models download-hf-repo --output-dir /models HuggingFaceTB/SmolVLM-256M-Instruct &&
+        docling-tools models download-hf-repo --output-dir /models ibm-granite/granite-docling-258M &&
+        echo '==> All models downloaded successfully.'
+      "
+    volumes:
+      - docling_models:/models
+    environment:
+      HF_HOME: /models/huggingface
+      HUGGINGFACE_HUB_CACHE: /models/huggingface/hub
+      HF_HUB_CACHE: /models/huggingface/hub
+      HF_HUB_DISABLE_PROGRESS_BARS: 1
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    restart: "no"
+    healthcheck:
+      disable: true
+  docling-serve:
+    image: quay.io/docling-project/docling-serve:latest
+    expose:
+      - "5001"
+    volumes:
+      - docling_models:/models
+    environment:
+      DOCLING_SERVE_ARTIFACTS_PATH: /models
+      HF_HOME: /models/huggingface
+      HUGGINGFACE_HUB_CACHE: /models/huggingface/hub
+      HF_HUB_CACHE: /models/huggingface/hub
+      DOCLING_SERVE_ENABLE_UI: true
+      DOCLING_SERVE_NUM_WORKERS: 4
+      OMP_NUM_THREADS: 4
+    depends_on:
+      model-downloader:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  minio_data:
+  docling_data:
+  docling_models:
+    driver: local

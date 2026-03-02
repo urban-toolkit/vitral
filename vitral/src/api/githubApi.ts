@@ -1,4 +1,6 @@
-const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
+// const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
+// temp cahnged: VITE_BACKEND_URL wasnt passed
+const API_BASE = "";
 
 export type GitHubDocumentResponse = {
     github_owner?: string,
@@ -28,6 +30,7 @@ export async function githubStatus() {
     const res = await fetch(`${API_BASE}/api/auth/github/status`, {
         credentials: "include",
     });
+    console.log('GitHub req to:', `${API_BASE}/api/auth/github/status`);
     if (!res.ok) throw new Error("Failed to check GitHub status");
     return res.json() as Promise<
         | { connected: false }

@@ -246,19 +246,141 @@ function CardImpl(props: CardProps) {
 
             </div>
 
-            {
-                props.id != undefined
-                    ?
-                    <>
-                        <Handle type="source" position={Position.Left} />
-                        <Handle type="target" position={Position.Right} />
-                    </>
-                    :
-                    null
-            }
+            <FileCarousel
+              files={files}
+            >
+              <AttachFileZone
+                onFileSelected={handleFileSelected}
+                dropZoneCSS={dropZoneCSS}
+                loading={false}
+                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md, .docx, .pdf'
+              />
+            </FileCarousel>
+          </div>
+          <div className={classes.title}>
+            {isEditingTitle ? (
+              <textarea
+                className={classes.fieldTextEditor}
+                value={draftTitle}
+                autoFocus
+                rows={1}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                onBlur={() => {
+                  const { onAttachFile, onDataPropertyChange, ...cleanProps } = props;
+
+                  props.onDataPropertyChange(cleanProps, draftTitle.trim(), "title");
+                  setIsEditingTitle(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+
+                    const { onAttachFile, onDataPropertyChange, ...cleanProps } = props;
+
+                    props.onDataPropertyChange(cleanProps, draftTitle.trim(), "title");
+                    setIsEditingTitle(false);
+                  }
+                  if (e.key === "Escape") {
+                    setDraftTitle(props.data.title);
+                    setIsEditingTitle(false);
+                  }
+                }}
+              />
+            ) : (
+              <p
+                className={classes.title}
+                onClick={() => {
+                  setDraftTitle(props.data.title);
+                  setIsEditingTitle(true);
+                }}
+              >
+                {props.data.title || "Untitled"}
+              </p>
+            )}
+          </div>
 
         </div>
-    );
+
+        <div className={`${classes.flipCardBack} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>
+          <div className={classes.header}>
+            <p>{`${props.data.label[0].toUpperCase()}${props.data.label.slice(1)}`}</p>
+            <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => { setFlipped(false) }} />
+          </div>
+          <div className={classes.backBody}>
+            <div className={classes.labelIcon} style={{ backgroundColor: headerColor[props.data.label as string], top: "-4px", left: "-5px" }}>
+              <LabelIcon
+                label={props.data.label}
+              />
+            </div>
+
+            {/* <p className={classes.backText}>{props.data.description}</p> */}
+            {isEditingDescription ? (
+              <textarea
+                className={classes.fieldTextEditor}
+                style={{ fontSize: "var(--font-size-xs)", color: "white" }}
+                value={draftDescription}
+                autoFocus
+                rows={1}
+                onChange={(e) => {
+                  setDraftDescription(e.target.value);
+                }}
+                onBlur={() => {
+                  const { onAttachFile, onDataPropertyChange, ...cleanProps } = props;
+
+                  props.onDataPropertyChange(cleanProps, draftDescription.trim(), "description");
+                  setIsEditingDescription(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+
+                    const { onAttachFile, onDataPropertyChange, ...cleanProps } = props;
+
+                    props.onDataPropertyChange(cleanProps, draftDescription.trim(), "description");
+                    setIsEditingDescription(false);
+                  }
+                  if (e.key === "Escape") {
+                    if (props.data.description == '' || !props.data.description)
+                      setDraftDescription("Empty description.");
+                    else
+                      setDraftDescription(props.data.description);
+                    setIsEditingDescription(false);
+                  }
+                }}
+              />
+            ) : (
+              <p
+                className={classes.backText}
+                onClick={() => {
+                  if (props.data.description == '' || !props.data.description)
+                    setDraftDescription("Empty description.");
+                  else
+                    setDraftDescription(props.data.description);
+                  setIsEditingDescription(true);
+                }}
+              >
+                {props.data.description || "Empty description."}
+              </p>
+            )}
+
+          </div>
+        </div>
+
+      </div>
+
+      {
+        props.id != undefined
+          ?
+          <>
+            <Handle type="source" position={Position.Left} />
+            <Handle type="target" position={Position.Right} />
+          </>
+          :
+          null
+      }
+
+    </div>
+  );
 }
 
 function areEqualCardProps(prev: CardProps, next: CardProps) {

@@ -76,10 +76,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const allFiles = useSelector(selectAllFiles);
     const gitEvents = useSelector(selectAllGitHubEvents);
 
-    const timelineStages = useSelector(selectAllStages);
-    const defaultStages = useSelector(selectDefaultStages);
-    const timelineStartEnd = useSelector(selectTimelineStartEnd);
-    const designStudyEvents = useSelector(selectAllDesignStudyEvents);
+  const timelineStages = useSelector(selectAllStages);
+  const defaultStages = useSelector(selectDefaultStages);
+  const timelineStartEnd = useSelector(selectTimelineStartEnd);
+  const designStudyEvents = useSelector(selectAllDesignStudyEvents);
 
     const {
         onAttachFile,
