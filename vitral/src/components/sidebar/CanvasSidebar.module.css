@@ -1,0 +1,182 @@
+.root {
+    position: fixed;
+    left: 16px;
+    top: 16px;
+    z-index: 12;
+    display: flex;
+    align-items: stretch;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
+    backdrop-filter: blur(4px);
+}
+
+.panel {
+    width: 280px;
+    padding: 14px 12px;
+}
+
+.collapsedPanel {
+    width: 0;
+    overflow: hidden;
+    padding: 0;
+}
+
+.title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.subtitle {
+    margin: 4px 0 12px;
+    font-size: 12px;
+    color: #646464;
+}
+
+.sectionLabel {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #676767;
+}
+
+.group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.option {
+    border: 1px solid #d9d9d9;
+    border-radius: 8px;
+    background: #fff;
+    text-align: left;
+    padding: 10px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.optionActive {
+    border-color: #111;
+    background: #111;
+    color: #fff;
+}
+
+.helper {
+    margin-top: 10px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: #6f6f6f;
+}
+
+.toggle {
+    border: none;
+    width: 36px;
+    min-width: 36px;
+    border-left: 1px solid rgba(0, 0, 0, 0.08);
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    color: #343434;
+}
+
+.labelGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.labelOption {
+    border: 1px solid #d9d9d9;
+    border-radius: 10px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    text-transform: capitalize;
+    cursor: pointer;
+}
+
+.labelOptionActive {
+    border-color: #111;
+    background: #f6f6f6;
+}
+
+.labelCircle {
+    width: 26px;
+    height: 26px;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: #2f2f2f;
+}
+
+.labelText {
+    font-size: 12px;
+    color: #313131;
+    line-height: 1;
+}
+
+.queryForm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.queryInput {
+    width: 100%;
+    border: 1px solid #d6d6d6;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 12px;
+}
+
+.queryActions {
+    display: flex;
+    gap: 8px;
+}
+
+.queryButton {
+    flex: 1;
+    border: 1px solid #111;
+    border-radius: 8px;
+    background: #111;
+    color: #fff;
+    font-size: 12px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.queryButton:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.queryClear {
+    border: 1px solid #d6d6d6;
+    border-radius: 8px;
+    background: #fff;
+    color: #333;
+    font-size: 12px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.queryError {
+    margin: 8px 0 0;
+    color: #a42e2e;
+    font-size: 11px;
+}
+
+.queryMeta {
+    margin: 8px 0 0;
+    color: #565656;
+    font-size: 11px;
+}

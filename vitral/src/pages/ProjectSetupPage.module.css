@@ -1,0 +1,203 @@
+.page {
+    width: 100vw;
+    min-height: 100vh;
+    background: #f2f2f2;
+    padding: 28px 36px;
+    box-sizing: border-box;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+
+.header h1 {
+    margin: 0;
+    font-size: var(--font-size-2xl);
+}
+
+.headerActions {
+    display: flex;
+    gap: 10px;
+}
+
+.tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.tab,
+.tabActive {
+    border: 1px solid #c7c7c7;
+    background: white;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+}
+
+.tabActive {
+    background: #e9f2ff;
+    border-color: #8fb4e8;
+}
+
+.error {
+    color: #c61f1f;
+    margin: 0 0 12px;
+}
+
+.jsonPanel {
+    background: white;
+    border: 1px solid #d5d5d5;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.jsonPanel p {
+    margin: 0 0 10px;
+}
+
+.jsonArea {
+    width: 100%;
+    min-height: 540px;
+    box-sizing: border-box;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 13px;
+    border: 1px solid #c9c9c9;
+    border-radius: 10px;
+    padding: 12px;
+    resize: vertical;
+    margin-bottom: 10px;
+}
+
+.form {
+    display: grid;
+    gap: 16px;
+}
+
+.section {
+    background: white;
+    border: 1px solid #d5d5d5;
+    border-radius: 12px;
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+}
+
+.section h2,
+.section h3 {
+    margin: 0;
+}
+
+.section label {
+    display: grid;
+    gap: 6px;
+    font-size: var(--font-size-sm);
+}
+
+.section input,
+.section select,
+.section textarea,
+.section button {
+    font-size: var(--font-size-sm);
+}
+
+.section input,
+.section select,
+.section textarea {
+    border: 1px solid #c9c9c9;
+    border-radius: 8px;
+    padding: 8px 10px;
+    box-sizing: border-box;
+}
+
+.templateGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.templateColumn {
+    border: 1px dashed #c1c1c1;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+.templateColumn h3 {
+    margin: 0 0 8px;
+}
+
+.templateHint {
+    margin: 0;
+    color: #666;
+    font-size: var(--font-size-sm);
+}
+
+.pillWrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pill,
+.pillActive {
+    border: 1px solid #c4c4c4;
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: #f7f7f7;
+    cursor: pointer;
+}
+
+.pillActive {
+    background: #daf1df;
+    border-color: #7eb28a;
+}
+
+.roleRow {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+}
+
+.participantRow {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(160px, 220px) auto;
+    gap: 8px;
+}
+
+.timelineRange {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.timelineRow {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) 160px 160px auto;
+    gap: 8px;
+    align-items: center;
+}
+
+@media (max-width: 900px) {
+    .page {
+        padding: 18px;
+    }
+
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .templateGrid,
+    .timelineRange {
+        grid-template-columns: 1fr;
+    }
+
+    .participantRow,
+    .timelineRow {
+        grid-template-columns: 1fr;
+    }
+}

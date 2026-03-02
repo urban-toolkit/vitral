@@ -6,6 +6,9 @@
 
 .titleContainer {
     font-size: var(--font-size-xl);
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .titleContainer input {
@@ -14,6 +17,20 @@
 
 .titleContainer p {
     margin: 0;
+}
+
+.settingsButton {
+    border: 1px solid #c9c9c9;
+    background: white;
+    color: #444;
+    border-radius: 8px;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+}
+
+.settingsButton:hover {
+    background: #f4f4f4;
 }
 
 .subtitleContainer {

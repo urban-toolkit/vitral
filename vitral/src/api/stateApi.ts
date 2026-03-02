@@ -2,8 +2,8 @@ import type { filePendingUpload, fileRecord, TimelineStatePayload } from "@/conf
 
 export type FlowStatePayload = {
     flow: {
-        nodes: any[];
-        edges: any[];
+        nodes: unknown[];
+        edges: unknown[];
     };
 };
 
@@ -17,16 +17,56 @@ export type DocumentResponse = {
     timeline?: TimelineStatePayload;
 };
 
+export type LiteratureSetupTemplate = {
+    id: string;
+    name: string;
+    file: string;
+    definition: {
+        participants: Array<{ name: string; role: string }>;
+        timeline: {
+            milestones: Array<{ name: string; dayOffset: number }>;
+            stages: Array<{ name: string; startDayOffset: number; endDayOffset: number }>;
+        };
+    };
+};
+
+export type NodeStructuredFilters = {
+    labels?: string[];
+    createdAtFrom?: string;
+    createdAtTo?: string;
+    titleContains?: string[];
+    descriptionContains?: string[];
+};
+
+export type ParsedNodeQuery = {
+    semanticQuery: string;
+    structuredFilters?: NodeStructuredFilters;
+};
+
+export type QueryDocumentNodesRequest = {
+    query: string;
+    limit?: number;
+    minScore?: number;
+    scopeNodeIds?: string[];
+};
+
+export type QueryDocumentNodesResponse = {
+    parsed: ParsedNodeQuery;
+    matchedNodeIds: string[];
+    usedVectorSearch: boolean;
+};
+
 const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
 
 export async function createDocument(
     title: string,
-    state: FlowStatePayload
+    state: FlowStatePayload,
+    description?: string
 ): Promise<DocumentResponse> {
     const res = await fetch(`${API_BASE}/api/state`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, state }),
+        body: JSON.stringify({ title, state, description }),
     });
 
     if (!res.ok) {
@@ -51,6 +91,35 @@ export async function loadDocuments(): Promise<DocumentResponse[]> {
 
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function loadLiteratureSetupTemplates(): Promise<LiteratureSetupTemplate[]> {
+    const res = await fetch(`${API_BASE}/api/setup-templates/literature`);
+
+    if (!res.ok) {
+        throw new Error(`Load failed: ${res.status}`);
+    }
+
+    const payload = await res.json() as { templates?: LiteratureSetupTemplate[] };
+    return Array.isArray(payload.templates) ? payload.templates : [];
+}
+
+export async function queryDocumentNodes(
+    docId: string,
+    payload: QueryDocumentNodesRequest,
+): Promise<QueryDocumentNodesResponse> {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/query-nodes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Query failed: ${res.status}`);
     }
 
     return res.json();
@@ -85,7 +154,7 @@ export async function deleteDocument(docId: string) {
     }
 }
 
-export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string }) {
+export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string | null }) {
     const res = await fetch(`${API_BASE}/api/state/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

@@ -1,0 +1,35 @@
+You are a specialist in visualization design studies.
+
+Given a code file and its metadata created during a design study, your task is to generate some information about the file. 
+
+You will receive a JSON describing the code file as:
+
+{
+    name: string,
+    content: string
+}
+
+You should follow these steps:
+
+- Classify the code file according to its potential role in the design study:
+    - script: a standalone executable file performing a specific job.
+    - query: a database query (e.g., SQL) or data retrieval command.
+    - notebook: an interactive computational notebook (e.g., Jupyter) combining code, text, and outputs.
+
+- Use the role classification to choose an 'entity' type to represent the file:
+    - script: choose 'object'.
+    - query: choose 'object'.
+    - notebook: choose 'object'.
+
+Output the following JSON format:
+
+{
+    role: string,
+    entity: string,
+    title: string,
+    description: string
+}
+
+**ONLY OUTPUT THE JSON AND NOTHING ELSE. NO EXTRA TEXT**
+
+Input:

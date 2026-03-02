@@ -32,7 +32,7 @@ services:
       GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL}
       COOKIE_SECRET: ${COOKIE_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-      DOCLING_URL: ${DOCLING_URL}
+      DOCLING_URL: http://docling-serve:5001
       S3_REGION: ${S3_REGION}
       S3_ENDPOINT: ${S3_ENDPOINT}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
@@ -45,6 +45,7 @@ services:
       - postgres
       - minio
       - minio-init
+      - docling-serve
     develop:
       watch:
         - action: sync
@@ -56,7 +57,7 @@ services:
         - action: rebuild
           path: ./backend/package.json
   postgres:
-    image: postgres:18.1-alpine
+    image: pgvector/pgvector:pg18
     environment:
       POSTGRES_USER: vitral
       POSTGRES_PASSWORD: vitral
@@ -104,72 +105,17 @@ services:
       mc anonymous set none local/vitral-files || true
       "
     restart: "no"
-  volume-init:
-    image: busybox
-    user: root
-    command: >
-      sh -c "
-        mkdir -p /models/huggingface/hub /models/docling-artifacts &&
-        chmod -R 777 /models &&
-        echo '==> Volume permissions set.'
-      "
-    volumes:
-      - docling_models:/models
-    restart: "no"
-    healthcheck:
-      disable: true
-  model-downloader:
-    image: quay.io/docling-project/docling-serve:latest
-    entrypoint: []
-    command: >
-      sh -c "
-        echo '==> Starting Docling model download...' &&
-        docling-tools models download --output-dir /models layout tableformer code_formula picture_classifier smolvlm granite_vision easyocr rapidocr &&
-        docling-tools models download-hf-repo --output-dir /models HuggingFaceTB/SmolVLM-256M-Instruct &&
-        docling-tools models download-hf-repo --output-dir /models ibm-granite/granite-docling-258M &&
-        echo '==> All models downloaded successfully.'
-      "
-    volumes:
-      - docling_models:/models
-    environment:
-      HF_HOME: /models/huggingface
-      HUGGINGFACE_HUB_CACHE: /models/huggingface/hub
-      HF_HUB_CACHE: /models/huggingface/hub
-      HF_HUB_DISABLE_PROGRESS_BARS: 1
-    depends_on:
-      volume-init:
-        condition: service_completed_successfully
-    restart: "no"
-    healthcheck:
-      disable: true
   docling-serve:
     image: quay.io/docling-project/docling-serve:latest
     ports:
       - "5001:5001"
-    volumes:
-      - docling_models:/models
     environment:
-      DOCLING_SERVE_ARTIFACTS_PATH: /models
-      HF_HOME: /models/huggingface
-      HUGGINGFACE_HUB_CACHE: /models/huggingface/hub
-      HF_HUB_CACHE: /models/huggingface/hub
       DOCLING_SERVE_ENABLE_UI: true
       DOCLING_SERVE_NUM_WORKERS: 4
       OMP_NUM_THREADS: 4
-    depends_on:
-      model-downloader:
-        condition: service_completed_successfully
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
+    restart: "no"
 
 volumes:
   postgres_data:
   minio_data:
   docling_data:
-  docling_models:
-    driver: local

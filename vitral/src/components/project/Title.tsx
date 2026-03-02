@@ -1,16 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faGear } from '@fortawesome/free-solid-svg-icons';
 
 import classes from './Title.module.css'
 
 type TitleProps = {
     textTitle: string;
     onSetTitle: (newTitle: string) => void;
+    onOpenSettings?: () => void;
 };
 
-export function Title({ textTitle, onSetTitle }: TitleProps) {
+export function Title({ textTitle, onSetTitle, onOpenSettings }: TitleProps) {
 
     const [editing, setEditing] = useState(false);
     const [title, setTitle] = useState(textTitle);
+
+    useEffect(() => {
+        setTitle(textTitle);
+    }, [textTitle]);
 
     const newTitle = (newTitle: string) => {
         onSetTitle(newTitle);
@@ -26,6 +33,18 @@ export function Title({ textTitle, onSetTitle }: TitleProps) {
                     :
                         <p onClick={() => {setEditing(true)}}>{title}</p>
                 }
+
+                {onOpenSettings ? (
+                    <button
+                        type="button"
+                        className={classes.settingsButton}
+                        onClick={onOpenSettings}
+                        title="Project settings"
+                        aria-label="Project settings"
+                    >
+                        <FontAwesomeIcon icon={faGear} />
+                    </button>
+                ) : null}
             </div>
 
             <div className={classes.subtitleContainer}>

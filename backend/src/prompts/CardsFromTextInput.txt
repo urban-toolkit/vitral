@@ -4,31 +4,34 @@ Given text generated during a design study activity, your task is to generate ca
 
 'entities' can be:
     - 'person': a person involved in the design study
-    - 'requirement': a need, question, or task to be tackled
+    - 'requirement': a need, pain, question, or todo to be tackled
     - 'concept': a conceptual reference/definition (e.g., nomenclature, paper title, reference to literature, domain jargon)
     - 'insight': a finding derived after thinking, analysis or discussion 
-    - 'activity': activity in the design study (e.g, meeting, user study, brainstorming)
-    - 'artifact': a software, digital, or data object (e.g., dataset, jupyter notebook)
+    - 'object': a software, digital, or data object (e.g., dataset, jupyter notebook, function, documentation, class)
+    - 'task': operations perfomed by users that the design system needs to support.
 
-Based on the content generate **exactly one** activity card and one or more (for most cases one is sufficient) of other entities.
+Based on the content generate one or more cards. 
 
-You should also connect all non-activity cards (source) to the activity card (target). No connections should be created between any other cards. Assign each card an integer id starting from 1. When defining connections, only use these integers to define source and target.
+And the assets available in the system:
 
-Output a list of cards and connections in the following JSON format:
+{
+    assets: [
+        {
+            id: string,
+            name: string,
+            ext: string
+        }
+    ]
+}
+
+Output a list of cards in the following JSON format:
 
 {
     "cards": [
         {
-            id: number,
             entity: string,
             title: string,
             description: string 
-        }
-    ],
-    "connections": [
-        {
-            source: number,
-            target: number
         }
     ]
 }
@@ -40,21 +43,13 @@ Output a list of cards and connections in the following JSON format:
         {
             "cards": [
                 {
-                    "id": 1,
                     "entity": "insight",
                     "title": "Analyses are exploratory",
                     "description": "Domain experts emphasized that analyses are exploratory and rarely follow a fixed sequence of steps."
                 },
                 {
-                    "id": 2,
                     "entity": "activity",
                     "title": "Meeting with domain experts"
-                }
-            ],
-            "connections": [
-                {
-                    "source": 1,
-                    "target": 2
                 }
             ]
         }
@@ -64,21 +59,13 @@ Output a list of cards and connections in the following JSON format:
         {
             "cards": [
                 {
-                    "id": 1,
                     "entity": "insight",
                     "title": "Difficult to compare intermediate results",
                     "description": "Current tools support individual tasks well but make it difficult to compare intermediate results across sessions."
                 },
                 {
-                    "id": 2,
                     "entity": "activity",
                     "title": "Literature review"
-                }
-            ],
-            "connections": [
-                {
-                    "source": 1,
-                    "target": 2
                 }
             ]
         }
@@ -88,21 +75,13 @@ Output a list of cards and connections in the following JSON format:
         {
             "cards": [
                 {
-                    "id": 1,
                     "entity": "requirement",
                     "title": "Validate coordinate data",
                     "description": "Need to validate coordinate data for mapping purposes"
                 },
                 {
-                    "id": 2,
                     "entity": "activity",
                     "title": "Dataset analysis"
-                }
-            ],
-            "connections": [
-                {
-                    "source": 1,
-                    "targt": 2
                 }
             ]
         }
@@ -112,30 +91,17 @@ Output a list of cards and connections in the following JSON format:
         {
             "cards": [
                 {
-                    "id": 1,
                     "entity": "concept",
                     "title": "Sunlight access",
                     "description": "Gustavo: sunlight access is the related to the amount of shadow casted by buildings."
                 },
                 {
-                    "id": 2,
                     "entity": "activity",
                     "title": "Meeting"
                 },
                 {
-                    "id": 3,
                     "entity: "person",
                     "title": "Gustavo"
-                }
-            ],
-            "connections": [
-                {
-                    "source": 1,
-                    "target": 2
-                },
-                {
-                    "source": 3,
-                    "target": 2
                 }
             ]
         }
@@ -145,25 +111,17 @@ Output a list of cards and connections in the following JSON format:
         {
             "cards": [
                 {
-                    "id": 1,
-                    "entity": "artifact",
+                    "entity": "object",
                     "title": "Dataset from SF SOCRATA",
                     "description": "49768 curb ramps with 40 attributes."
                 },
                 {
-                    "id": 2,
                     "entity": "activity",
                     "title": "Dataset search"
-                }
-            ],
-            "connections": [
-                {
-                    "source": 1,
-                    "target": 2
                 }
             ]
         }
 
 **ONLY OUTPUT THE JSON WITH THE LIST OF CARDS NOTHING ELSE. NO EXTRA TEXT**
 
-Uploaded file:
+Input:

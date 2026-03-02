@@ -1,5 +1,5 @@
 export type cardType = 'technical' | 'social';
-export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight';
+export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight' | 'object' | 'task';
 
 export type fileExtension = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md' | 'pdf' | 'docx';
 
@@ -9,13 +9,16 @@ export type cardData = {
     title: string,
     attachmentIds?: string[];
     description?: string;
+    createdAt?: string; // ISO string
+    origin?: string; // file id
 }
 
 export type llmCardData = {
     id: number,
     entity: string,
     title: string,
-    description?: string
+    description?: string,
+    assets?: string[]
 }
 
 export type llmConnectionData = {
@@ -62,7 +65,11 @@ export type nodeType = {
 export type edgeType = {
     id: string,
     source: string,
-    target: string
+    target: string,
+    type?: string,
+    label?: string,
+    // optional metadata used by custom edges
+    data?: any
 }
 
 export type GitHubEventType =

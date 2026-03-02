@@ -1,516 +1,603 @@
-import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import { useParams } from "react-router-dom";
-import { ReactFlow, useReactFlow, ReactFlowProvider, Background, BackgroundVariant, type NodeChange, type EdgeChange } from '@xyflow/react';
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useSelector, useDispatch } from "react-redux";
+import { useNavigate, useParams } from "react-router-dom";
+import { ReactFlowProvider, useReactFlow, type Connection, type EdgeChange, type NodeChange, type NodeProps } from "@xyflow/react";
+
+import type { AppDispatch, RootState } from "@/store";
+import type { cardLabel, cardType, edgeType, llmCardData, llmConnectionData, nodeType, Stage } from "@/config/types";
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
+import { requestCardsLLMTextInput, llmCardsToNodes, llmConnectionsToEdges } from "@/func/LLMRequest";
+import { queryDocumentNodes, updateDocumentMeta } from "@/api/stateApi";
+import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
+import { getGitHubEvents } from "@/api/eventsApi";
 
-import { Title } from '@/components/project/Title';
-import { Toolbar } from '@/components/toolbar/Toolbar';
-import { parseFile } from '@/func/FileParser';
-import { requestCardsLLM, llmCardsToNodes, requestCardsLLMTextInput, llmConnectionsToEdges } from '@/func/LLMRequest';
-import { onEdgesChange, onNodesChange, addNodes, connectEdges, attachFileIdToNode, addNode, updateNode } from '@/store/flowSlice';
-import { selectAllFiles, upsertFile } from '@/store/filesSlice';
-import { Card } from '@/components/cards/Card';
+import { Title } from "@/components/project/Title";
+import { Toolbar } from "@/components/toolbar/Toolbar";
+import { FreeInputZone } from "@/components/toolbar/FreeInputZone";
+import { LoadSpinner } from "@/components/project/LoadSpinner";
+import { Card, type CardProps } from "@/components/cards/Card";
+import { CARD_LABELS } from "@/components/cards/cardVisuals";
+import { RelationEdge } from "@/components/edges/RelationEdge";
+import { GitHubFiles } from "@/components/github/GithubFiles";
+import AssetsPanel from "@/components/files/AssetsPanel";
+import { CanvasSidebar, type CanvasViewMode } from "@/components/sidebar/CanvasSidebar";
 
-import type { cardType, edgeType, filePendingUpload, nodeType } from '@/config/types';
-import type { RootState } from '@/store';
+import { addNode, addNodes, connectEdges, onEdgesChange, onNodesChange, updateNode } from "@/store/flowSlice";
+import { selectAllFiles } from "@/store/filesSlice";
+import { selectAllGitHubEvents, setGithubEvents } from "@/store/gitEventsSlice";
+import {
+    addDefaultStage,
+    addStage,
+    changeStageBoundary,
+    deleteStage,
+    selectAllDesignStudyEvents,
+    selectAllStages,
+    selectDefaultStages,
+    selectTimelineStartEnd,
+    updateStage,
+} from "@/store/timelineSlice";
 
-import { FreeInputZone } from '@/components/toolbar/FreeInputZone';
-import { createFile, updateDocumentMeta } from '@/api/stateApi';
-import { GitHubFiles } from '@/components/github/GithubFiles';
-import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from '@/api/githubApi';
-import { LoadSpinner } from '@/components/project/LoadSpinner';
-import { Timeline } from '@/components/timeline/Timeline';
+import { isAllowedConnection, relationLabelFor } from "@/utils/relationships";
+import { buildEvolutionLayoutNodes } from "@/utils/evolutionLayout";
+import { fromDate } from "@/pages/projectEditor/dateUtils";
+import type { CursorMode, GitConnectionStatus } from "@/pages/projectEditor/types";
+import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
+import { PendingFileModal } from "@/pages/projectEditor/PendingFileModal";
+import { TimelineDock } from "@/pages/projectEditor/TimelineDock";
+import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttachmentProcessing";
 
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faAnglesUp } from '@fortawesome/free-solid-svg-icons';
-import { getGitHubEvents } from '@/api/eventsApi';
-import { selectAllGitHubEvents, setGithubEvents } from '@/store/gitEventsSlice';
-import AssetsPanel from '@/components/files/AssetsPanel';
-import { addDefaultStage, addStage, changeStageBoundary, deleteStage, selectAllDesignStudyEvents, selectAllStages, selectDefaultStages, selectTimelineStartEnd, updateStage } from '@/store/timelineSlice';
+const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
+    const { status, error } = useDocumentSync(projectId);
 
-const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
+    const dispatch = useDispatch<AppDispatch>();
+    const navigate = useNavigate();
+    const { screenToFlowPosition, fitView } = useReactFlow();
 
-type FlowCanvasProps = {
-  projectId: string;
-  nodes: nodeType[];
-  edges: edgeType[];
-  nodeTypes: any;
+    const [loading, setLoading] = useState(false);
+    const [cursorMode, setCursorMode] = useState<CursorMode>("");
+    const [timelineOpen, setTimelineOpen] = useState(false);
+    const [viewMode, setViewMode] = useState<CanvasViewMode>("explore");
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [selectedLabels, setSelectedLabels] = useState<cardLabel[]>([...CARD_LABELS]);
+    const [queryInput, setQueryInput] = useState("");
+    const [activeQuery, setActiveQuery] = useState("");
+    const [queryMatchedNodeIds, setQueryMatchedNodeIds] = useState<string[] | null>(null);
+    const [queryLoading, setQueryLoading] = useState(false);
+    const [queryError, setQueryError] = useState<string | null>(null);
+    const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
+    const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
+    const nodeChangeRafRef = useRef<number | null>(null);
+    const queryRequestIdRef = useRef(0);
 
-  onDragEnter: (e: React.DragEvent) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDragLeave: (e: React.DragEvent) => void;
-  onDrop: (e: React.DragEvent) => void;
-
-  onNodesChange: (changes: NodeChange<nodeType>[]) => any;
-  onEdgesChange: (changes: EdgeChange<edgeType>[]) => any;
-
-  onClick: (e: React.MouseEvent) => void;
-};
-
-export const FlowCanvas = memo(function FlowCanvas({
-  projectId,
-  nodes,
-  edges,
-  nodeTypes,
-  onDragEnter,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-  onNodesChange,
-  onEdgesChange,
-  onClick
-}: FlowCanvasProps) {
-
-  return (
-    <ReactFlow
-      key={projectId}
-      nodes={nodes}
-      edges={edges}
-      onDragEnter={onDragEnter}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      nodeTypes={nodeTypes}
-      onClick={onClick}
-      fitView
-    >
-      <Background color="#848484" variant={BackgroundVariant.Dots} />
-    </ReactFlow>
-  );
-});
-
-const FlowInner = () => {
-  const { projectId } = useParams<{ projectId: string }>();
-
-  if (!projectId) {
-    return <div>Missing project id</div>;
-  }
-
-  const { status, error } = useDocumentSync(projectId);
-
-  const [loading, setLoading] = useState(false);
-  const cursorMode = useRef<'node' | 'text' | 'tree' | 'related' | ''>('');
+    const nodes = useSelector((state: RootState) => state.flow.nodes);
+    const edges = useSelector((state: RootState) => state.flow.edges);
+    const title = useSelector((state: RootState) => state.flow.title);
+    const allFiles = useSelector(selectAllFiles);
+    const gitEvents = useSelector(selectAllGitHubEvents);
 
   const timelineStages = useSelector(selectAllStages);
   const defaultStages = useSelector(selectDefaultStages);
   const timelineStartEnd = useSelector(selectTimelineStartEnd);
   const designStudyEvents = useSelector(selectAllDesignStudyEvents);
 
-  const [gitConnectionStatus, setGitConnectionStatus] = useState<{ connected: boolean, user?: { id: number, login: string } }>({ connected: false });
+    const {
+        onAttachFile,
+        onAttachFileToCanvas,
+        pendingDrop,
+        generatedAtInput,
+        setGeneratedAtInput,
+        processPendingDrop,
+        cancelPendingDrop,
+    } = useFileAttachmentProcessing({
+        projectId,
+        dispatch,
+        nodes,
+        allFiles,
+        setLoading,
+    });
 
-  const dispatch = useDispatch();
-  const nodes = useSelector((state: RootState) => state.flow.nodes);
-  const edges = useSelector((state: RootState) => state.flow.edges);
-  const title = useSelector((state: RootState) => state.flow.title);
+    const flushQueuedPositionChanges = useCallback(() => {
+        nodeChangeRafRef.current = null;
+        if (viewMode === "evolution") {
+            queuedPositionChangesRef.current = [];
+            return;
+        }
 
-  const gitEvents = useSelector(selectAllGitHubEvents);
+        if (queuedPositionChangesRef.current.length === 0) return;
+        const queuedChanges = queuedPositionChangesRef.current;
+        queuedPositionChangesRef.current = [];
+        dispatch(onNodesChange(queuedChanges));
+    }, [dispatch, viewMode]);
 
-  const allFiles = useSelector(selectAllFiles);
+    const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
+        if (viewMode === "evolution") return;
 
-  const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => dispatch(onNodesChange(changes)), [dispatch]);
-  const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => dispatch(onEdgesChange(changes)), [dispatch]);
+        const immediateChanges = changes.filter((change) => change.type !== "position");
+        const positionChanges = changes.filter((change) => change.type === "position");
 
-  const { screenToFlowPosition } = useReactFlow();
+        if (immediateChanges.length > 0) {
+            dispatch(onNodesChange(immediateChanges));
+        }
 
-  const onAttachFile = useCallback(async (nodeId: string, file: File) => {
+        if (positionChanges.length > 0) {
+            queuedPositionChangesRef.current.push(...positionChanges);
+            if (nodeChangeRafRef.current === null) {
+                nodeChangeRafRef.current = window.requestAnimationFrame(flushQueuedPositionChanges);
+            }
+        }
+    }, [dispatch, viewMode, flushQueuedPositionChanges]);
 
-    const res = await parseFile(file);
-    const { fileId, createdAt, sha256, bucket, key } = await createFile(projectId, res);
+    const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
+        dispatch(onEdgesChange(changes));
+    }, [dispatch]);
 
-    const { name, mimeType, sizeBytes, ext } = res;
-    dispatch(upsertFile({ id: fileId, docId: projectId, name, mimeType, sizeBytes, ext, createdAt, sha256, storage: { bucket, key } }));
-    dispatch(attachFileIdToNode({ nodeId, fileId }));
+    const handleConnect = useCallback((connection: Connection) => {
+        if (!connection.source || !connection.target) return;
 
-  }, [dispatch, projectId]);
+        const sourceNode = nodes.find((node) => node.id === connection.source);
+        const targetNode = nodes.find((node) => node.id === connection.target);
+        const sourceLabel = sourceNode?.data?.label;
+        const targetLabel = targetNode?.data?.label;
 
-  const onDataPropertyChange = useCallback(async (nodeProps: nodeType, value: any, propertyName: string) => {
+        if (!isAllowedConnection(sourceLabel, targetLabel)) return;
 
-    let data: Record<string, any> = { ...nodeProps.data };
+        const alreadyConnected = edges.some(
+            (edge) => edge.source === connection.source && edge.target === connection.target,
+        );
+        if (alreadyConnected) return;
 
-    let cardType: cardType = 'social';
+        const label = relationLabelFor(sourceLabel!, targetLabel!);
+        dispatch(connectEdges([{
+            id: crypto.randomUUID(),
+            source: connection.source,
+            target: connection.target,
+            type: "relation",
+            label,
+            data: { label, from: sourceLabel, to: targetLabel },
+        }]));
+    }, [dispatch, nodes, edges]);
 
-    switch (value) {
-      case 'requirement':
-        cardType = 'technical';
-        break;
-      case 'insight':
-        cardType = 'technical';
-        break;
-    }
+    const onDataPropertyChange = useCallback((nodeProps: nodeType, value: string, propertyName: string) => {
+        const data = { ...nodeProps.data } as Record<string, unknown> & nodeType["data"];
+        let resolvedType: cardType = "social";
 
-    if (propertyName == "label")
-      data.type = cardType;
+        if (value === "requirement" || value === "insight") {
+            resolvedType = "technical";
+        }
 
-    data[propertyName] = value;
+        if (propertyName === "label") {
+            data.type = resolvedType;
+        }
 
-    let newNode = {
-      ...nodeProps,
-      data
-    };
+        data[propertyName] = value;
 
-    dispatch(updateNode(newNode as nodeType));
-  }, [dispatch]);
+        dispatch(updateNode({
+            ...nodeProps,
+            data: data as nodeType["data"],
+        }));
+    }, [dispatch]);
 
-  const nodeTypes = useMemo(() => ({
-    card: (nodeProps: any) => <Card {...nodeProps} onAttachFile={onAttachFile} onDataPropertyChange={onDataPropertyChange} />
-  }), [onAttachFile]);
+    const nodeTypes = useMemo(() => ({
+        card: (nodeProps: NodeProps) => {
+            const cardProps = {
+                ...(nodeProps as unknown as CardProps),
+                onAttachFile,
+                onDataPropertyChange,
+            };
 
-  const fetchGithubEvents = async (connected: boolean) => {
-    if (connected) {
-      const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
-      if (info.github_repo && info.github_repo != "") {
-        const githubEvents = await getGitHubEvents(projectId);
+            return <Card {...cardProps} />;
+        },
+    }), [onAttachFile, onDataPropertyChange]);
 
-        dispatch(setGithubEvents(githubEvents));
-      }
-    }
-  }
+    const edgeTypes = useMemo(() => ({
+        relation: RelationEdge,
+    }), []);
 
-  const checkGitStatus = async () => {
-    const status = await githubStatus();
-    setGitConnectionStatus(status);
-    fetchGithubEvents(status.connected);
-  }
+    const selectedLabelSet = useMemo(() => new Set(selectedLabels), [selectedLabels]);
+    const queryMatchedNodeSet = useMemo(
+        () => (queryMatchedNodeIds ? new Set(queryMatchedNodeIds) : null),
+        [queryMatchedNodeIds],
+    );
 
-  // Timeline
-  const [timelineOpen, setTimelineOpen] = useState(false);
+    const labelFilteredNodes = useMemo(() => {
+        return nodes.filter((node) => {
+            const rawLabel = String(node.data?.label ?? "").toLowerCase();
+            if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
+            return selectedLabelSet.has(rawLabel as cardLabel);
+        });
+    }, [nodes, selectedLabelSet]);
 
-  // Drag + Drop functions
-  const [ghostScreen, setGhostScreen] = useState<{ x: number; y: number } | null>(null);
-  const [dragActive, setDragActive] = useState(false);
+    const filteredNodes = useMemo(() => {
+        if (!queryMatchedNodeSet) return labelFilteredNodes;
+        return labelFilteredNodes.filter((node) => queryMatchedNodeSet.has(node.id));
+    }, [labelFilteredNodes, queryMatchedNodeSet]);
 
-  const isFileDrag = (dt: DataTransfer | null) => {
-    if (!dt) return false;
-    return Array.from(dt.types || []).includes("Files");
-  };
+    const filteredEdges = useMemo(() => {
+        const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
+        return edges.filter((edge) => (
+            visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+        ));
+    }, [edges, filteredNodes]);
 
-  const processFile = async (file: File) => {
-    setLoading(true);
+    const displayedNodes = useMemo(() => {
+        if (viewMode === "evolution") {
+            return buildEvolutionLayoutNodes(filteredNodes, filteredEdges);
+        }
+        return filteredNodes;
+    }, [viewMode, filteredNodes, filteredEdges]);
 
-    const data: filePendingUpload = await parseFile(file);
+    const onCanvasClick = useCallback((e: React.MouseEvent) => {
+        if (viewMode === "evolution") return;
+        if (cursorMode !== "node") return;
 
-    // console.log("data", data);
+        const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        dispatch(addNode({
+            id: crypto.randomUUID(),
+            position,
+            type: "card",
+            data: {
+                label: "activity",
+                type: "social",
+                title: "Untitled",
+            },
+        }));
+    }, [dispatch, viewMode, cursorMode, screenToFlowPosition]);
 
-    // docLingFileParse(data, data.ext);
+    const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
+        if (!e.dataTransfer?.types?.includes("Files")) return;
 
-    const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLM(data);
+        e.preventDefault();
+        e.dataTransfer.dropEffect = viewMode === "evolution" ? "none" : "copy";
 
-    console.log(response);
+        if (viewMode === "evolution") return;
+    }, [viewMode]);
 
-    if (response && response.cards) {
-      console.log("response", response);
-      let { nodes, idMap } = llmCardsToNodes(response.cards);
-      let edges = llmConnectionsToEdges(response.connections, idMap);
+    const handleCanvasDrop = useCallback((e: React.DragEvent) => {
+        const droppedFiles = Array.from(e.dataTransfer?.files ?? []);
+        if (droppedFiles.length === 0) return;
 
-      console.log(nodes, edges, idMap);
+        e.preventDefault();
+        if (viewMode === "evolution") return;
 
-      dispatch(addNodes(nodes));
-      dispatch(connectEdges(edges));
-    }
+        const basePosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        void (async () => {
+            for (let index = 0; index < droppedFiles.length; index++) {
+                await onAttachFileToCanvas(droppedFiles[index], {
+                    x: basePosition.x + (index * 300),
+                    y: basePosition.y,
+                });
+            }
+        })();
+    }, [onAttachFileToCanvas, screenToFlowPosition, viewMode]);
 
-    setLoading(false);
-  }
+    const onFreeInputSubmit = useCallback(async (x: number, y: number, userText: string) => {
+        setCursorMode("");
+        setLoading(true);
 
-  const onDragEnter = useCallback((e: React.DragEvent) => {
-    if (!isFileDrag(e.dataTransfer)) return;
-    e.preventDefault();
-    setDragActive(true);
-  }, []);
+        try {
+            const response: { cards: llmCardData[]; connections: llmConnectionData[] } =
+                await requestCardsLLMTextInput(userText);
 
-  const onDragOver = useCallback(
-    (e: React.DragEvent) => {
-      if (!isFileDrag(e.dataTransfer)) return;
+            if (response?.cards) {
+                const { nodes: generatedNodes, idMap } = llmCardsToNodes(response.cards, screenToFlowPosition({ x, y }));
+                const generatedEdges = llmConnectionsToEdges(response.connections, idMap);
 
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
+                dispatch(addNodes(generatedNodes));
+                dispatch(connectEdges(generatedEdges));
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, [dispatch, screenToFlowPosition]);
 
-      if (!dragActive)
-        setDragActive(true);
+    const fetchGithubEvents = useCallback(async (connected: boolean) => {
+        if (!connected) return;
 
-      setGhostScreen({ x: e.clientX, y: e.clientY });
-    },
-    []);
+        const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
+        if (!info.github_repo) return;
 
-  const onDragLeave = useCallback(() => {
-    setDragActive(false);
-  }, []);
+        const events = await getGitHubEvents(projectId);
+        dispatch(setGithubEvents(events));
+    }, [dispatch, projectId]);
 
-  const onDrop = useCallback(
-    async (e: React.DragEvent) => {
-      if (!isFileDrag(e.dataTransfer)) return;
-      e.preventDefault();
+    const checkGitStatus = useCallback(async () => {
+        const status = await githubStatus();
+        setGitConnectionStatus(status);
+        await fetchGithubEvents(status.connected);
+    }, [fetchGithubEvents]);
 
-      setDragActive(false);
-      setGhostScreen(null);
+    useEffect(() => {
+        dispatch(setGithubEvents([]));
+        void checkGitStatus();
+    }, [dispatch, checkGitStatus]);
 
-      const files = Array.from(e.dataTransfer.files ?? []);
-      if (files.length === 0) return;
+    useEffect(() => {
+        switch (cursorMode) {
+            case "text":
+                document.body.style.cursor = "text";
+                break;
+            case "node":
+                document.body.style.cursor = "pointer";
+                break;
+            default:
+                document.body.style.cursor = "";
+                break;
+        }
+    }, [cursorMode]);
 
-      processFile(files[0]);
+    useEffect(() => {
+        if (viewMode !== "explore") return;
+
+        const t = window.setTimeout(() => {
+            fitView({ padding: 0.2, duration: 350 });
+        }, 0);
+
+        return () => window.clearTimeout(t);
+    }, [viewMode, selectedLabels, queryMatchedNodeIds, fitView]);
+
+    useEffect(() => {
+        if (viewMode !== "evolution") return;
+
+        const t = window.setTimeout(() => {
+            fitView({ padding: 0.2, duration: 350 });
+        }, 0);
+
+        return () => window.clearTimeout(t);
+    }, [viewMode, displayedNodes, fitView]);
+
+    useEffect(() => {
+        if (viewMode !== "evolution") return;
+        queuedPositionChangesRef.current = [];
+        if (nodeChangeRafRef.current !== null) {
+            window.cancelAnimationFrame(nodeChangeRafRef.current);
+            nodeChangeRafRef.current = null;
+        }
+    }, [viewMode]);
+
+    useEffect(() => {
+        return () => {
+            if (nodeChangeRafRef.current !== null) {
+                window.cancelAnimationFrame(nodeChangeRafRef.current);
+            }
+        };
     }, []);
 
-  const onClick = useCallback((e: React.MouseEvent) => {
-    if (cursorMode.current == 'node') {
-      const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    const handleToggleSidebar = useCallback(() => {
+        setSidebarCollapsed((prev) => !prev);
+    }, []);
 
-      dispatch(addNode({
-        id: crypto.randomUUID(),
-        position,
-        type: 'card',
-        data: {
-          label: 'activity',
-          type: 'social',
-          title: 'Untitled'
+    const computeLabelScopedNodeIds = useCallback((labels: cardLabel[]) => {
+        const labelSet = new Set(labels);
+        return nodes
+            .filter((node) => {
+                const rawLabel = String(node.data?.label ?? "").toLowerCase();
+                if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
+                return labelSet.has(rawLabel as cardLabel);
+            })
+            .map((node) => node.id);
+    }, [nodes]);
+
+    const runNaturalLanguageQuery = useCallback(async (queryText: string, scopeNodeIds: string[]) => {
+        const trimmed = queryText.trim();
+        if (!trimmed) {
+            setActiveQuery("");
+            setQueryMatchedNodeIds(null);
+            setQueryError(null);
+            return;
         }
-      }));
-    }
 
-  }, []);
+        const requestId = ++queryRequestIdRef.current;
+        setQueryLoading(true);
+        setQueryError(null);
 
-  useEffect(() => {
-    dispatch(setGithubEvents([]));
-    checkGitStatus();
-  }, [])
-
-  useEffect(() => {
-    switch (cursorMode.current) {
-      case 'text':
-        document.body.style.cursor = 'text';
-        break;
-      case 'node':
-        document.body.style.cursor = 'pointer';
-        break;
-      default:
-        document.body.style.cursor = '';
-        break;
-    }
-
-  }, [cursorMode]);
-
-  if (status === "loading") return <div>Loading…</div>;
-  if (status === "error") return <div>Error: {error}</div>;
-
-  return <>
-    <FlowCanvas
-      projectId={projectId}
-      nodes={nodes}
-      edges={edges}
-      onDragEnter={onDragEnter}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      onNodesChange={handleNodesChange}
-      onEdgesChange={handleEdgesChange}
-      nodeTypes={nodeTypes}
-      onClick={onClick}
-    />
-
-    {/* Call to action */}
-    <div style={{ position: 'fixed', right: '30px', top: '30px' }}>
-      <img src="/cta_drag_and_drop.png" alt="Drag and Drop file to instantiate cards." />
-    </div>
-
-    {/* Document title */}
-    <Title
-      textTitle={title}
-      onSetTitle={(newTitle: string) => {
-        updateDocumentMeta(projectId, { title: newTitle });
-      }}
-    />
-
-    <Toolbar
-      onFreeInputClicked={() => {
-        cursorMode.current = 'text';
-      }}
-
-      onNodeInputClicked={() => {
-        cursorMode.current = 'node';
-      }}
-
-      onPointerClicked={() => {
-        cursorMode.current = '';
-      }}
-
-      shifted={timelineOpen}
-    />
-
-    <GitHubFiles
-      projectId={projectId}
-      connectionStatus={gitConnectionStatus}
-    />
-
-    <div
-      style={{ position: "fixed", top: "650px", right: "50px" }}
-    >
-      <AssetsPanel
-        records={allFiles}
-      />
-    </div>
-
-    {cursorMode.current == 'text'
-      ?
-      <FreeInputZone
-        onInputSubmit={async (x: number, y: number, userText: string) => {
-          cursorMode.current = "";
-
-          setLoading(true);
-
-          const response: { cards: { id: number, entity: string, title: string, description?: string }[], connections: { source: number, target: number }[] } = await requestCardsLLMTextInput(userText);
-
-          console.log(response);
-
-          if (response && response.cards) {
-            console.log("response", response);
-            let { nodes, idMap } = llmCardsToNodes(response.cards, screenToFlowPosition({ x, y }));
-            let edges = llmConnectionsToEdges(response.connections, idMap);
-
-            console.log(nodes, edges, idMap);
-
-            dispatch(addNodes(nodes));
-            dispatch(connectEdges(edges));
-          }
-
-          setLoading(false);
-        }}
-      />
-      :
-      null
-    }
-
-    {/* Ghost overlay for file dragging */}
-    {dragActive && ghostScreen && (
-      <div
-        style={{
-          position: "fixed",
-          left: ghostScreen.x + 12,
-          top: ghostScreen.y + 12,
-          transform: "translate(0, 0)",
-          zIndex: 9999,
-          pointerEvents: "none",
-          opacity: "60%"
-        }}
-      >
-        <div>
-          <Card
-            data={{
-              title: "",
-              type: "social",
-              label: "activity"
-            }}
-          />
-        </div>
-      </div>
-    )}
-
-    {/* Load spinner */}
-    <LoadSpinner
-      loading={loading}
-    />
-
-    <div
-      style={{
-        ...(timelineOpen
-          ?
-          { bottom: "300px" }
-          :
-          { bottom: 0 })
-        ,
-        cursor: "pointer",
-        height: "25px",
-        padding: "5px",
-        position: "fixed",
-        backgroundColor: "white",
-        zIndex: 2,
-        border: "1px solid rgba(174, 172, 172, 0.39)",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center"
-      }}
-      onClick={() => { setTimelineOpen(!timelineOpen) }}
-    >
-      <p
-        style={{
-          margin: 0
-        }}
-      >Events</p>
-
-      <FontAwesomeIcon
-        icon={faAnglesUp}
-        style={timelineOpen ? { transform: "rotateX(180deg)" } : {}}
-      />
-    </div>
-
-    <div
-      style={
-        {
-          ...(timelineOpen
-            ?
-            { bottom: 0 }
-            :
-            { bottom: "-300px" }
-          ),
-          position: "fixed",
-          backgroundColor: "rgba(255, 255, 255, 0.7)",
-          height: "300px",
-          width: "100vw",
-          boxShadow: "0 4px 30px rgba(0, 0, 0, 0.1)",
-          border: "1px solid rgba(255, 255, 255, 0.39)",
-          backdropFilter: "blur(4px)"
+        try {
+            const response = await queryDocumentNodes(projectId, {
+                query: trimmed,
+                scopeNodeIds,
+                limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
+            });
+            if (requestId !== queryRequestIdRef.current) return;
+            setActiveQuery(trimmed);
+            setQueryMatchedNodeIds(response.matchedNodeIds);
+        } catch (error) {
+            if (requestId !== queryRequestIdRef.current) return;
+            const message = error instanceof Error ? error.message : "Failed to run natural language query.";
+            setQueryError(message);
+        } finally {
+            if (requestId === queryRequestIdRef.current) {
+                setQueryLoading(false);
+            }
         }
-      }
-    >
-      <Timeline
-        startMarker={timelineStartEnd.start}
-        endMarker={timelineStartEnd.end}
-        codebaseEvents={gitEvents}
-        knowledgeBaseEvents={[
-          { id: crypto.randomUUID(), occurredAt: new Date("July 04, 2023 12:24:00"), kind: "knowledge", subtype: "activity_created" },
-          { id: crypto.randomUUID(), occurredAt: new Date("July 13, 2023 12:24:00"), kind: "knowledge", subtype: "requirement_created" },
-        ]}
-        designStudyEvents={designStudyEvents}
-        stages={timelineStages}
-        defaultStages={defaultStages}
-        onStageUpdate={(stage) => {
-          dispatch(updateStage({
+    }, [projectId]);
+
+    const handleQuerySubmit = useCallback(() => {
+        const scopeNodeIds = labelFilteredNodes.map((node) => node.id);
+        void runNaturalLanguageQuery(queryInput, scopeNodeIds);
+    }, [labelFilteredNodes, queryInput, runNaturalLanguageQuery]);
+
+    const handleQueryClear = useCallback(() => {
+        setQueryInput("");
+        setActiveQuery("");
+        setQueryMatchedNodeIds(null);
+        setQueryError(null);
+    }, []);
+
+    const handleToggleLabelWithQueryRefresh = useCallback((label: cardLabel) => {
+        setSelectedLabels((prev) => {
+            const next = prev.includes(label)
+                ? prev.filter((current) => current !== label)
+                : [...prev, label];
+
+            if (activeQuery.trim().length > 0) {
+                const scopeNodeIds = computeLabelScopedNodeIds(next);
+                void runNaturalLanguageQuery(activeQuery, scopeNodeIds);
+            }
+
+            return next;
+        });
+    }, [activeQuery, computeLabelScopedNodeIds, runNaturalLanguageQuery]);
+
+    const handleToggleTimeline = useCallback(() => {
+        setTimelineOpen((prev) => !prev);
+    }, []);
+
+    const handleSetTitle = useCallback((newTitle: string) => {
+        void updateDocumentMeta(projectId, { title: newTitle });
+    }, [projectId]);
+
+    const handleOpenSettings = useCallback(() => {
+        navigate(`/project/${projectId}/setup`);
+    }, [navigate, projectId]);
+
+    const handleFreeInputClicked = useCallback(() => {
+        setCursorMode("text");
+    }, []);
+
+    const handleNodeInputClicked = useCallback(() => {
+        setCursorMode("node");
+    }, []);
+
+    const handlePointerClicked = useCallback(() => {
+        setCursorMode("");
+    }, []);
+
+    const handleStageUpdate = useCallback((stage: Stage) => {
+        dispatch(updateStage({
             ...stage,
             start: fromDate(stage.start),
-            end: fromDate(stage.end)
-          }));
-        }}
-        onStageCreation={(name: string) => {
-          dispatch(addDefaultStage(name));
-        }}
-        onStageLaneCreation={(name: string) => {
-          dispatch(addStage(name));
-        }}
-        onStageLaneDeletion={(id: string) => {
-          dispatch(deleteStage(id));
-        }}
-        onStageBoundaryChange={(prevId, nextId, date) => {
-          dispatch(
-            changeStageBoundary({
-              prevId,
-              nextId,
-              date: fromDate(date)
-            })
-          );
-        }}
-      />
-    </div>
+            end: fromDate(stage.end),
+        }));
+    }, [dispatch]);
 
-  </>
+    const handleStageCreation = useCallback((name: string) => {
+        dispatch(addDefaultStage(name));
+    }, [dispatch]);
 
-}
+    const handleStageLaneCreation = useCallback((name: string) => {
+        dispatch(addStage(name));
+    }, [dispatch]);
+
+    const handleStageLaneDeletion = useCallback((id: string) => {
+        dispatch(deleteStage(id));
+    }, [dispatch]);
+
+    const handleStageBoundaryChange = useCallback((prevId: string, nextId: string, date: Date) => {
+        dispatch(changeStageBoundary({
+            prevId,
+            nextId,
+            date: fromDate(date),
+        }));
+    }, [dispatch]);
+
+    if (status === "loading") return <div>Loading...</div>;
+    if (status === "error") return <div>Error: {error}</div>;
+
+    return (
+        <>
+            <FlowCanvas
+                projectId={projectId}
+                nodes={displayedNodes}
+                edges={filteredEdges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                nodesDraggable={viewMode === "explore"}
+                onNodesChange={handleNodesChange}
+                onEdgesChange={handleEdgesChange}
+                onConnect={handleConnect}
+                onClick={onCanvasClick}
+                onDragOver={handleCanvasDragOver}
+                onDrop={handleCanvasDrop}
+            />
+
+            <CanvasSidebar
+                collapsed={sidebarCollapsed}
+                onToggleCollapsed={handleToggleSidebar}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                selectedLabels={selectedLabels}
+                onToggleLabel={handleToggleLabelWithQueryRefresh}
+                queryValue={queryInput}
+                onQueryValueChange={setQueryInput}
+                onQuerySubmit={handleQuerySubmit}
+                onQueryClear={handleQueryClear}
+                queryLoading={queryLoading}
+                queryError={queryError}
+                queryResultCount={activeQuery ? filteredNodes.length : null}
+            />
+
+            <div style={{ position: "fixed", right: "30px", top: "30px" }}>
+                <img src="/cta_drag_and_drop.png" alt="Drag and Drop file to instantiate cards." />
+            </div>
+
+            <Title
+                textTitle={title}
+                onSetTitle={handleSetTitle}
+                onOpenSettings={handleOpenSettings}
+            />
+
+            <Toolbar
+                onFreeInputClicked={handleFreeInputClicked}
+                onNodeInputClicked={handleNodeInputClicked}
+                onPointerClicked={handlePointerClicked}
+                shifted={timelineOpen}
+            />
+
+            <GitHubFiles
+                projectId={projectId}
+                connectionStatus={gitConnectionStatus}
+            />
+
+            <div style={{ position: "fixed", top: "650px", right: "50px" }}>
+                <AssetsPanel records={allFiles} />
+            </div>
+
+            {cursorMode === "text" ? (
+                <FreeInputZone onInputSubmit={onFreeInputSubmit} />
+            ) : null}
+
+            <LoadSpinner loading={loading} />
+
+            <PendingFileModal
+                pendingDrop={pendingDrop}
+                generatedAtInput={generatedAtInput}
+                onGeneratedAtInputChange={setGeneratedAtInput}
+                onCancel={cancelPendingDrop}
+                onProcess={processPendingDrop}
+            />
+
+            <TimelineDock
+                open={timelineOpen}
+                onToggleOpen={handleToggleTimeline}
+                startMarker={timelineStartEnd.start}
+                endMarker={timelineStartEnd.end}
+                codebaseEvents={gitEvents}
+                designStudyEvents={designStudyEvents}
+                stages={timelineStages}
+                defaultStages={defaultStages}
+                onStageUpdate={handleStageUpdate}
+                onStageCreation={handleStageCreation}
+                onStageLaneCreation={handleStageLaneCreation}
+                onStageLaneDeletion={handleStageLaneDeletion}
+                onStageBoundaryChange={handleStageBoundaryChange}
+            />
+        </>
+    );
+};
+
+const FlowInner = () => {
+    const { projectId } = useParams<{ projectId: string }>();
+    if (!projectId) return <div>Missing project id</div>;
+
+    return <FlowInnerWithProjectId projectId={projectId} />;
+};
 
 export function ProjectEditorPage() {
-
-  return <div style={{ width: "100vw", height: "100vh" }}>
-    <ReactFlowProvider>
-      <FlowInner />
-    </ReactFlowProvider>
-  </div>;
+    return (
+        <div style={{ width: "100vw", height: "100vh" }}>
+            <ReactFlowProvider>
+                <FlowInner />
+            </ReactFlowProvider>
+        </div>
+    );
 }
