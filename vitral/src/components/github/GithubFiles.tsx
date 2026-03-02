@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useState, type DragEvent } from 'react';
 
 import classes from './GithubFiles.module.css';
 import { getGitHubContents, getGithubDocumentLink, getGitHubRepos, linkRepoToDocument, type GitHubContentItem, type GitHubDocumentResponse, type GitHubRepo } from '@/api/githubApi';
@@ -78,6 +78,21 @@ export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStat
         loadContents(currentPath);
     }, [currentPath]);
 
+    const handleFileDragStart = (event: DragEvent<HTMLSpanElement>, item: GitHubContentItem) => {
+        event.stopPropagation();
+
+        const payload = JSON.stringify({
+            source: "github",
+            path: item.path,
+            name: item.name,
+        });
+
+        event.dataTransfer.setData("application/x-vitral-github-file", payload);
+        event.dataTransfer.setData("text/plain", item.path);
+        event.dataTransfer.setData("text", item.path);
+        event.dataTransfer.effectAllowed = "copy";
+    };
+
     return (
         <div className={classes.container}>
             <p className={classes.title}>Github</p>
@@ -139,7 +154,14 @@ export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStat
                                                         <FontAwesomeIcon icon={faFolder} /> {it.name}
                                                     </button>
                                                 ) : (
-                                                    <span title={it.path}><FontAwesomeIcon icon={faFile} /> {it.name}</span>
+                                                    <span
+                                                        title={it.path}
+                                                        draggable
+                                                        style={{ cursor: "grab" }}
+                                                        onDragStart={(event) => handleFileDragStart(event, it)}
+                                                    >
+                                                        <FontAwesomeIcon icon={faFile} /> {it.name}
+                                                    </span>
                                                 )}
                                             </li>
                                         ))}

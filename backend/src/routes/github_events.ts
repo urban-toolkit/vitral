@@ -42,28 +42,27 @@ function parseNextLink(linkHeader: string | null): string | null {
     return null;
 }
 
-// async function ghFetchJSON<T>(
-//     request: any,
-//     url: string,
-//     token: string
-// ): Promise<T> {
-//     const res = await fetch(url, {
-//         headers: {
-//             Authorization: `Bearer ${token}`,
-//             Accept: "application/vnd.github+json",
-//             "User-Agent": "Vitral (Dev)"
-//         },
-//     });
+function getCommitFilesFromPayload(payload: any): string[] {
+    if (!payload || !Array.isArray(payload.files)) return [];
 
-//     if (!res.ok) {
-//         const text = await res.text();
-//         request.log.error({ status: res.status, text, url }, "GitHub API failed");
-//         throw Object.assign(new Error("GitHub API failed"), { status: res.status, text });
-//     }
+    const files = payload.files.flatMap((file: any) => {
+        const collected: string[] = [];
+        if (typeof file?.filename === "string") collected.push(file.filename);
+        if (typeof file?.previous_filename === "string") collected.push(file.previous_filename);
+        return collected;
+    });
 
-//     return (await res.json()) as T;
+    return Array.from(new Set(files));
+}
 
-// }
+function githubHeaders(token: string) {
+    return {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "Vitral (Dev)",
+        "X-GitHub-Api-Version": "2022-11-28",
+    };
+}
 
 async function ghFetchPage<T extends any[]>(
     request: any,
@@ -71,18 +70,10 @@ async function ghFetchPage<T extends any[]>(
     token: string
 ): Promise<{ items: T; nextUrl: string | null }> {
     const res = await fetch(url, {
-        headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/vnd.github+json",
-            "User-Agent": "Vitral (Dev)",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
+        headers: githubHeaders(token),
     });
 
     const text = await res.text();
-
-    console.log("url", url);
-    console.log("text", text);
 
     if (!res.ok) {
         request.log.error({ status: res.status, url, text }, "GitHub API failed");
@@ -96,6 +87,109 @@ async function ghFetchPage<T extends any[]>(
     const items = JSON.parse(text) as T;
     const nextUrl = parseNextLink(res.headers.get("link"));
     return { items, nextUrl };
+}
+
+async function ghFetchCommitWithAllFiles(
+    request: any,
+    owner: string,
+    repo: string,
+    commitSha: string,
+    token: string
+): Promise<any> {
+    const baseUrl =
+        `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(commitSha)}`;
+
+    let pageUrl: string | null = `${baseUrl}?per_page=100&page=1`;
+    let firstPagePayload: any = null;
+    const allFiles: any[] = [];
+
+    while (pageUrl) {
+        const res = await fetch(pageUrl, {
+            headers: githubHeaders(token),
+        });
+
+        const text = await res.text();
+
+        if (!res.ok) {
+            request.log.error(
+                { status: res.status, text, url: pageUrl, commitSha },
+                "GitHub commit details API failed"
+            );
+            throw Object.assign(new Error("GitHub commit details API failed"), {
+                status: res.status,
+                text,
+            });
+        }
+
+        const pagePayload = JSON.parse(text) as any;
+        if (!firstPagePayload) firstPagePayload = pagePayload;
+
+        if (Array.isArray(pagePayload?.files)) {
+            allFiles.push(...pagePayload.files);
+        }
+
+        pageUrl = parseNextLink(res.headers.get("link"));
+    }
+
+    const dedupedFiles = (() => {
+        const seen = new Set<string>();
+        const result: Array<{ filename: string; previous_filename?: string }> = [];
+
+        for (const file of allFiles) {
+            const key =
+                typeof file?.filename === "string"
+                    ? file.filename
+                    : JSON.stringify(file);
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            if (typeof file?.filename !== "string") continue;
+
+            const normalizedFile: { filename: string; previous_filename?: string } = {
+                filename: file.filename,
+            };
+
+            if (typeof file?.previous_filename === "string") {
+                normalizedFile.previous_filename = file.previous_filename;
+            }
+
+            result.push(normalizedFile);
+        }
+
+        return result;
+    })();
+
+    return {
+        sha: firstPagePayload?.sha ?? commitSha,
+        files: dedupedFiles,
+        _vitralFilesComplete: true,
+    };
+}
+
+async function mapWithConcurrency<T, U>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T, index: number) => Promise<U>
+): Promise<U[]> {
+    if (items.length === 0) return [];
+
+    const results = new Array<U>(items.length);
+    const workerCount = Math.max(1, Math.min(concurrency, items.length));
+    let nextIndex = 0;
+
+    const worker = async () => {
+        while (true) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+
+            if (currentIndex >= items.length) return;
+
+            results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+        }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    return results;
 }
 
 /**
@@ -280,6 +374,11 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
         const {
             limit = 200,
         } = request.query as { limit?: number };
+        const numericLimit = Number(limit);
+        const safeLimit =
+            Number.isFinite(numericLimit)
+                ? Math.max(1, Math.min(Math.trunc(numericLimit), 10000))
+                : 200;
 
         const token = request.cookies["gh_access_token"];
         if (!token) return reply.status(401).send({ error: "Not connected to GitHub" });
@@ -379,7 +478,9 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
         const normalized: NormalizedEvent[] = [];
 
         // commits already scoped to sha=defaultBranch
-        for (const c of commits) normalized.push(normalizeCommit(id, owner, repo, defaultBranch as string, c));
+        for (const commit of commits) {
+            normalized.push(normalizeCommit(id, owner, repo, defaultBranch as string, commit));
+        }
 
         // issues: filter out PR-shaped items
         for (const it of issues) {
@@ -479,10 +580,47 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
             ORDER BY occurred_at DESC
             LIMIT $2
             `,
-            [id, Number(limit)]
+            [id, safeLimit]
         );
 
-        return events.map((e:GitHubEventRow) => ({
+        const enrichedEvents = await mapWithConcurrency(
+            events,
+            8,
+            async (eventRow: GitHubEventRow) => {
+                if (eventRow.event_type !== "commit" || !eventRow.commit_sha) return eventRow;
+
+                const hasCompleteFileHydration = eventRow.payload?._vitralFilesComplete === true;
+
+                if (hasCompleteFileHydration) {
+                    return eventRow;
+                }
+
+                try {
+                    const commitDetails = await ghFetchCommitWithAllFiles(
+                        request,
+                        owner,
+                        repo,
+                        eventRow.commit_sha,
+                        token
+                    );
+
+                    await app.pg.query(
+                        `UPDATE document_github_events SET payload = $1 WHERE id = $2`,
+                        [commitDetails, eventRow.id]
+                    );
+
+                    return { ...eventRow, payload: commitDetails };
+                } catch (error) {
+                    request.log.warn(
+                        { sha: eventRow.commit_sha, err: (error as any)?.message },
+                        "Failed to enrich commit payload with files"
+                    );
+                    return eventRow;
+                }
+            }
+        );
+
+        return enrichedEvents.map((e: GitHubEventRow) => ({
             id: e.id,
             type: e.event_type,
             key: e.event_key,
@@ -494,7 +632,8 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
             prNumber: e.pr_number,
             commitSha: e.commit_sha,
             branch: e.branch_name,
-            payload: e.payload, 
+            filesAffected: getCommitFilesFromPayload(e.payload),
+            payload: e.payload,
         }));
     });
 }

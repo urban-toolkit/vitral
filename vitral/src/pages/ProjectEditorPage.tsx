@@ -297,7 +297,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
         if (!info.github_repo) return;
 
-        const events = await getGitHubEvents(projectId);
+        const events = await getGitHubEvents(projectId, { limit: 5000 });
+
+        console.log("Github events", events);
+
         dispatch(setGithubEvents(events));
     }, [dispatch, projectId]);
 
@@ -527,7 +530,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             />
 
             <div style={{ position: "fixed", right: "30px", top: "30px" }}>
-                <img src="/cta_drag_and_drop.png" alt="Drag and Drop file to instantiate cards." />
+                <img src="/vitral/cta_drag_and_drop.png" alt="Drag and Drop file to instantiate cards." />
             </div>
 
             <Title

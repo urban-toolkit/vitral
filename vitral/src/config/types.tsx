@@ -95,11 +95,12 @@ export interface GitHubEvent {
     prNumber: number | null;
     commitSha: string | null;
     branch: string | null;
+    filesAffected: string[];
 
     payload: any;
 }
 
-export type LaneType = "codebase" | "knowledge" | "designStudy";
+export type LaneType = "codebase" | "knowledge" | "designStudy" | "blueprint";
 
 export type Stage = {
     id: string;
@@ -121,6 +122,12 @@ export type DesignStudyEvent = {
     id: string;
     name: string;
     occurredAt: string; // ISO timestamp
+}
+
+export type BlueprintEvent = {
+    id: string;
+    name: string;
+    occurredAt: Date | string;
 }
 
 export type TimelineState = {

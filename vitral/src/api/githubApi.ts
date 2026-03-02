@@ -1,6 +1,6 @@
-// const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
+const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
 // temp cahnged: VITE_BACKEND_URL wasnt passed
-const API_BASE = "";
+// const API_BASE = "";
 
 export type GitHubDocumentResponse = {
     github_owner?: string,
