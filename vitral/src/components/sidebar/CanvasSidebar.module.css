@@ -13,7 +13,7 @@
 }
 
 .panel {
-    width: 280px;
+    width: 320px;
     padding: 14px 12px;
 }
 
@@ -178,5 +178,221 @@
 .queryMeta {
     margin: 8px 0 0;
     color: #565656;
+    font-size: 11px;
+}
+
+.systemPaperActions {
+    display: flex;
+    margin-top: 2px;
+}
+
+.systemPaperRefresh {
+    flex: 1;
+    border: 1px solid #d6d6d6;
+    border-radius: 8px;
+    background: #fff;
+    color: #333;
+    font-size: 12px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.systemPaperRefresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.systemPaperList {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 340px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.systemPaperItem {
+    margin: 0;
+}
+
+.systemPaperTitleItem {
+    border: 1px solid #d6d6d6;
+    border-radius: 8px;
+    background: #fff;
+    padding: 8px 10px;
+    cursor: grab;
+}
+
+.systemPaperTitleText {
+    display: block;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #2d2d2d;
+}
+
+.systemPaperCard {
+    border: 1px solid #d4d4d4;
+    border-radius: 10px;
+    background: #fff;
+    padding: 6px;
+    box-sizing: border-box;
+}
+
+.systemPaperCardFill {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 8px;
+    border: none;
+    border-radius: 10px;
+}
+
+.paperRoot {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border: 1px solid #676767;
+    border-radius: 8px;
+    background: #f8f9fb;
+    padding: 8px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.paperHighBlocks {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.paperHighBox {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #fff;
+    border: 1px solid #7f8fab;
+    border-radius: 6px;
+    padding: 6px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.paperIntermediateGrid {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    gap: 6px;
+}
+
+.paperIntermediateBox {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #fbfcff;
+    border: 1px solid #b9c5da;
+    border-radius: 5px;
+    padding: 6px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.paperGranularList {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 8px;
+    padding-bottom: 6px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.paperGranularCircle {
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border-radius: 999px;
+    text-align: center;
+    background: #2f80ff;
+    border: 1px solid #1f5cc0;
+    padding: 4px;
+    overflow: hidden;
+}
+
+.paperTitleText {
+    color: #1d1d1d;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.paperHighText {
+    color: #2e3f5d;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.paperIntermediateText {
+    color: #40506d;
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.paperGranularLine {
+    display: block;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.05;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.systemPaperTooltip {
+    position: fixed;
+    z-index: 120;
+    pointer-events: none;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.systemPaperTooltip .systemPaperCard {
+    width: 100%;
+    height: 100%;
+}
+
+.systemPaperEmpty {
+    margin: 8px 0 0;
+    color: #727272;
     font-size: 11px;
 }

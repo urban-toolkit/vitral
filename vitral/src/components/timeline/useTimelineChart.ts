@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import * as d3 from "d3";
+import { faCheck, faCircle } from "@fortawesome/free-solid-svg-icons";
 import type {
     Dispatch,
     MutableRefObject,
@@ -30,7 +31,7 @@ type NameEditState = {
     id: string;
     x: number;
     y: number;
-    key: "designStudyEvent" | "subStage";
+    key: "designStudyEvent" | "subStage" | "codebaseSubtrack";
     value: string;
 } | null;
 
@@ -41,6 +42,9 @@ type TooltipPosition = {
 
 const normalizePath = (path: string) =>
     path.replace(/\\/g, "/").replace(/^\/+/, "");
+
+const faCirclePath = Array.isArray(faCircle.icon[4]) ? faCircle.icon[4][0] : faCircle.icon[4];
+const faCheckPath = Array.isArray(faCheck.icon[4]) ? faCheck.icon[4][0] : faCheck.icon[4];
 
 function getDroppedGitHubFilePath(event: DragEvent): string | null {
     const payload = event.dataTransfer?.getData("application/x-vitral-github-file");
@@ -78,12 +82,14 @@ type UseTimelineChartParams = {
     defaultStages: string[];
     parsed: ParsedTimelineData;
     codebaseSubtracks: CodebaseSubtrack[];
+    hoveredCodebaseFilePath: string | null;
+    hoveredBlueprintComponentNodeId: string | null;
     dispatch: (action: unknown) => void;
     onStageBoundaryChange: (prevId: string, nextId: string, date: Date) => void;
     onStageLaneDeletion: (id: string) => void;
     onAttachFileToCodebaseSubtrack: (subtrackId: string, filePath: string) => void;
     onToggleCodebaseSubtrackCollapsed: (subtrackId: string) => void;
-    onRenameCodebaseSubtrack: (subtrackId: string, name: string) => void;
+    onToggleCodebaseSubtrackInactive: (subtrackId: string) => void;
     onDeleteCodebaseSubtrack: (subtrackId: string) => void;
     setMilestoneMenu: Dispatch<SetStateAction<MilestoneMenuState>>;
     setSelectedMilestone: Dispatch<SetStateAction<DesignStudyEvent | null>>;
@@ -110,12 +116,14 @@ export function useTimelineChart({
     defaultStages,
     parsed,
     codebaseSubtracks,
+    hoveredCodebaseFilePath,
+    hoveredBlueprintComponentNodeId,
     dispatch,
     onStageBoundaryChange,
     onStageLaneDeletion,
     onAttachFileToCodebaseSubtrack,
     onToggleCodebaseSubtrackCollapsed,
-    onRenameCodebaseSubtrack,
+    onToggleCodebaseSubtrackInactive,
     onDeleteCodebaseSubtrack,
     setMilestoneMenu,
     setSelectedMilestone,
@@ -139,7 +147,12 @@ export function useTimelineChart({
         const svgWidth = width;
         const viewportHeight = containerRef.current?.parentElement?.clientHeight ?? height;
 
-        const innerW = width - margin.left - margin.right;
+        const subtrackContentX = margin.left + 26;
+        const codebaseDropZoneWidth = 180;
+        const laneHeaderWidth = subtrackContentX - margin.left + codebaseDropZoneWidth;
+        const timelineLeft = margin.left + laneHeaderWidth;
+        const innerW = Math.max(120, width - timelineLeft - margin.right);
+        const totalTrackWidth = laneHeaderWidth + innerW;
 
         const lanesTop = margin.top + 32;
         const laneH = 65;
@@ -155,6 +168,9 @@ export function useTimelineChart({
         const laneTop = (lane: LaneType) => laneY[lane];
         const codebaseSubtrackCollapsedHeight = 24;
         const codebaseSubtrackExpandedHeight = laneH;
+        const normalizedHoveredPath = hoveredCodebaseFilePath
+            ? normalizePath(hoveredCodebaseFilePath)
+            : null;
 
         const codebaseSubtrackRows = codebaseSubtracks.map((subtrack, index) => {
             let top = laneY.codebase + laneH + laneGap;
@@ -173,6 +189,9 @@ export function useTimelineChart({
                 top,
                 height: heightForRow,
                 center: top + heightForRow / 2,
+                isHighlighted: normalizedHoveredPath
+                    ? subtrack.filePaths.some((path) => normalizePath(path) === normalizedHoveredPath)
+                    : false,
             };
         });
 
@@ -181,11 +200,6 @@ export function useTimelineChart({
                 ? codebaseSubtrackRows[codebaseSubtrackRows.length - 1].top +
                 codebaseSubtrackRows[codebaseSubtrackRows.length - 1].height
                 : laneY.codebase + laneH;
-
-        const findCodebaseSubtrackAtY = (py: number) =>
-            codebaseSubtrackRows.find(
-                (row) => py >= row.top && py <= row.top + row.height
-            ) ?? null;
 
         const svgHeight = Math.max(viewportHeight, Math.ceil(codebaseSubtracksBottom + margin.bottom + 8));
 
@@ -196,25 +210,10 @@ export function useTimelineChart({
 
         svg.selectAll("*").remove();
 
-        const pointerOnSvg = (event: DragEvent): [number, number] => {
-            const [px, py] = d3.pointer(event, currentSvg);
-            if (Number.isFinite(px) && Number.isFinite(py)) {
-                return [px, py];
-            }
-
-            const bounds = currentSvg.getBoundingClientRect();
-            if (bounds.width <= 0 || bounds.height <= 0) return [0, 0];
-
-            const normalizedX = (event.clientX - bounds.left) / bounds.width;
-            const normalizedY = (event.clientY - bounds.top) / bounds.height;
-
-            return [normalizedX * svgWidth, normalizedY * svgHeight];
-        };
-
         const x0 = d3
             .scaleTime()
             .domain(parsed.domain)
-            .range([margin.left, margin.left + innerW]);
+            .range([timelineLeft, timelineLeft + innerW]);
 
         const stageColor = d3
             .scaleOrdinal<string, string>()
@@ -233,41 +232,6 @@ export function useTimelineChart({
         const brushG = svg.append("g").style("display", "none");
         const subStagesG = svg.append("g");
         const eventsG = svg.append("g");
-
-        const handleSvgDragEnter = (event: DragEvent) => {
-            const [, py] = pointerOnSvg(event);
-            const hoveredSubtrack = findCodebaseSubtrackAtY(py);
-            if (!hoveredSubtrack) return;
-
-            event.preventDefault();
-            event.stopPropagation();
-        };
-
-        const handleSvgDragOver = (event: DragEvent) => {
-            const [, py] = pointerOnSvg(event);
-            const hoveredSubtrack = findCodebaseSubtrackAtY(py);
-            if (!hoveredSubtrack) return;
-
-            event.preventDefault();
-            event.stopPropagation();
-            if (event.dataTransfer) {
-                event.dataTransfer.dropEffect = "copy";
-            }
-        };
-
-        const handleSvgDrop = (event: DragEvent) => {
-            event.preventDefault();
-            event.stopPropagation();
-
-            const droppedPath = getDroppedGitHubFilePath(event);
-            if (!droppedPath) return;
-
-            const [, py] = pointerOnSvg(event);
-            const hoveredSubtrack = findCodebaseSubtrackAtY(py);
-            if (!hoveredSubtrack) return;
-
-            onAttachFileToCodebaseSubtrack(hoveredSubtrack.id, droppedPath);
-        };
 
         const lanes = [
             { key: "designStudy", label: "Design study" },
@@ -296,10 +260,6 @@ export function useTimelineChart({
             })),
         ];
 
-        currentSvg.addEventListener("dragenter", handleSvgDragEnter);
-        currentSvg.addEventListener("dragover", handleSvgDragOver);
-        currentSvg.addEventListener("drop", handleSvgDrop);
-
         lanes.forEach((lane) => {
             const y = laneY[lane.key];
 
@@ -308,8 +268,26 @@ export function useTimelineChart({
                 .attr("class", classes.laneLine)
                 .attr("x", margin.left)
                 .attr("y", y)
-                .attr("width", innerW)
+                .attr("width", totalTrackWidth)
                 .attr("height", 65);
+
+            lanesG
+                .append("rect")
+                .attr("class", classes.codebaseDropZone)
+                .attr("x", margin.left)
+                .attr("y", y)
+                .attr("width", laneHeaderWidth)
+                .attr("height", 65)
+                .style("pointer-events", "none");
+
+            lanesG
+                .append("line")
+                .attr("class", classes.headerZoneDivider)
+                .attr("x1", timelineLeft)
+                .attr("x2", timelineLeft)
+                .attr("y1", y)
+                .attr("y2", y + 65)
+                .style("pointer-events", "none");
 
             lanesG
                 .append("text")
@@ -319,6 +297,19 @@ export function useTimelineChart({
                 .text(lane.label);
         });
 
+        const hierarchyTrunkX = margin.left + 14;
+
+        if (codebaseSubtrackRows.length > 0) {
+            lanesG
+                .append("line")
+                .attr("class", classes.codebaseHierarchyLine)
+                .attr("x1", hierarchyTrunkX)
+                .attr("x2", hierarchyTrunkX)
+                .attr("y1", laneY.codebase + laneH)
+                .attr("y2", codebaseSubtracksBottom)
+                .style("pointer-events", "none");
+        }
+
         const codebaseSubtrackGroups = lanesG
             .selectAll("g.codebase-subtrack")
             .data(codebaseSubtrackRows)
@@ -327,22 +318,37 @@ export function useTimelineChart({
             .attr("class", "codebase-subtrack");
 
         codebaseSubtrackGroups
+            .append("line")
+            .attr("class", classes.codebaseHierarchyLine)
+            .attr("x1", hierarchyTrunkX)
+            .attr("x2", subtrackContentX - 4)
+            .attr("y1", (row: any) => row.top + 12)
+            .attr("y2", (row: any) => row.top + 12)
+            .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
+            .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : null))
+            .style("pointer-events", "none");
+
+        codebaseSubtrackGroups
             .append("rect")
             .attr("class", classes.laneLine)
             .attr("x", margin.left)
             .attr("y", (row) => row.top)
-            .attr("width", innerW)
+            .attr("width", totalTrackWidth)
             .attr("height", (row) => row.height)
-            .attr("fill", "transparent")
-            .attr("stroke", "#c6c6c6");
+            .style("fill", (row: any) => (row.isHighlighted ? "rgba(0, 199, 255, 0.14)" : "transparent"))
+            .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "#E3E3E3"))
+            .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : 1));
 
         codebaseSubtrackGroups
             .append("rect")
             .attr("x", margin.left)
             .attr("y", (row) => row.top)
-            .attr("width", innerW)
+            .attr("width", laneHeaderWidth)
             .attr("height", (row) => row.height)
-            .attr("fill", "transparent")
+            .attr("class", classes.codebaseDropZone)
+            .style("fill", (row: any) => (row.isHighlighted ? "rgba(0, 199, 255, 0.14)" : "transparent"))
+            .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "none"))
+            .style("stroke-width", (row: any) => (row.isHighlighted ? 2 : 0))
             .attr("data-timeline-interactive", "true")
             .style("pointer-events", "all")
             .style("cursor", "copy")
@@ -367,16 +373,50 @@ export function useTimelineChart({
             });
 
         codebaseSubtrackGroups
+            .append("line")
+            .attr("class", classes.headerZoneDivider)
+            .attr("x1", timelineLeft)
+            .attr("x2", timelineLeft)
+            .attr("y1", (row: any) => row.top)
+            .attr("y2", (row: any) => row.top + row.height)
+            .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
+            .style("stroke-width", (row: any) => (row.isHighlighted ? 2 : null))
+            .style("pointer-events", "none");
+
+        const codebaseSubtrackStatusIcon = codebaseSubtrackGroups
+            .append("g")
+            .attr("data-timeline-interactive", "true")
+            .attr("transform", (row: any) => `translate(${timelineLeft - 12}, ${row.top + 12})`)
+            .style("cursor", "pointer")
+            .on("click", (event: any, row: any) => {
+                event.stopPropagation();
+                onToggleCodebaseSubtrackInactive(row.id);
+            });
+
+        codebaseSubtrackStatusIcon
+            .append("circle")
+            .attr("r", 8)
+            .attr("fill", "transparent");
+
+        codebaseSubtrackStatusIcon
+            .append("path")
+            .attr("d", (row: any) => (row.inactive ? faCheckPath : faCirclePath))
+            .attr("transform", "scale(0.018) translate(-256 -256)")
+            .attr("fill", (row: any) => (row.inactive ? "#9b9b9b" : "#00A8DB"));
+
+        codebaseSubtrackStatusIcon
+            .append("title")
+            .text((row: any) => (row.inactive ? "Mark as active" : "Mark as no longer being worked on"));
+
+        codebaseSubtrackGroups
             .append("text")
             .attr("class", classes.laneLabel)
-            .attr("x", margin.left + 8)
-            .attr("y", (row) => row.top + 16)
+            .attr("x", subtrackContentX + 2)
+            .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
+            .attr("fill", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
             .style("cursor", "pointer")
-            .text((row) => {
-                const caret = row.collapsed ? ">" : "v";
-                return `${caret} ${row.name} (${row.filePaths.length} files)`;
-            })
+            .text((row: any) => (row.collapsed ? ">" : "v"))
             .on("click", (event: any, row: any) => {
                 event.stopPropagation();
                 onToggleCodebaseSubtrackCollapsed(row.id);
@@ -384,51 +424,141 @@ export function useTimelineChart({
 
         codebaseSubtrackGroups
             .append("text")
-            .attr("class", classes.subStageText)
-            .attr("x", margin.left + innerW - 74)
-            .attr("y", (row) => row.top + 16)
+            .attr("class", classes.laneLabel)
+            .attr("x", subtrackContentX + 16)
+            .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
-            .style("cursor", "pointer")
-            .text("Rename")
+            .attr("fill", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
+            .style("cursor", "text")
+            .text((row: any) => {
+                return row.name;
+            })
             .on("click", (event: any, row: any) => {
                 event.stopPropagation();
-                const proposedName = window.prompt("Rename codebase subtrack", row.name);
-                if (!proposedName) return;
-
-                const nextName = proposedName.trim();
-                if (!nextName) return;
-                onRenameCodebaseSubtrack(row.id, nextName);
+                const [sx, sy] = d3.pointer(event, containerRef.current);
+                setNameEdit({
+                    id: row.id,
+                    x: sx,
+                    y: sy,
+                    value: row.name,
+                    key: "codebaseSubtrack",
+                });
             });
 
         codebaseSubtrackGroups
             .append("text")
             .attr("class", classes.subStageDelete)
-            .attr("x", margin.left + innerW - 14)
-            .attr("y", (row) => row.top + 16)
+            .attr("x", timelineLeft + innerW - 14)
+            .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
             .style("cursor", "pointer")
             .text("X")
             .on("click", (event: any, row: any) => {
                 event.stopPropagation();
-                const shouldDelete = window.confirm(
-                    `Delete "${row.name}" subtrack?`
-                );
-                if (!shouldDelete) return;
                 onDeleteCodebaseSubtrack(row.id);
             });
 
-        codebaseSubtrackGroups
+        const codebaseFilesText = codebaseSubtrackGroups
             .append("text")
             .attr("class", classes.subStageText)
-            .attr("x", margin.left + 8)
-            .attr("y", (row) => row.top + Math.min(row.height - 6, 34))
-            .text((row) => {
+            .attr("x", subtrackContentX + 16)
+            .attr("y", (row: any) => row.top + Math.min(row.height - 6, 34))
+            .attr("data-timeline-interactive", "true")
+            .attr("fill", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
+            .text((row: any) => {
                 if (row.filePaths.length === 0) return "Drop GitHub files here";
                 const preview = row.filePaths.slice(0, 2).join(", ");
                 const moreCount = row.filePaths.length - 2;
                 return moreCount > 0 ? `${preview} +${moreCount}` : preview;
             })
             .attr("display", (row) => (row.collapsed ? "none" : "block"));
+
+        const subtrackFilesTooltip = svg
+            .append("g")
+            .attr("class", classes.subtrackFilesTooltip)
+            .style("display", "none")
+            .style("pointer-events", "none");
+
+        const subtrackFilesTooltipBg = subtrackFilesTooltip
+            .append("rect")
+            .attr("class", classes.subtrackFilesTooltipBg)
+            .attr("rx", 4)
+            .attr("ry", 4);
+
+        const subtrackFilesTooltipText = subtrackFilesTooltip
+            .append("text")
+            .attr("class", classes.subtrackFilesTooltipText);
+
+        const hideSubtrackFilesTooltip = () => {
+            subtrackFilesTooltip.style("display", "none");
+        };
+
+        const showSubtrackFilesTooltip = (event: MouseEvent, row: any) => {
+            if (!Array.isArray(row.filePaths) || row.filePaths.length === 0) {
+                hideSubtrackFilesTooltip();
+                return;
+            }
+
+            const maxLines = 8;
+            const visibleFiles = row.filePaths.slice(0, maxLines);
+            const remaining = row.filePaths.length - visibleFiles.length;
+            const lines = remaining > 0
+                ? [...visibleFiles, `+${remaining} more`]
+                : visibleFiles;
+
+            subtrackFilesTooltipText.selectAll("*").remove();
+            subtrackFilesTooltip.style("display", "block");
+
+            lines.forEach((line, index) => {
+                subtrackFilesTooltipText
+                    .append("tspan")
+                    .attr("dy", index === 0 ? 0 : 14)
+                    .text(line);
+            });
+
+            const tspans = subtrackFilesTooltipText.selectAll<SVGTSpanElement, unknown>("tspan").nodes();
+            const maxLineWidth = tspans.reduce((maxWidth, node) => {
+                return Math.max(maxWidth, node.getComputedTextLength());
+            }, 0);
+
+            const lineHeight = 14;
+            const paddingX = 8;
+            const paddingY = 8;
+            const tooltipWidth = Math.ceil(maxLineWidth + paddingX * 2);
+            const tooltipHeight = Math.ceil(lines.length * lineHeight + paddingY * 2);
+            const [px, py] = d3.pointer(event, currentSvg);
+
+            const tooltipX = Math.max(8, Math.min(px + 12, svgWidth - tooltipWidth - 8));
+            const tooltipY = Math.max(8, Math.min(py + 12, svgHeight - tooltipHeight - 8));
+
+            subtrackFilesTooltipBg
+                .attr("x", tooltipX)
+                .attr("y", tooltipY)
+                .attr("width", tooltipWidth)
+                .attr("height", tooltipHeight);
+
+            subtrackFilesTooltipText
+                .attr("x", tooltipX + paddingX)
+                .attr("y", tooltipY + paddingY + 10);
+            subtrackFilesTooltipText
+                .selectAll<SVGTSpanElement, unknown>("tspan")
+                .attr("x", tooltipX + paddingX);
+            subtrackFilesTooltip.raise();
+        };
+
+        codebaseFilesText
+            .on("mouseenter", (event: MouseEvent, row: any) => {
+                showSubtrackFilesTooltip(event, row);
+            })
+            .on("mousemove", (event: MouseEvent, row: any) => {
+                showSubtrackFilesTooltip(event, row);
+            })
+            .on("mouseleave", () => {
+                hideSubtrackFilesTooltip();
+            });
+
+        codebaseSubtrackGroups
+            .style("opacity", (row: any) => (row.inactive ? 0.45 : 1));
 
         const drawSquare = (
             g: d3.Selection<SVGGElement, unknown, null, undefined>
@@ -495,7 +625,7 @@ export function useTimelineChart({
                 .enter()
                 .append("rect")
                 .attr("class", classes.laneLine)
-                .attr("x", margin.left)
+                .attr("x", timelineLeft)
                 .attr("y", 0)
                 .attr("width", innerW)
                 .attr("height", 30);
@@ -622,7 +752,7 @@ export function useTimelineChart({
             setRefPos(
                 newCodebaseSubtrackButtonRef.current,
                 margin.left + 8,
-                laneY.codebase + laneH + 8
+                laneY.codebase + 40
             );
 
             stageG
@@ -732,8 +862,8 @@ export function useTimelineChart({
                 d3
                     .brushX()
                     .extent([
-                        [margin.left, top],
-                        [margin.left + innerW, top + laneH],
+                        [timelineLeft, top],
+                        [timelineLeft + innerW, top + laneH],
                     ])
                     .filter((event: any) => !isOverArea(event, x, lane))
                     .on("end", (event: any) => {
@@ -824,11 +954,12 @@ export function useTimelineChart({
                 icon: (
                     g: d3.Selection<SVGGElement, unknown, null, undefined>,
                     eventData: any
-                ) => void
+                ) => void,
+                opacity = 1
             ) => {
                 const group = eventsG.append("g");
 
-                group
+                const eventMarks = group
                     .selectAll("g")
                     .data(events)
                     .enter()
@@ -837,17 +968,43 @@ export function useTimelineChart({
                         "class",
                         classes.event
                     )
-                    .attr(
-                        "transform",
-                        (eventData: any) => `translate(${x(toDate(eventData.date))}, ${centerY})`
-                    )
+                    .style("opacity", opacity)
+                    .attr("transform", (eventData: any) => {
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" &&
+                            hoveredBlueprintComponentNodeId &&
+                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        const scale = isHighlightedBlueprintEvent ? 1.35 : 1;
+                        return `translate(${x(toDate(eventData.date))}, ${centerY}) scale(${scale})`;
+                    })
                     .each(function drawIcon(eventData: any) {
                         icon(d3.select(this), eventData);
                     })
                     .selectAll("rect, circle, path")
                     .attr("class", classes.eventShape)
+                    .style("fill", (eventData: any) => {
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" &&
+                            hoveredBlueprintComponentNodeId &&
+                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        return isHighlightedBlueprintEvent ? "#00A8DB" : null;
+                    })
+                    .style("stroke", (eventData: any) => {
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" &&
+                            hoveredBlueprintComponentNodeId &&
+                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        return isHighlightedBlueprintEvent ? "#005E79" : null;
+                    })
+                    .style("stroke-width", (eventData: any) => {
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" &&
+                            hoveredBlueprintComponentNodeId &&
+                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        return isHighlightedBlueprintEvent ? 2.2 : null;
+                    })
                     .on("click", (event: any, eventData: any) => {
-                        if (kind !== "codebase") return;
+                        if (kind !== "codebase" && kind !== "blueprint") return;
 
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
@@ -862,6 +1019,12 @@ export function useTimelineChart({
                         setTooltipPosition({ x: clampedX, y: clampedY });
                         setShowTooltip(true);
                     });
+
+                if (kind === "blueprint" && hoveredBlueprintComponentNodeId) {
+                    eventMarks
+                        .filter((eventData: any) => eventData.componentNodeId === hoveredBlueprintComponentNodeId)
+                        .raise();
+                }
             };
 
             plot(parsed.ds, "designStudy", laneY.designStudy + laneH / 2, drawDiamond);
@@ -873,17 +1036,26 @@ export function useTimelineChart({
                 if (row.collapsed) continue;
 
                 const rowEvents = eventsByCodebaseSubtrack.get(row.id) ?? [];
-                plot(rowEvents, "codebase", row.center, drawSquare);
+                plot(rowEvents, "codebase", row.center, drawSquare, row.inactive ? 0.35 : 1);
             }
         };
 
         draw(zoomTransformRef.current.rescaleX(x0));
+        lanesG.raise();
+        subtrackFilesTooltip.raise();
 
         const zoom = d3
             .zoom<SVGSVGElement, unknown>()
             .scaleExtent([1, 3000])
             .filter((event: any) => {
                 if (isTimelineInteractiveTarget(event)) return false;
+                const [px, py] = d3.pointer(event, currentSvg);
+                const isInsideTrackArea =
+                    px >= timelineLeft &&
+                    px <= timelineLeft + innerW &&
+                    py >= laneY.designStudy &&
+                    py <= codebaseSubtracksBottom;
+                if (!isInsideTrackArea) return false;
                 if (typeof event.type === "string" && event.type.startsWith("drag")) {
                     return false;
                 }
@@ -891,12 +1063,12 @@ export function useTimelineChart({
                 return !event.ctrlKey || event.type === "wheel";
             })
             .translateExtent([
-                [margin.left, 0],
-                [margin.left + innerW, svgHeight],
+                [timelineLeft, 0],
+                [timelineLeft + innerW, svgHeight],
             ])
             .extent([
-                [margin.left, 0],
-                [margin.left + innerW, svgHeight],
+                [timelineLeft, 0],
+                [timelineLeft + innerW, svgHeight],
             ])
             .on("zoom", (event: any) => {
                 zoomTransformRef.current = event.transform;
@@ -921,9 +1093,7 @@ export function useTimelineChart({
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("keyup", handleKeyUp);
-            currentSvg.removeEventListener("dragenter", handleSvgDragEnter);
-            currentSvg.removeEventListener("dragover", handleSvgDragOver);
-            currentSvg.removeEventListener("drop", handleSvgDrop);
+            svg.selectAll(`.${classes.subtrackFilesTooltip}`).remove();
         };
     }, [
         parsed,
@@ -940,12 +1110,14 @@ export function useTimelineChart({
         newStageButtonRef,
         newCodebaseSubtrackButtonRef,
         codebaseSubtracks,
+        hoveredCodebaseFilePath,
+        hoveredBlueprintComponentNodeId,
         dispatch,
         onStageBoundaryChange,
         onStageLaneDeletion,
         onAttachFileToCodebaseSubtrack,
         onToggleCodebaseSubtrackCollapsed,
-        onRenameCodebaseSubtrack,
+        onToggleCodebaseSubtrackInactive,
         onDeleteCodebaseSubtrack,
         setMilestoneMenu,
         setSelectedMilestone,

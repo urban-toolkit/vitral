@@ -1,6 +1,13 @@
 import { createSelector, createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/store/rootReducer";
-import type { DesignStudyEvent, Stage, SubStage, TimelineState } from "@/config/types";
+import type {
+    BlueprintEvent,
+    CodebaseSubtrack,
+    DesignStudyEvent,
+    Stage,
+    SubStage,
+    TimelineState,
+} from "@/config/types";
 
 const toDate = (d: Date | string) => (d instanceof Date ? d : new Date(d));
 const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
@@ -18,6 +25,13 @@ const initialState: TimelineState = {
         byId: {},
         allIds: []
     },
+    blueprintEvents: {
+        byId: {},
+        allIds: []
+    },
+    codebaseSubtracks: [],
+    hoveredCodebaseFilePath: null,
+    hoveredBlueprintComponentNodeId: null,
     defaultStages: [],
     timelineStartEnd: {
         start: "June 15, 2023 03:24:00",
@@ -52,6 +66,16 @@ function setAllDesignStudyEvents(state: TimelineState, designStudyEvents: Design
     for (const s of designStudyEvents) {
         state.designStudyEvents.byId[s.id] = s;
         state.designStudyEvents.allIds.push(s.id);
+    }
+}
+
+function setAllBlueprintEvents(state: TimelineState, blueprintEvents: BlueprintEvent[]) {
+    state.blueprintEvents.byId = {};
+    state.blueprintEvents.allIds = [];
+
+    for (const event of blueprintEvents) {
+        state.blueprintEvents.byId[event.id] = event;
+        state.blueprintEvents.allIds.push(event.id);
     }
 }
 
@@ -243,6 +267,117 @@ export const timelineSlice = createSlice({
                 state.designStudyEvents.allIds.filter(sid => sid !== id);
         },
 
+        // Blueprint events
+        setBlueprintEvents: (state, action: PayloadAction<BlueprintEvent[]>) => {
+            const blueprintEvents = action.payload.map((event) => ({
+                ...event,
+                occurredAt: fromDate(event.occurredAt),
+            }));
+
+            setAllBlueprintEvents(state, blueprintEvents);
+        },
+
+        addBlueprintEvent: (state, action: PayloadAction<BlueprintEvent>) => {
+            const event = action.payload;
+            if (state.blueprintEvents.byId[event.id]) return;
+
+            state.blueprintEvents.byId[event.id] = {
+                ...event,
+                occurredAt: fromDate(event.occurredAt),
+            };
+            state.blueprintEvents.allIds.push(event.id);
+        },
+
+        updateBlueprintEvent: (state, action: PayloadAction<BlueprintEvent>) => {
+            const event = action.payload;
+            if (!state.blueprintEvents.byId[event.id]) return;
+
+            state.blueprintEvents.byId[event.id] = {
+                ...event,
+                occurredAt: fromDate(event.occurredAt),
+            };
+        },
+
+        deleteBlueprintEvent: (state, action: PayloadAction<string>) => {
+            const id = action.payload;
+            delete state.blueprintEvents.byId[id];
+            state.blueprintEvents.allIds =
+                state.blueprintEvents.allIds.filter((eventId) => eventId !== id);
+        },
+
+        // Codebase subtracks
+        setCodebaseSubtracks: (state, action: PayloadAction<CodebaseSubtrack[]>) => {
+            state.codebaseSubtracks = action.payload.map((subtrack, index) => ({
+                id: subtrack.id || crypto.randomUUID(),
+                name: subtrack.name || `Codebase subtrack ${index + 1}`,
+                filePaths: Array.isArray(subtrack.filePaths)
+                    ? subtrack.filePaths.filter((path) => typeof path === "string")
+                    : [],
+                collapsed: Boolean(subtrack.collapsed),
+                inactive: Boolean(subtrack.inactive),
+            }));
+        },
+
+        addCodebaseSubtrack: (state, action: PayloadAction<CodebaseSubtrack>) => {
+            const subtrack = action.payload;
+            if (state.codebaseSubtracks.some((existing) => existing.id === subtrack.id)) return;
+
+            state.codebaseSubtracks.push({
+                id: subtrack.id,
+                name: subtrack.name,
+                filePaths: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
+                collapsed: Boolean(subtrack.collapsed),
+                inactive: Boolean(subtrack.inactive),
+            });
+        },
+
+        attachFileToCodebaseSubtrack: (
+            state,
+            action: PayloadAction<{ subtrackId: string; filePath: string }>
+        ) => {
+            const { subtrackId, filePath } = action.payload;
+            const subtrack = state.codebaseSubtracks.find((item) => item.id === subtrackId);
+            if (!subtrack || !filePath) return;
+            if (subtrack.filePaths.includes(filePath)) return;
+            subtrack.filePaths.push(filePath);
+        },
+
+        toggleCodebaseSubtrackCollapsed: (state, action: PayloadAction<string>) => {
+            const subtrack = state.codebaseSubtracks.find((item) => item.id === action.payload);
+            if (!subtrack) return;
+            subtrack.collapsed = !subtrack.collapsed;
+        },
+
+        renameCodebaseSubtrack: (
+            state,
+            action: PayloadAction<{ subtrackId: string; name: string }>
+        ) => {
+            const { subtrackId, name } = action.payload;
+            const subtrack = state.codebaseSubtracks.find((item) => item.id === subtrackId);
+            if (!subtrack) return;
+            subtrack.name = name;
+        },
+
+        deleteCodebaseSubtrack: (state, action: PayloadAction<string>) => {
+            state.codebaseSubtracks = state.codebaseSubtracks.filter(
+                (subtrack) => subtrack.id !== action.payload
+            );
+        },
+
+        toggleCodebaseSubtrackInactive: (state, action: PayloadAction<string>) => {
+            const subtrack = state.codebaseSubtracks.find((item) => item.id === action.payload);
+            if (!subtrack) return;
+            subtrack.inactive = !subtrack.inactive;
+        },
+
+        setHoveredCodebaseFilePath: (state, action: PayloadAction<string | null>) => {
+            state.hoveredCodebaseFilePath = action.payload;
+        },
+
+        setHoveredBlueprintComponentNodeId: (state, action: PayloadAction<string | null>) => {
+            state.hoveredBlueprintComponentNodeId = action.payload;
+        },
+
         // Default stages
         setDefaultStages: (state, action: PayloadAction<string[]>) => {
             state.defaultStages = action.payload;
@@ -286,7 +421,20 @@ export const {
     setDesignStudyEvents,
     addDesignStudyEvent,
     updateDesignStudyEvent,
-    deleteDesignStudyEvent
+    deleteDesignStudyEvent,
+    setBlueprintEvents,
+    addBlueprintEvent,
+    updateBlueprintEvent,
+    deleteBlueprintEvent,
+    setCodebaseSubtracks,
+    addCodebaseSubtrack,
+    attachFileToCodebaseSubtrack,
+    toggleCodebaseSubtrackCollapsed,
+    renameCodebaseSubtrack,
+    deleteCodebaseSubtrack,
+    toggleCodebaseSubtrackInactive,
+    setHoveredCodebaseFilePath,
+    setHoveredBlueprintComponentNodeId,
 } = timelineSlice.actions;
 
 export default timelineSlice.reducer;
@@ -320,6 +468,26 @@ export const selectDesignStudyEventById = (id: string) =>
 export const selectAllDesignStudyEvents = createSelector(
     selectTimelineState,
     s => s.designStudyEvents.allIds.map(id => s.designStudyEvents.byId[id]).filter(Boolean)
+);
+
+export const selectAllBlueprintEvents = createSelector(
+    selectTimelineState,
+    s => s.blueprintEvents.allIds.map(id => s.blueprintEvents.byId[id]).filter(Boolean)
+);
+
+export const selectCodebaseSubtracks = createSelector(
+    selectTimelineState,
+    s => s.codebaseSubtracks
+);
+
+export const selectHoveredCodebaseFilePath = createSelector(
+    selectTimelineState,
+    s => s.hoveredCodebaseFilePath
+);
+
+export const selectHoveredBlueprintComponentNodeId = createSelector(
+    selectTimelineState,
+    s => s.hoveredBlueprintComponentNodeId
 );
 
 // Default and range

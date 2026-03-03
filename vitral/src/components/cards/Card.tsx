@@ -250,8 +250,8 @@ function CardImpl(props: CardProps) {
                 props.id != undefined
                     ?
                     <>
-                        <Handle type="source" position={Position.Left} />
-                        <Handle type="target" position={Position.Right} />
+                        <Handle type="target" position={Position.Left} />
+                        <Handle type="source" position={Position.Right} />
                     </>
                     :
                     null

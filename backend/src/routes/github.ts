@@ -21,7 +21,7 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
 
         const statePayload = {
             csrf: crypto.randomBytes(16).toString("hex"),
-            returnTo: returnTo ?? "/projects",
+            returnTo: returnTo ?? "/vitral/projects",
         };
 
         const state = Buffer.from(JSON.stringify(statePayload)).toString("base64url");
@@ -121,7 +121,7 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
         });
 
         // Decode state
-        let returnTo = "/projects";
+        let returnTo = "/vitral/projects";
         try {
             const decoded = JSON.parse(
                 Buffer.from(state, "base64url").toString("utf8")

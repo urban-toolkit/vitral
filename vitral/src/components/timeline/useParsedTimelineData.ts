@@ -40,6 +40,7 @@ export function useParsedTimelineData({
         const cb = parseEvents(codebaseEvents).filter(
             (event) => event.type === "commit"
         );
+
         const kb = parseEvents(knowledgeBaseEvents);
         const ds = parseEvents(designStudyEvents);
         const bp = parseEvents(blueprintEvents);

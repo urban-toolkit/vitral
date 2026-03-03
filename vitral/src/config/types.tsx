@@ -11,7 +11,72 @@ export type cardData = {
     description?: string;
     createdAt?: string; // ISO string
     origin?: string; // file id
+    [key: string]: unknown;
 }
+
+export type BlueprintComponent = {
+    id: number;
+    name: string;
+    feedsInto: number[];
+    description?: string;
+    highBlockName: string;
+    intermediateBlockName: string;
+};
+
+export type BlueprintIntermediate = {
+    name: string;
+    components: BlueprintComponent[];
+};
+
+export type BlueprintHighBlock = {
+    name: string;
+    intermediates: BlueprintIntermediate[];
+};
+
+export type BlueprintData = {
+    fileName: string;
+    paperTitle: string;
+    year: number;
+    highBlocks: BlueprintHighBlock[];
+    components: BlueprintComponent[];
+};
+
+export type blueprintNodeData = {
+    label: "blueprint";
+    type: cardType;
+    title: string;
+    attachmentIds?: string[];
+    description?: string;
+    createdAt?: string;
+    origin?: string;
+    blueprint: BlueprintData;
+};
+
+export type blueprintComponentNodeData = {
+    label: "blueprint_component";
+    type: cardType;
+    title: string;
+    attachmentIds?: string[];
+    description?: string;
+    createdAt?: string;
+    origin?: string;
+    blueprintComponent: BlueprintComponent;
+    blueprintPaperTitle: string;
+    blueprintFileName: string;
+};
+
+export type blueprintGroupNodeData = {
+    label: "blueprint_group";
+    type: cardType;
+    title: string;
+    attachmentIds?: string[];
+    description?: string;
+    createdAt?: string;
+    origin?: string;
+    blueprintGroupLevel: "paper" | "high" | "intermediate";
+    blueprintPaperTitle: string;
+    blueprintFileName: string;
+};
 
 export type llmCardData = {
     id: number,
@@ -59,7 +124,11 @@ export type nodeType = {
     id: string, // n123 or 123
     position: { x: number, y: number },
     type: string,
-    data: cardData
+    data: cardData | blueprintNodeData | blueprintComponentNodeData | blueprintGroupNodeData,
+    parentId?: string,
+    extent?: "parent",
+    style?: Record<string, string | number>,
+    zIndex?: number
 }
 
 export type edgeType = {
@@ -124,11 +193,23 @@ export type DesignStudyEvent = {
     occurredAt: string; // ISO timestamp
 }
 
+export type CodebaseSubtrack = {
+    id: string;
+    name: string;
+    filePaths: string[];
+    collapsed: boolean;
+    inactive: boolean;
+};
+
 export type BlueprintEvent = {
     id: string;
     name: string;
     occurredAt: Date | string;
-}
+    componentNodeId?: string;
+    paperDescription?: string;
+    paperTitle?: string;
+    blueprintFileName?: string;
+};
 
 export type TimelineState = {
     stages: {
@@ -143,6 +224,13 @@ export type TimelineState = {
         byId: Record<string, DesignStudyEvent>;
         allIds: string[];
     };
+    blueprintEvents: {
+        byId: Record<string, BlueprintEvent>;
+        allIds: string[];
+    };
+    codebaseSubtracks: CodebaseSubtrack[];
+    hoveredCodebaseFilePath: string | null;
+    hoveredBlueprintComponentNodeId: string | null;
     defaultStages: string[];
     timelineStartEnd: {
         start: string;
@@ -153,10 +241,12 @@ export type TimelineState = {
 export type TimelineStatePayload = {
     stages: Stage[];
     subStages: SubStage[];
-    designStudyEvents: DesignStudyEvent[],
+    designStudyEvents: DesignStudyEvent[];
+    blueprintEvents: BlueprintEvent[];
+    codebaseSubtracks: CodebaseSubtrack[];
     defaultStages: string[];
     timelineStartEnd: {
         start: string;
         end: string;
     };
-}
+};

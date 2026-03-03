@@ -8,6 +8,7 @@ import { llmRoutes } from "./routes/llm.js";
 import { stateRoutes } from "./routes/state.js";
 import { githubEventsRoutes } from "./routes/github_events.js";
 import { githubRoutes } from "./routes/github.js";
+import { systemPapersRoutes } from "./routes/system_papers.js";
 import dbPlugin from "./plugins/db.js";
 import s3Plugin from "./plugins/s3.js";
 import { doclingRoutes } from './routes/docling.js';
@@ -35,6 +36,7 @@ app.register(doclingRoutes, { prefix: "/api/docling" });
 app.register(stateRoutes, { prefix: "/api" });
 app.register(githubEventsRoutes, { prefix: "/api" });
 app.register(githubRoutes, { prefix: "/api/auth/github" });
+app.register(systemPapersRoutes, { prefix: "/api" });
 
 app.get("/api/db-health", async () => {
     const { rows } = await app.pg.query("SELECT 1 as ok");

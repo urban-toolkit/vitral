@@ -7,10 +7,7 @@ import type { DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
 
 const TIMELINE_DOCK_HEIGHT = 380;
 
-const KNOWLEDGE_BASE_EVENTS: KnowledgeBaseEvent[] = [
-    { id: "kb-activity-created", occurredAt: new Date("July 04, 2023 12:24:00"), kind: "knowledge", subtype: "activity_created" },
-    { id: "kb-requirement-created", occurredAt: new Date("July 13, 2023 12:24:00"), kind: "knowledge", subtype: "requirement_created" },
-];
+const KNOWLEDGE_BASE_EVENTS: KnowledgeBaseEvent[] = [];
 
 type TimelineDockProps = {
     open: boolean;

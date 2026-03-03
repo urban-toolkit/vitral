@@ -1,10 +1,12 @@
 import { memo, useEffect, useState, type DragEvent } from 'react';
+import { useDispatch } from 'react-redux';
 
 import classes from './GithubFiles.module.css';
 import { getGitHubContents, getGithubDocumentLink, getGitHubRepos, linkRepoToDocument, type GitHubContentItem, type GitHubDocumentResponse, type GitHubRepo } from '@/api/githubApi';
 import { GitRepoModal } from '@/components/github/GitRepoModal';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faFolder, faFile } from '@fortawesome/free-solid-svg-icons';
+import { setHoveredCodebaseFilePath } from '@/store/timelineSlice';
 
 type GithubFilesProps = {
     projectId: string;
@@ -12,6 +14,7 @@ type GithubFilesProps = {
 };
 
 export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
+    const dispatch = useDispatch();
 
     const [githubDocumentLink, setGithubDocumentLink] = useState<GitHubDocumentResponse>({});
     const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
@@ -78,6 +81,12 @@ export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStat
         loadContents(currentPath);
     }, [currentPath]);
 
+    useEffect(() => {
+        return () => {
+            dispatch(setHoveredCodebaseFilePath(null));
+        };
+    }, [dispatch]);
+
     const handleFileDragStart = (event: DragEvent<HTMLSpanElement>, item: GitHubContentItem) => {
         event.stopPropagation();
 
@@ -103,7 +112,7 @@ export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStat
                     <>
                         <p>Sign in with your GitHub account to integrate files and events.</p>
                         <button className={classes.linkButton} onClick={() => {
-                            window.location.href = `${import.meta.env.VITE_BACKEND_URL}/api/auth/github/start?returnTo=/project/${encodeURIComponent(projectId)}`;
+                            window.location.href = `${import.meta.env.VITE_BACKEND_URL}/api/auth/github/start?returnTo=/vitral/project/${encodeURIComponent(projectId)}`;
                         }}>Connect GiHub</button>
                     </>
                     :
@@ -159,6 +168,9 @@ export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStat
                                                         draggable
                                                         style={{ cursor: "grab" }}
                                                         onDragStart={(event) => handleFileDragStart(event, it)}
+                                                        onDragEnd={() => dispatch(setHoveredCodebaseFilePath(null))}
+                                                        onMouseEnter={() => dispatch(setHoveredCodebaseFilePath(it.path))}
+                                                        onMouseLeave={() => dispatch(setHoveredCodebaseFilePath(null))}
                                                     >
                                                         <FontAwesomeIcon icon={faFile} /> {it.name}
                                                     </span>

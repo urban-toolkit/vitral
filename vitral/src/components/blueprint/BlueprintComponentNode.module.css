@@ -1,0 +1,34 @@
+.root {
+    width: 112px;
+    height: 112px;
+    position: relative;
+}
+
+.circle {
+    width: 100%;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #6ea7ff 0%, #3f7fe6 100%);
+    border: 1px solid #1f5cc0;
+    box-shadow: 0 8px 20px rgba(28, 71, 146, 0.32);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 10px;
+    box-sizing: border-box;
+    color: #ffffff;
+}
+
+.line {
+    display: block;
+    max-width: 100%;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.05;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+

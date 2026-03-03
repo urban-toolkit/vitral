@@ -190,6 +190,8 @@ function toTimelinePayload(setup: SetupState): TimelineStatePayload {
         stages,
         subStages: [],
         designStudyEvents,
+        blueprintEvents: [],
+        codebaseSubtracks: [],
         defaultStages: Array.from(new Set(stages.map((stage) => stage.name))),
         timelineStartEnd: {
             start: safeIso(setup.timeline.expectedStart, fallbackStartIso),

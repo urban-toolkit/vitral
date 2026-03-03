@@ -1,5 +1,6 @@
 import type {
   BlueprintEvent,
+  CodebaseSubtrack,
   DesignStudyEvent,
   GitHubEvent,
   LaneType,
@@ -9,6 +10,7 @@ import type {
 
 export type {
   BlueprintEvent,
+  CodebaseSubtrack,
   DesignStudyEvent,
   GitHubEvent,
   LaneType,
@@ -75,13 +77,6 @@ export type ParsedStage = Omit<Stage, "start" | "end"> & {
 export type ParsedSubStage = Omit<SubStage, "start" | "end"> & {
   start: Date;
   end: Date;
-};
-
-export type CodebaseSubtrack = {
-  id: string;
-  name: string;
-  filePaths: string[];
-  collapsed: boolean;
 };
 
 export type ParsedTimelineData = {

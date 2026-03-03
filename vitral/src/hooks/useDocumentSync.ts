@@ -7,8 +7,23 @@ import { debounce } from "@/utils/debounce";
 
 import type { RootState } from '@/store';
 import { setFiles } from "@/store/filesSlice";
-import { selectAllDesignStudyEvents, selectAllStages, selectAllSubStages, selectDefaultStages, selectTimelineStartEnd, setDefaultStages, setDesignStudyEvents, setStages, setSubStages, setTimelineStartEnd } from "@/store/timelineSlice";
-import type { DesignStudyEvent, Stage, SubStage } from "@/config/types";
+import {
+    selectAllBlueprintEvents,
+    selectAllDesignStudyEvents,
+    selectAllStages,
+    selectAllSubStages,
+    selectCodebaseSubtracks,
+    selectDefaultStages,
+    selectTimelineStartEnd,
+    setCodebaseSubtracks,
+    setBlueprintEvents,
+    setDefaultStages,
+    setDesignStudyEvents,
+    setStages,
+    setSubStages,
+    setTimelineStartEnd
+} from "@/store/timelineSlice";
+import type { BlueprintEvent, CodebaseSubtrack, DesignStudyEvent, Stage, SubStage } from "@/config/types";
 
 type SyncStatus = "idle" | "loading" | "saving" | "error" | "ready";
 
@@ -18,6 +33,8 @@ export function useDocumentSync(projectId: string) {
     const stages = useSelector(selectAllStages);
     const subStages = useSelector(selectAllSubStages);
     const designStudyEvents = useSelector(selectAllDesignStudyEvents);
+    const blueprintEvents = useSelector(selectAllBlueprintEvents);
+    const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
     const defaultStages = useSelector(selectDefaultStages);
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
 
@@ -37,10 +54,12 @@ export function useDocumentSync(projectId: string) {
             stages: stages,
             subStages: subStages,
             designStudyEvents: designStudyEvents,
+            blueprintEvents: blueprintEvents,
+            codebaseSubtracks: codebaseSubtracks,
             defaultStages: defaultStages,
             timelineStartEnd: timelineStartEnd
         });
-    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents]);
+    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents, blueprintEvents, codebaseSubtracks]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
@@ -52,7 +71,9 @@ export function useDocumentSync(projectId: string) {
                 edges: any[], 
                 stages: Stage[], 
                 designStudyEvents: DesignStudyEvent[],
+                blueprintEvents: BlueprintEvent[],
                 subStages: SubStage[], 
+                codebaseSubtracks: CodebaseSubtrack[],
                 defaultStages: string[], 
                 timelineStartEnd: {start: string, end: string},  
                 title?: string) => {
@@ -69,7 +90,9 @@ export function useDocumentSync(projectId: string) {
                     }, {
                         stages,
                         designStudyEvents,
+                        blueprintEvents,
                         subStages,
+                        codebaseSubtracks,
                         defaultStages,
                         timelineStartEnd
                     }, title);
@@ -117,13 +140,17 @@ export function useDocumentSync(projectId: string) {
 
                 const stages = timeline?.stages ?? [];
                 const designStudyEvents = timeline?.designStudyEvents ?? [];
+                const blueprintEvents = timeline?.blueprintEvents ?? [];
                 const subStages = timeline?.subStages ?? [];
+                const codebaseSubtracks = timeline?.codebaseSubtracks ?? [];
                 const defaultStages = timeline?.defaultStages ?? [];
                 const timelineStartEnd = timeline?.timelineStartEnd ?? {start: "June 15, 2023 03:24:00", end: "December 04, 2023 00:24:00"};
 
                 dispatch(setStages(stages));
                 dispatch(setDesignStudyEvents(designStudyEvents));
+                dispatch(setBlueprintEvents(blueprintEvents));
                 dispatch(setSubStages(subStages));
+                dispatch(setCodebaseSubtracks(codebaseSubtracks));
                 dispatch(setDefaultStages(defaultStages));
                 dispatch(setTimelineStartEnd(timelineStartEnd));
 
@@ -133,7 +160,9 @@ export function useDocumentSync(projectId: string) {
                     title, 
                     stages, 
                     designStudyEvents,
+                    blueprintEvents,
                     subStages, 
+                    codebaseSubtracks,
                     defaultStages, 
                     timelineStartEnd });
                 hasLoadedRef.current = true;
@@ -160,8 +189,8 @@ export function useDocumentSync(projectId: string) {
 
         if (currentHash === lastSavedHashRef.current) return;
 
-        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, subStages, defaultStages, timelineStartEnd, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, designStudyEvents, subStages, defaultStages, timelineStartEnd]);
+        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, subStages, codebaseSubtracks, defaultStages, timelineStartEnd, flow.title);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, designStudyEvents, blueprintEvents, subStages, codebaseSubtracks, defaultStages, timelineStartEnd]);
 
     return { status, error };
 }

@@ -1,0 +1,136 @@
+.blueprintNode {
+    position: relative;
+    color: #1f2430;
+    border-radius: 16px;
+    background: rgba(80, 124, 214, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    backdrop-filter: blur(4px);
+    overflow: hidden;
+}
+
+.blueprintOuter {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+.blueprintTitle {
+    position: absolute;
+    left: 16px;
+    top: 12px;
+    right: 16px;
+    height: 30px;
+    line-height: 30px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #1d2636;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.blueprintEdgesLayer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.blueprintEdge {
+    stroke: #4f6fb5;
+    stroke-width: 2;
+    stroke-linecap: round;
+    opacity: 0.85;
+}
+
+.blueprintHigh {
+    position: absolute;
+    z-index: 1;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #7f8fab;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.blueprintHighLabel {
+    position: absolute;
+    left: 8px;
+    top: 6px;
+    right: 8px;
+    height: 18px;
+    line-height: 18px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #2e3f5d;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.blueprintIntermediate {
+    position: absolute;
+    z-index: 2;
+    border-radius: 8px;
+    background: rgba(251, 252, 255, 0.96);
+    border: 1px solid #b9c5da;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.blueprintIntermediateLabel {
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    right: 8px;
+    height: 14px;
+    line-height: 14px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #40506d;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.blueprintComponent {
+    position: absolute;
+    z-index: 3;
+    border-radius: 999px;
+    background: #2f80ff;
+    border: 1px solid #1f5cc0;
+    box-shadow: 0 2px 8px rgba(26, 60, 124, 0.25);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 5px;
+    box-sizing: border-box;
+    text-align: center;
+}
+
+.blueprintComponentText {
+    display: block;
+    max-width: 100%;
+    font-size: 8px;
+    line-height: 1.05;
+    font-weight: 700;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.blueprintFallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    font-size: 12px;
+    color: #2f2f2f;
+    background: rgba(255, 255, 255, 0.92);
+}
+

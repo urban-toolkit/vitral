@@ -56,6 +56,63 @@ export type QueryDocumentNodesResponse = {
     usedVectorSearch: boolean;
 };
 
+export type SystemPaperQueryCard = {
+    label?: string;
+    title?: string;
+    description?: string;
+    text?: string;
+    content?: string;
+};
+
+export type QuerySystemPapersRequest = {
+    cards: SystemPaperQueryCard[];
+    limit?: number;
+};
+
+export type SystemPaper = {
+    PaperTitle: string;
+    Year: number;
+    HighBlocks: HighBlock[];
+};
+
+export type HighBlock = {
+    HighBlockName: string;
+    IntermediateBlocks: IntermediateBlock[];
+};
+
+export type IntermediateBlock = {
+    IntermediateBlockName: string;
+    GranularBlocks: GranularBlock[];
+};
+
+export type GranularBlock = {
+    GranularBlockName: string;
+    ID: number;
+    PaperDescription: string;
+    Inputs: string[];
+    Outputs: string[];
+    ReferenceCitation: string;
+    FeedsInto: number[];
+};
+
+export type QuerySystemPapersResult = {
+    fileName: string;
+    paperTitle: string;
+    year: number;
+    score: number;
+    coverage: number;
+    matchedTerms: string[];
+    paper: SystemPaper;
+};
+
+export type QuerySystemPapersResponse = {
+    sourceDir: string;
+    totalPapers: number;
+    skippedFiles: string[];
+    queryTerms: string[];
+    results: QuerySystemPapersResult[];
+};
+
 const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
 
 export async function createDocument(
@@ -112,6 +169,23 @@ export async function queryDocumentNodes(
     payload: QueryDocumentNodesRequest,
 ): Promise<QueryDocumentNodesResponse> {
     const res = await fetch(`${API_BASE}/api/state/${docId}/query-nodes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Query failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function querySystemPapers(
+    payload: QuerySystemPapersRequest,
+): Promise<QuerySystemPapersResponse> {
+    const res = await fetch(`${API_BASE}/api/system-papers/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

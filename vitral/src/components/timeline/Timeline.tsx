@@ -1,23 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import classes from "./Timeline.module.css";
-import type { DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
+import type { BlueprintEvent, DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCaretDown, faPlus, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
 import { StagePicker } from "@/components/timeline/StagePicker";
 import { useDispatch, useSelector } from "react-redux";
 import {
+  addCodebaseSubtrack,
+  selectHoveredBlueprintComponentNodeId,
   addDesignStudyEvent,
+  attachFileToCodebaseSubtrack,
+  deleteCodebaseSubtrack,
   deleteDesignStudyEvent,
+  renameCodebaseSubtrack,
+  selectCodebaseSubtracks,
+  selectHoveredCodebaseFilePath,
   selectAllSubStages,
+  toggleCodebaseSubtrackInactive,
+  toggleCodebaseSubtrackCollapsed,
   updateDesignStudyEvent,
   updateSubStage,
 } from "@/store/timelineSlice";
 import { MilestoneMenu } from "./MilestoneMenu";
 import { requestMilestonesLLM } from "@/func/LLMRequest";
 import { CodebaseTooltip } from "./CodebaseTooltip";
+import { BlueprintTooltip } from "./BlueprintTooltip";
 import type {
-  CodebaseSubtrack,
   SelectedTimelineEvent,
   TimelineProps,
 } from "./timelineTypes";
@@ -82,7 +91,7 @@ export const Timeline = ({
     id: string;
     x: number;
     y: number;
-    key: "designStudyEvent" | "subStage";
+    key: "designStudyEvent" | "subStage" | "codebaseSubtrack";
     value: string;
   } | null>(null);
 
@@ -93,7 +102,9 @@ export const Timeline = ({
   const newCodebaseSubtrackButtonRef = useRef<HTMLSpanElement | null>(null);
   const llmButtonRef = useRef<HTMLSpanElement | null>(null);
 
-  const [codebaseSubtracks, setCodebaseSubtracks] = useState<CodebaseSubtrack[]>([]);
+  const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
+  const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
+  const hoveredBlueprintComponentNodeId = useSelector(selectHoveredBlueprintComponentNodeId);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -137,42 +148,22 @@ export const Timeline = ({
     defaultStages,
     parsed,
     codebaseSubtracks,
+    hoveredCodebaseFilePath,
+    hoveredBlueprintComponentNodeId,
     dispatch,
     onStageBoundaryChange,
     onStageLaneDeletion,
     onAttachFileToCodebaseSubtrack: (subtrackId, filePath) => {
-      setCodebaseSubtracks((previous) =>
-        previous.map((subtrack) => {
-          if (subtrack.id !== subtrackId) return subtrack;
-          if (subtrack.filePaths.includes(filePath)) return subtrack;
-
-          return {
-            ...subtrack,
-            filePaths: [...subtrack.filePaths, filePath],
-          };
-        })
-      );
+      dispatch(attachFileToCodebaseSubtrack({ subtrackId, filePath }));
     },
     onToggleCodebaseSubtrackCollapsed: (subtrackId) => {
-      setCodebaseSubtracks((previous) =>
-        previous.map((subtrack) =>
-          subtrack.id === subtrackId
-            ? { ...subtrack, collapsed: !subtrack.collapsed }
-            : subtrack
-        )
-      );
+      dispatch(toggleCodebaseSubtrackCollapsed(subtrackId));
     },
-    onRenameCodebaseSubtrack: (subtrackId, name) => {
-      setCodebaseSubtracks((previous) =>
-        previous.map((subtrack) =>
-          subtrack.id === subtrackId ? { ...subtrack, name } : subtrack
-        )
-      );
+    onToggleCodebaseSubtrackInactive: (subtrackId) => {
+      dispatch(toggleCodebaseSubtrackInactive(subtrackId));
     },
     onDeleteCodebaseSubtrack: (subtrackId) => {
-      setCodebaseSubtracks((previous) =>
-        previous.filter((subtrack) => subtrack.id !== subtrackId)
-      );
+      dispatch(deleteCodebaseSubtrack(subtrackId));
     },
     setMilestoneMenu,
     setSelectedMilestone,
@@ -241,6 +232,15 @@ export const Timeline = ({
       );
     }
 
+    if (nameEdit.key === "codebaseSubtrack") {
+      dispatch(
+        renameCodebaseSubtrack({
+          subtrackId: nameEdit.id,
+          name: nextName,
+        })
+      );
+    }
+
     setNameEdit(null);
   };
 
@@ -267,6 +267,9 @@ export const Timeline = ({
   const tooltipInner = useMemo(() => {
     if (selectedEvent?.kind === "codebase") {
       return <CodebaseTooltip event={selectedEvent.event as GitHubEvent} />;
+    }
+    if (selectedEvent?.kind === "blueprint") {
+      return <BlueprintTooltip event={selectedEvent.event as BlueprintEvent} />;
     }
 
     return null;
@@ -316,15 +319,15 @@ export const Timeline = ({
           className={classes.newStage}
           title="Add codebase subtrack"
           onClick={() => {
-            setCodebaseSubtracks((previous) => [
-              ...previous,
-              {
+            dispatch(
+              addCodebaseSubtrack({
                 id: crypto.randomUUID(),
-                name: `Codebase subtrack ${previous.length + 1}`,
+                name: `Codebase subtrack ${codebaseSubtracks.length + 1}`,
                 filePaths: [],
                 collapsed: false,
-              },
-            ]);
+                inactive: false,
+              })
+            );
           }}
         >
           <FontAwesomeIcon icon={faPlus} />

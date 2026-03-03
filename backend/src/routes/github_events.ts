@@ -43,14 +43,17 @@ function parseNextLink(linkHeader: string | null): string | null {
 }
 
 function getCommitFilesFromPayload(payload: any): string[] {
-    if (!payload || !Array.isArray(payload.files)) return [];
+    if (!payload) return [];
 
-    const files = payload.files.flatMap((file: any) => {
-        const collected: string[] = [];
-        if (typeof file?.filename === "string") collected.push(file.filename);
-        if (typeof file?.previous_filename === "string") collected.push(file.previous_filename);
-        return collected;
-    });
+    if (Array.isArray(payload.filesAffected)) {
+        return payload.filesAffected.filter((f: any) => typeof f === "string");
+    }
+
+    if (!Array.isArray(payload.files)) return [];
+
+    const files = payload.files
+        .map((file: any) => file?.filename)
+        .filter((name: any) => typeof name === "string");
 
     return Array.from(new Set(files));
 }
@@ -95,13 +98,12 @@ async function ghFetchCommitWithAllFiles(
     repo: string,
     commitSha: string,
     token: string
-): Promise<any> {
+): Promise<{files: string[]}> {
     const baseUrl =
         `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(commitSha)}`;
 
     let pageUrl: string | null = `${baseUrl}?per_page=100&page=1`;
-    let firstPagePayload: any = null;
-    const allFiles: any[] = [];
+    const allFiles: string[] = [];
 
     while (pageUrl) {
         const res = await fetch(pageUrl, {
@@ -122,48 +124,23 @@ async function ghFetchCommitWithAllFiles(
         }
 
         const pagePayload = JSON.parse(text) as any;
-        if (!firstPagePayload) firstPagePayload = pagePayload;
 
         if (Array.isArray(pagePayload?.files)) {
-            allFiles.push(...pagePayload.files);
+
+            let cleanedFiles = pagePayload.files.map((file: any) => {
+                return file.filename;
+            });
+
+            allFiles.push(...cleanedFiles);
         }
 
         pageUrl = parseNextLink(res.headers.get("link"));
     }
 
-    const dedupedFiles = (() => {
-        const seen = new Set<string>();
-        const result: Array<{ filename: string; previous_filename?: string }> = [];
+    let allFilesSet = new Set(allFiles);
+    let dedupedFiles = [...allFilesSet];
 
-        for (const file of allFiles) {
-            const key =
-                typeof file?.filename === "string"
-                    ? file.filename
-                    : JSON.stringify(file);
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            if (typeof file?.filename !== "string") continue;
-
-            const normalizedFile: { filename: string; previous_filename?: string } = {
-                filename: file.filename,
-            };
-
-            if (typeof file?.previous_filename === "string") {
-                normalizedFile.previous_filename = file.previous_filename;
-            }
-
-            result.push(normalizedFile);
-        }
-
-        return result;
-    })();
-
-    return {
-        sha: firstPagePayload?.sha ?? commitSha,
-        files: dedupedFiles,
-        _vitralFilesComplete: true,
-    };
+    return {files: dedupedFiles};
 }
 
 async function mapWithConcurrency<T, U>(
@@ -264,106 +241,6 @@ function normalizeCommit(
     };
 }
 
-// Events: issue_opened, issue_closed, issue_updated
-function normalizeIssue(
-    documentId: string,
-    owner: string,
-    repo: string,
-    issue: any
-): NormalizedEvent[] {
-    const number = issue.number as number;
-    const base = {
-        document_id: documentId,
-        repo_owner: owner,
-        repo_name: repo,
-        actor_login: issue?.user?.login ?? null,
-        title: issue?.title ?? null,
-        url: issue?.html_url ?? null,
-        issue_number: number,
-        pr_number: null,
-        commit_sha: null,
-        branch_name: null,
-        payload: issue,
-    };
-
-    const events: NormalizedEvent[] = [];
-
-    if (issue.created_at) {
-        events.push({
-            ...base,
-            event_type: "issue_opened",
-            event_key: `issue:${number}:opened`,
-            occurred_at: issue.created_at,
-        });
-    }
-
-    if (issue.closed_at) {
-        events.push({
-            ...base,
-            event_type: "issue_closed",
-            event_key: `issue:${number}:closed`,
-            occurred_at: issue.closed_at,
-        });
-    }
-
-    return events;
-}
-
-/**
- * pr_opened, pr_merged, pr_closed
- */
-function normalizePull(
-    documentId: string,
-    owner: string,
-    repo: string,
-    defaultBranch: string,
-    pr: any
-): NormalizedEvent[] {
-    const number = pr.number as number;
-    const base = {
-        document_id: documentId,
-        repo_owner: owner,
-        repo_name: repo,
-        actor_login: pr?.user?.login ?? null,
-        title: pr?.title ?? null,
-        url: pr?.html_url ?? null,
-        issue_number: null,
-        pr_number: number,
-        commit_sha: null,
-        branch_name: defaultBranch,
-        payload: pr,
-    };
-
-    const events: NormalizedEvent[] = [];
-
-    if (pr.created_at) {
-        events.push({
-            ...base,
-            event_type: "pr_opened",
-            event_key: `pr:${number}:opened`,
-            occurred_at: pr.created_at,
-        });
-    }
-
-    if (pr.merged_at) {
-        events.push({
-            ...base,
-            event_type: "pr_merged",
-            event_key: `pr:${number}:merged`,
-            occurred_at: pr.merged_at,
-        });
-    } else if (pr.closed_at) {
-        events.push({
-            ...base,
-            event_type: "pr_closed",
-            event_key: `pr:${number}:closed`,
-            occurred_at: pr.closed_at,
-        });
-    }
-
-    return events;
-}
-
 export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
     /**
      * Sync + return GitHub events for a linked document repo
@@ -415,62 +292,22 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
             ? new Date(doc.github_last_synced_at)
             : null;
 
-        // const baseSince = lastSynced ?? new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // default: 7d window
         const baseSince = lastSynced ?? undefined;
         const sinceIso = baseSince ? isoWithSafetyWindow(baseSince) : undefined;
 
-        // Fetch from GitHub (only default branch)
-        // Commits on default branch since cursor
+        // Fetch from GitHub (commits only, default branch, since cursor)
         const commitsUrl =
             `https://api.github.com/repos/${owner}/${repo}/commits` +
             `?sha=${encodeURIComponent(defaultBranch as string)}` +
             (sinceIso ? `&since=${encodeURIComponent(sinceIso)}` : "") +
             `&per_page=100`;
 
-        // Issues updated since cursor (includes PRs)
-        const issuesUrl =
-            `https://api.github.com/repos/${owner}/${repo}/issues` +
-            `?state=all` +
-            (sinceIso ? `&since=${encodeURIComponent(sinceIso)}` : "") +
-            `&per_page=100`;
-
-        // PRs: GitHub doesn't offer "since" on pulls list; filter on client-side by updated_at >= since
-        const pullsUrl =
-            `https://api.github.com/repos/${owner}/${repo}/pulls` +
-            `?state=all&sort=updated&direction=desc&per_page=100`;
-
         let commits: any[] = [];
-        let issues: any[] = [];
-        let pulls: any[] = [];
-
-        const sinceMs = sinceIso ? new Date(sinceIso).getTime() : undefined;
 
         try {
-            [commits, issues, pulls] = await Promise.all([
-                ghFetchAllPages<any[]>(request, commitsUrl, token, {
-                    maxPages: 50, 
-                }),
-
-                ghFetchAllPages<any[]>(request, issuesUrl, token, {
-                    maxPages: 50,
-                }),
-
-                ghFetchAllPages<any[]>(request, pullsUrl, token, {
-                    maxPages: 50,
-                    stopWhen: (pageItems) => {
-                        if (!sinceMs) return false; // first sync: fetch all (up to cap)
-
-                        // If GitHub returns PRs sorted by updated desc, the last item in the page is oldest in that page
-                        const last = pageItems[pageItems.length - 1];
-                        const lastUpdated = last?.updated_at
-                            ? new Date(last.updated_at).getTime()
-                            : Infinity;
-
-                        return lastUpdated < sinceMs;
-                    },
-                }),
-            ]);
-
+            commits = await ghFetchAllPages<any[]>(request, commitsUrl, token, {
+                maxPages: 50,
+            });
         } catch (e) {
             return reply.status(502).send({ error: `Failed to fetch GitHub events ${(e as any).message}` });
         }
@@ -480,20 +317,6 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
         // commits already scoped to sha=defaultBranch
         for (const commit of commits) {
             normalized.push(normalizeCommit(id, owner, repo, defaultBranch as string, commit));
-        }
-
-        // issues: filter out PR-shaped items
-        for (const it of issues) {
-            if (it.pull_request) continue;
-            normalized.push(...normalizeIssue(id, owner, repo, it));
-        }
-
-        // pulls: only PRs whose base is default branch
-        for (const pr of pulls) {
-            if (pr?.base?.ref !== defaultBranch) continue;
-            const updated = pr.updated_at ? new Date(pr.updated_at).getTime() : 0;
-            if(sinceMs && updated < sinceMs) continue;
-            normalized.push(...normalizePull(id, owner, repo, defaultBranch as string, pr));
         }
 
         // Upsert into DB in a transaction
@@ -577,10 +400,17 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
             SELECT *
             FROM document_github_events
             WHERE document_id = $1
+              AND event_type = 'commit'
             ORDER BY occurred_at DESC
             LIMIT $2
             `,
             [id, safeLimit]
+        );
+
+        const syncedCommitShas = new Set(
+            normalized
+                .filter((ev) => ev.event_type === "commit" && !!ev.commit_sha)
+                .map((ev) => ev.commit_sha as string)
         );
 
         const enrichedEvents = await mapWithConcurrency(
@@ -595,8 +425,13 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
                     return eventRow;
                 }
 
+                // Avoid N additional API calls for older rows already stored in DB.
+                if (!syncedCommitShas.has(eventRow.commit_sha)) {
+                    return eventRow;
+                }
+
                 try {
-                    const commitDetails = await ghFetchCommitWithAllFiles(
+                    const filesAffected = await ghFetchCommitWithAllFiles(
                         request,
                         owner,
                         repo,
@@ -604,12 +439,18 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
                         token
                     );
 
+                    let augmentedPayload = {
+                        ...eventRow.payload,
+                        filesAffected: filesAffected.files,
+                        _vitralFilesComplete: true,
+                    };
+
                     await app.pg.query(
                         `UPDATE document_github_events SET payload = $1 WHERE id = $2`,
-                        [commitDetails, eventRow.id]
+                        [augmentedPayload, eventRow.id]
                     );
 
-                    return { ...eventRow, payload: commitDetails };
+                    return { ...eventRow, payload: augmentedPayload };
                 } catch (error) {
                     request.log.warn(
                         { sha: eventRow.commit_sha, err: (error as any)?.message },
