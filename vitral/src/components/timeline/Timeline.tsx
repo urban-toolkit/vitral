@@ -7,7 +7,9 @@ import { faCaretDown, faPlus, faWandSparkles } from "@fortawesome/free-solid-svg
 import { StagePicker } from "@/components/timeline/StagePicker";
 import { useDispatch, useSelector } from "react-redux";
 import {
+  addBlueprintCodebaseLink,
   addCodebaseSubtrack,
+  selectBlueprintCodebaseLinks,
   selectHoveredBlueprintComponentNodeId,
   addDesignStudyEvent,
   attachFileToCodebaseSubtrack,
@@ -69,6 +71,12 @@ export const Timeline = ({
   const [selectedEvent, setSelectedEvent] = useState<SelectedTimelineEvent | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [showTooltip, setShowTooltip] = useState(false);
+  const [blueprintLinkMenu, setBlueprintLinkMenu] = useState<{
+    x: number;
+    y: number;
+    blueprintEventId: string;
+  } | null>(null);
+  const [pendingBlueprintLinkEventId, setPendingBlueprintLinkEventId] = useState<string | null>(null);
 
   const [milestoneMenu, setMilestoneMenu] = useState<{
     x: number;
@@ -103,6 +111,7 @@ export const Timeline = ({
   const llmButtonRef = useRef<HTMLSpanElement | null>(null);
 
   const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
+  const blueprintCodebaseLinks = useSelector(selectBlueprintCodebaseLinks);
   const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
   const hoveredBlueprintComponentNodeId = useSelector(selectHoveredBlueprintComponentNodeId);
 
@@ -119,6 +128,19 @@ export const Timeline = ({
 
     return () => {
       resizeObserver.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setBlueprintLinkMenu(null);
+      setPendingBlueprintLinkEventId(null);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
 
@@ -148,6 +170,8 @@ export const Timeline = ({
     defaultStages,
     parsed,
     codebaseSubtracks,
+    blueprintCodebaseLinks,
+    pendingBlueprintLinkEventId,
     hoveredCodebaseFilePath,
     hoveredBlueprintComponentNodeId,
     dispatch,
@@ -165,8 +189,13 @@ export const Timeline = ({
     onDeleteCodebaseSubtrack: (subtrackId) => {
       dispatch(deleteCodebaseSubtrack(subtrackId));
     },
+    onCreateBlueprintCodebaseLink: (blueprintEventId, codebaseSubtrackId) => {
+      dispatch(addBlueprintCodebaseLink({ blueprintEventId, codebaseSubtrackId }));
+      setPendingBlueprintLinkEventId(null);
+    },
     setMilestoneMenu,
     setSelectedMilestone,
+    setBlueprintLinkMenu,
     setTagPicker,
     setStageMenu,
     setNameEdit,
@@ -284,6 +313,7 @@ export const Timeline = ({
         onClick={() => {
           setShowTooltip(false);
           setMilestoneMenu(null);
+          setBlueprintLinkMenu(null);
         }}
       >
         <svg ref={svgRef} className={classes.svg} />
@@ -340,6 +370,42 @@ export const Timeline = ({
         >
           <FontAwesomeIcon icon={faWandSparkles} />
         </span>
+
+        {pendingBlueprintLinkEventId && (
+          <div
+            className={classes.linkModeHint}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <span>Create link mode: click a codebase subtrack row.</span>
+            <button
+              type="button"
+              className={classes.linkModeButton}
+              onClick={() => setPendingBlueprintLinkEventId(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {blueprintLinkMenu && (
+          <div
+            className={classes.timelineContextMenu}
+            style={{ left: blueprintLinkMenu.x, top: blueprintLinkMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className={classes.timelineContextMenuButton}
+              onClick={() => {
+                setPendingBlueprintLinkEventId(blueprintLinkMenu.blueprintEventId);
+                setBlueprintLinkMenu(null);
+                setShowTooltip(false);
+              }}
+            >
+              Create link
+            </button>
+          </div>
+        )}
       </div>
 
       <div

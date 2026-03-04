@@ -24,16 +24,14 @@ import { queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySy
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { getGitHubEvents } from "@/api/eventsApi";
 
-import { Title } from "@/components/project/Title";
 import { Toolbar } from "@/components/toolbar/Toolbar";
 import { FreeInputZone } from "@/components/toolbar/FreeInputZone";
 import { LoadSpinner } from "@/components/project/LoadSpinner";
 import { Card, type CardProps } from "@/components/cards/Card";
 import { CARD_LABELS } from "@/components/cards/cardVisuals";
 import { RelationEdge } from "@/components/edges/RelationEdge";
-import { GitHubFiles } from "@/components/github/GithubFiles";
-import AssetsPanel from "@/components/files/AssetsPanel";
 import { CanvasSidebar, type CanvasViewMode } from "@/components/sidebar/CanvasSidebar";
+import { RightSidebar } from "@/components/sidebar/RightSidebar";
 import { BlueprintNode } from "@/components/blueprint/BlueprintNode";
 import { BlueprintComponentNode } from "@/components/blueprint/BlueprintComponentNode";
 import { BlueprintGroupNode } from "@/components/blueprint/BlueprintGroupNode";
@@ -66,7 +64,11 @@ import { fromDate } from "@/pages/projectEditor/dateUtils";
 import type { CursorMode, GitConnectionStatus } from "@/pages/projectEditor/types";
 import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
 import { PendingFileModal } from "@/pages/projectEditor/PendingFileModal";
-import { TimelineDock } from "@/pages/projectEditor/TimelineDock";
+import {
+    TimelineDock,
+    TIMELINE_DOCK_HEIGHT,
+    TIMELINE_DOCK_TOGGLE_HEIGHT,
+} from "@/pages/projectEditor/TimelineDock";
 import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttachmentProcessing";
 
 const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["task", "requirement"]);
@@ -1005,6 +1007,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     if (status === "loading") return <div>Loading...</div>;
     if (status === "error") return <div>Error: {error}</div>;
 
+    const canvasSidebarBottomOffset = timelineOpen
+        ? TIMELINE_DOCK_HEIGHT + TIMELINE_DOCK_TOGGLE_HEIGHT
+        : 0;
+
     return (
         <>
             <FlowCanvas
@@ -1023,6 +1029,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             />
 
             <CanvasSidebar
+                title={title}
+                onSetTitle={handleSetTitle}
+                onOpenSettings={handleOpenSettings}
+                bottomOffsetPx={canvasSidebarBottomOffset}
                 collapsed={sidebarCollapsed}
                 onToggleCollapsed={handleToggleSidebar}
                 viewMode={viewMode}
@@ -1042,15 +1052,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onSystemPapersRefresh={handleSystemPapersRefresh}
             />
 
-            <div style={{ position: "fixed", right: "30px", top: "30px" }}>
+            {/* <div style={{ position: "fixed", right: "350px", top: "30px", opacity: 0.5 }}>
                 <img src="/vitral/cta_drag_and_drop.png" alt="Drag and Drop file to instantiate cards." />
-            </div>
-
-            <Title
-                textTitle={title}
-                onSetTitle={handleSetTitle}
-                onOpenSettings={handleOpenSettings}
-            />
+            </div> */}
 
             <Toolbar
                 onFreeInputClicked={handleFreeInputClicked}
@@ -1059,14 +1063,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 shifted={timelineOpen}
             />
 
-            <GitHubFiles
+            <RightSidebar
                 projectId={projectId}
                 connectionStatus={gitConnectionStatus}
+                assetsRecords={allFiles}
+                bottomOffsetPx={canvasSidebarBottomOffset}
             />
-
-            <div style={{ position: "fixed", top: "650px", right: "50px" }}>
-                <AssetsPanel records={allFiles} />
-            </div>
 
             {cursorMode === "text" ? (
                 <FreeInputZone onInputSubmit={onFreeInputSubmit} />

@@ -1,26 +1,39 @@
-import { memo, useEffect, useState, type DragEvent } from 'react';
-import { useDispatch } from 'react-redux';
+import { memo, useEffect, useState, type DragEvent } from "react";
+import { useDispatch } from "react-redux";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faFile, faFolder } from "@fortawesome/free-solid-svg-icons";
 
-import classes from './GithubFiles.module.css';
-import { getGitHubContents, getGithubDocumentLink, getGitHubRepos, linkRepoToDocument, type GitHubContentItem, type GitHubDocumentResponse, type GitHubRepo } from '@/api/githubApi';
-import { GitRepoModal } from '@/components/github/GitRepoModal';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faFolder, faFile } from '@fortawesome/free-solid-svg-icons';
-import { setHoveredCodebaseFilePath } from '@/store/timelineSlice';
+import classes from "./GithubFiles.module.css";
+import {
+    getGitHubContents,
+    getGithubDocumentLink,
+    getGitHubRepos,
+    linkRepoToDocument,
+    type GitHubContentItem,
+    type GitHubDocumentResponse,
+    type GitHubRepo,
+} from "@/api/githubApi";
+import { GitRepoModal } from "@/components/github/GitRepoModal";
+import { setHoveredCodebaseFilePath } from "@/store/timelineSlice";
 
 type GithubFilesProps = {
     projectId: string;
-    connectionStatus: { connected: boolean, user?: { id: number, login: string } };
+    connectionStatus: { connected: boolean; user?: { id: number; login: string } };
+    className?: string;
 };
 
-export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStatus }: GithubFilesProps) {
+export const GitHubFiles = memo(function GitHubFiles({
+    projectId,
+    connectionStatus,
+    className,
+}: GithubFilesProps) {
     const dispatch = useDispatch();
 
     const [githubDocumentLink, setGithubDocumentLink] = useState<GitHubDocumentResponse>({});
     const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
-    const [modalOpen, setModalOpen] = useState<boolean>(false);
+    const [modalOpen, setModalOpen] = useState(false);
 
-    const [currentPath, setCurrentPath] = useState(""); // repo root
+    const [currentPath, setCurrentPath] = useState("");
     const [items, setItems] = useState<GitHubContentItem[]>([]);
     const [itemsLoading, setItemsLoading] = useState(false);
     const [itemsError, setItemsError] = useState<string | null>(null);
@@ -52,22 +65,13 @@ export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStat
         }
     };
 
-    const openModal = () => {
-        setModalOpen(true);
-    }
-
-    const closeModal = () => {
-        setModalOpen(false);
-    }
-
     useEffect(() => {
         if (!connectionStatus.connected) return;
 
-        (async () => {
+        void (async () => {
             const info = await retrieveGithubLinkInformation();
             await retrieveGithubRepos();
 
-            // if repo linked, load root contents
             if (info.github_owner && info.github_repo) {
                 setCurrentPath("");
                 await loadContents("");
@@ -75,11 +79,10 @@ export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStat
         })();
     }, [connectionStatus.connected, projectId]);
 
-    // reload contents when navigating folders
     useEffect(() => {
         if (!githubDocumentLink.github_owner || !githubDocumentLink.github_repo) return;
-        loadContents(currentPath);
-    }, [currentPath]);
+        void loadContents(currentPath);
+    }, [currentPath, githubDocumentLink.github_owner, githubDocumentLink.github_repo]);
 
     useEffect(() => {
         return () => {
@@ -103,101 +106,106 @@ export const GitHubFiles = memo(function GitHubFiles({ projectId, connectionStat
     };
 
     return (
-        <div className={classes.container}>
+        <div className={`${classes.container} ${className ?? ""}`}>
             <p className={classes.title}>Github</p>
 
-            {
-                !connectionStatus.connected
-                    ?
-                    <>
-                        <p>Sign in with your GitHub account to integrate files and events.</p>
-                        <button className={classes.linkButton} onClick={() => {
+            {!connectionStatus.connected ? (
+                <>
+                    <p className={classes.infoLine}>
+                        Sign in with your GitHub account to integrate files and events.
+                    </p>
+                    <button
+                        className={classes.linkButton}
+                        onClick={() => {
                             window.location.href = `${import.meta.env.VITE_BACKEND_URL}/api/auth/github/start?returnTo=/vitral/project/${encodeURIComponent(projectId)}`;
-                        }}>Connect GiHub</button>
-                    </>
-                    :
-                    githubDocumentLink.github_repo && githubDocumentLink.github_repo != ""
-                        ?
-                        <>
-                            <p style={{ margin: 0 }}>Signed in as {connectionStatus.user?.login}.</p>
-                            <p style={{ margin: 0 }}>Repository: <span style={{ fontWeight: "bold" }}>{githubDocumentLink.github_repo}</span>.</p>
-                            <p style={{ margin: 0 }}>Linked by: {githubDocumentLink.github_owner}.</p>
-                            <p style={{ margin: 0 }}>Default branch: {githubDocumentLink.github_default_branch}.</p>
+                        }}
+                    >
+                        Connect GitHub
+                    </button>
+                </>
+            ) : githubDocumentLink.github_repo && githubDocumentLink.github_repo !== "" ? (
+                <>
+                    <p className={classes.infoLine}>Signed in as {connectionStatus.user?.login}.</p>
+                    <p className={classes.infoLine}>
+                        Repository: <span className={classes.bold}>{githubDocumentLink.github_repo}</span>.
+                    </p>
+                    <p className={classes.infoLine}>Linked by: {githubDocumentLink.github_owner}.</p>
+                    <p className={classes.infoLine}>Default branch: {githubDocumentLink.github_default_branch}.</p>
 
-                            <div style={{ marginTop: 10 }}>
-                                <div>
-                                    <p style={{ opacity: 0.75, fontSize: "var(--font-size-sm)" }}>
-                                        Path: <b>/{currentPath || ""}</b>
-                                    </p>
-                                    {currentPath && (
-                                        <button
-                                            className={classes.linkButton}
-                                            onClick={() => {
-                                                const parts = currentPath.split("/").filter(Boolean);
-                                                parts.pop();
-                                                setCurrentPath(parts.join("/"));
-                                            }}
-                                        >
-                                            Up
-                                        </button>
-                                    )}
-                                    <button className={classes.linkButton} onClick={() => setCurrentPath("")}>
-                                        Root
-                                    </button>
-                                </div>
-
-                                {itemsLoading ? (
-                                    <p style={{ marginTop: 8 }}>Loading files…</p>
-                                ) : itemsError ? (
-                                    <p style={{ marginTop: 8, color: "crimson" }}>{itemsError}</p>
-                                ) : (
-                                    <ul style={{ marginTop: 8, paddingLeft: 16, maxHeight: "200px", overflowY: "auto" }}>
-                                        {items.map((it) => (
-                                            <li key={it.path} style={{ marginBottom: 4 }} className={classes.fileList}>
-                                                {it.type === "dir" ? (
-                                                    <button
-                                                        style={{ border: 0, background: "transparent", cursor: "pointer", padding: 0 }}
-                                                        onClick={() => setCurrentPath(it.path)}
-                                                        title="Open folder"
-                                                    >
-                                                        <FontAwesomeIcon icon={faFolder} /> {it.name}
-                                                    </button>
-                                                ) : (
-                                                    <span
-                                                        title={it.path}
-                                                        draggable
-                                                        style={{ cursor: "grab" }}
-                                                        onDragStart={(event) => handleFileDragStart(event, it)}
-                                                        onDragEnd={() => dispatch(setHoveredCodebaseFilePath(null))}
-                                                        onMouseEnter={() => dispatch(setHoveredCodebaseFilePath(it.path))}
-                                                        onMouseLeave={() => dispatch(setHoveredCodebaseFilePath(null))}
-                                                    >
-                                                        <FontAwesomeIcon icon={faFile} /> {it.name}
-                                                    </span>
-                                                )}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
-                            </div>
-                        </>
-                        :
-                        <>
-                            <p>Signed in as {connectionStatus.user?.login}.</p>
-                            <button className={classes.linkButton} onClick={() => { openModal(); }}>
-                                Link repository
+                    <div className={classes.filesSection}>
+                        <div className={classes.pathControls}>
+                            <p className={classes.pathLine}>
+                                Path: <b>/{currentPath || ""}</b>
+                            </p>
+                            {currentPath ? (
+                                <button
+                                    className={classes.linkButton}
+                                    onClick={() => {
+                                        const parts = currentPath.split("/").filter(Boolean);
+                                        parts.pop();
+                                        setCurrentPath(parts.join("/"));
+                                    }}
+                                >
+                                    Up
+                                </button>
+                            ) : null}
+                            <button className={classes.linkButton} onClick={() => setCurrentPath("")}>
+                                Root
                             </button>
-                        </>
-            }
+                        </div>
+
+                        {itemsLoading ? (
+                            <p className={classes.loadLine}>Loading files...</p>
+                        ) : itemsError ? (
+                            <p className={classes.errorLine}>{itemsError}</p>
+                        ) : (
+                            <ul className={classes.fileTree}>
+                                {items.map((item) => (
+                                    <li key={item.path} className={classes.fileList}>
+                                        {item.type === "dir" ? (
+                                            <button
+                                                className={classes.folderButton}
+                                                onClick={() => setCurrentPath(item.path)}
+                                                title="Open folder"
+                                            >
+                                                <FontAwesomeIcon icon={faFolder} /> {item.name}
+                                            </button>
+                                        ) : (
+                                            <span
+                                                title={item.path}
+                                                draggable
+                                                className={classes.fileItem}
+                                                onDragStart={(event) => handleFileDragStart(event, item)}
+                                                onDragEnd={() => dispatch(setHoveredCodebaseFilePath(null))}
+                                                onMouseEnter={() => dispatch(setHoveredCodebaseFilePath(item.path))}
+                                                onMouseLeave={() => dispatch(setHoveredCodebaseFilePath(null))}
+                                            >
+                                                <FontAwesomeIcon icon={faFile} /> {item.name}
+                                            </span>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                </>
+            ) : (
+                <>
+                    <p className={classes.infoLine}>Signed in as {connectionStatus.user?.login}.</p>
+                    <button className={classes.linkButton} onClick={() => setModalOpen(true)}>
+                        Link repository
+                    </button>
+                </>
+            )}
 
             <GitRepoModal
                 isOpen={modalOpen}
                 repos={githubRepos}
-                onClose={closeModal}
+                onClose={() => setModalOpen(false)}
                 onSelectRepo={async (repo: GitHubRepo) => {
                     await linkRepoToDocument(projectId, repo.owner, repo.repo);
-                    closeModal();
-                    retrieveGithubLinkInformation();
+                    setModalOpen(false);
+                    await retrieveGithubLinkInformation();
                 }}
             />
         </div>

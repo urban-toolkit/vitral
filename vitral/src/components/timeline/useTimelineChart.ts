@@ -7,7 +7,12 @@ import type {
     RefObject,
     SetStateAction,
 } from "react";
-import type { DesignStudyEvent, LaneType, Stage } from "@/config/types";
+import type {
+    BlueprintCodebaseLink,
+    DesignStudyEvent,
+    LaneType,
+    Stage
+} from "@/config/types";
 import { addSubStage, deleteSubStage } from "@/store/timelineSlice";
 import classes from "./Timeline.module.css";
 import type {
@@ -25,6 +30,12 @@ type StageMenuState = {
     subStageId: string;
     x: number;
     y: number;
+} | null;
+
+type BlueprintLinkMenuState = {
+    x: number;
+    y: number;
+    blueprintEventId: string;
 } | null;
 
 type NameEditState = {
@@ -82,6 +93,8 @@ type UseTimelineChartParams = {
     defaultStages: string[];
     parsed: ParsedTimelineData;
     codebaseSubtracks: CodebaseSubtrack[];
+    blueprintCodebaseLinks: BlueprintCodebaseLink[];
+    pendingBlueprintLinkEventId: string | null;
     hoveredCodebaseFilePath: string | null;
     hoveredBlueprintComponentNodeId: string | null;
     dispatch: (action: unknown) => void;
@@ -91,8 +104,10 @@ type UseTimelineChartParams = {
     onToggleCodebaseSubtrackCollapsed: (subtrackId: string) => void;
     onToggleCodebaseSubtrackInactive: (subtrackId: string) => void;
     onDeleteCodebaseSubtrack: (subtrackId: string) => void;
+    onCreateBlueprintCodebaseLink: (blueprintEventId: string, codebaseSubtrackId: string) => void;
     setMilestoneMenu: Dispatch<SetStateAction<MilestoneMenuState>>;
     setSelectedMilestone: Dispatch<SetStateAction<DesignStudyEvent | null>>;
+    setBlueprintLinkMenu: Dispatch<SetStateAction<BlueprintLinkMenuState>>;
     setTagPicker: Dispatch<SetStateAction<TagPickerState>>;
     setStageMenu: Dispatch<SetStateAction<StageMenuState>>;
     setNameEdit: Dispatch<SetStateAction<NameEditState>>;
@@ -116,6 +131,8 @@ export function useTimelineChart({
     defaultStages,
     parsed,
     codebaseSubtracks,
+    blueprintCodebaseLinks,
+    pendingBlueprintLinkEventId,
     hoveredCodebaseFilePath,
     hoveredBlueprintComponentNodeId,
     dispatch,
@@ -125,8 +142,10 @@ export function useTimelineChart({
     onToggleCodebaseSubtrackCollapsed,
     onToggleCodebaseSubtrackInactive,
     onDeleteCodebaseSubtrack,
+    onCreateBlueprintCodebaseLink,
     setMilestoneMenu,
     setSelectedMilestone,
+    setBlueprintLinkMenu,
     setTagPicker,
     setStageMenu,
     setNameEdit,
@@ -231,6 +250,7 @@ export function useTimelineChart({
         const lanesG = svg.append("g");
         const brushG = svg.append("g").style("display", "none");
         const subStagesG = svg.append("g");
+        const blueprintCodebaseLinksG = svg.append("g");
         const eventsG = svg.append("g");
 
         const lanes = [
@@ -337,7 +357,28 @@ export function useTimelineChart({
             .attr("height", (row) => row.height)
             .style("fill", (row: any) => (row.isHighlighted ? "rgba(0, 199, 255, 0.14)" : "transparent"))
             .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "#E3E3E3"))
-            .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : 1));
+            .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : 1))
+            .style("pointer-events", "none");
+
+        codebaseSubtrackGroups
+            .append("rect")
+            .attr("class", classes.codebaseSubtrackLinkTarget)
+            .attr("x", timelineLeft)
+            .attr("y", (row) => row.top)
+            .attr("width", innerW)
+            .attr("height", (row) => row.height)
+            .attr("data-timeline-interactive", pendingBlueprintLinkEventId ? "true" : null)
+            .style("fill", pendingBlueprintLinkEventId ? "rgba(45, 125, 210, 0.10)" : "transparent")
+            .style("stroke", pendingBlueprintLinkEventId ? "rgba(45, 125, 210, 0.45)" : "none")
+            .style("stroke-dasharray", pendingBlueprintLinkEventId ? "4 3" : null)
+            .style("pointer-events", pendingBlueprintLinkEventId ? "all" : "none")
+            .style("cursor", pendingBlueprintLinkEventId ? "crosshair" : "default")
+            .on("click", (event: any, row: any) => {
+                if (!pendingBlueprintLinkEventId) return;
+                event.preventDefault();
+                event.stopPropagation();
+                onCreateBlueprintCodebaseLink(pendingBlueprintLinkEventId, row.id);
+            });
 
         codebaseSubtrackGroups
             .append("rect")
@@ -351,7 +392,13 @@ export function useTimelineChart({
             .style("stroke-width", (row: any) => (row.isHighlighted ? 2 : 0))
             .attr("data-timeline-interactive", "true")
             .style("pointer-events", "all")
-            .style("cursor", "copy")
+            .style("cursor", pendingBlueprintLinkEventId ? "crosshair" : "copy")
+            .on("click", (event: any, row: any) => {
+                if (!pendingBlueprintLinkEventId) return;
+                event.preventDefault();
+                event.stopPropagation();
+                onCreateBlueprintCodebaseLink(pendingBlueprintLinkEventId, row.id);
+            })
             .on("dragenter", (event: any) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -927,6 +974,7 @@ export function useTimelineChart({
                 todayCaretRef.current.style.display = "none";
             }
 
+            blueprintCodebaseLinksG.selectAll("*").remove();
             eventsG.selectAll("*").remove();
 
             const eventsByCodebaseSubtrack = new Map<string, any[]>();
@@ -946,6 +994,37 @@ export function useTimelineChart({
 
                 eventsByCodebaseSubtrack.set(subtrack.id, matchingCommits);
             }
+
+            const blueprintEventsById = new Map(parsed.bp.map((eventData) => [eventData.id, eventData]));
+            const codebaseSubtrackRowsById = new Map(codebaseSubtrackRows.map((row) => [row.id, row]));
+
+            const resolvedBlueprintCodebaseLinks = blueprintCodebaseLinks
+                .map((link) => ({
+                    link,
+                    blueprintEvent: blueprintEventsById.get(link.blueprintEventId),
+                    subtrackRow: codebaseSubtrackRowsById.get(link.codebaseSubtrackId),
+                }))
+                .filter((entry) => entry.blueprintEvent && entry.subtrackRow);
+
+            blueprintCodebaseLinksG
+                .selectAll("path")
+                .data(resolvedBlueprintCodebaseLinks)
+                .enter()
+                .append("path")
+                .attr("class", classes.blueprintCodebaseLink)
+                .classed(
+                    classes.blueprintCodebaseLinkActive,
+                    (entry: any) => entry.link.blueprintEventId === pendingBlueprintLinkEventId
+                )
+                .attr("d", (entry: any) => {
+                    const sourceX = x(entry.blueprintEvent.date);
+                    const sourceY = laneY.blueprint + laneH / 2;
+                    const targetX = timelineLeft + 1;
+                    const targetY = entry.subtrackRow.center;
+                    const midY = (sourceY + targetY) / 2;
+
+                    return `M ${sourceX} ${sourceY} C ${sourceX} ${midY}, ${targetX} ${midY}, ${targetX} ${targetY}`;
+                });
 
             const plot = (
                 events: any[],
@@ -1018,6 +1097,20 @@ export function useTimelineChart({
                         setSelectedEvent({ kind, event: eventData });
                         setTooltipPosition({ x: clampedX, y: clampedY });
                         setShowTooltip(true);
+                    })
+                    .on("contextmenu", (event: any, eventData: any) => {
+                        if (kind !== "blueprint") return;
+
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const [sx, sy] = d3.pointer(event, containerRef.current);
+                        setMilestoneMenu(null);
+                        setBlueprintLinkMenu({
+                            x: sx,
+                            y: sy,
+                            blueprintEventId: eventData.id,
+                        });
+                        setShowTooltip(false);
                     });
 
                 if (kind === "blueprint" && hoveredBlueprintComponentNodeId) {
@@ -1110,6 +1203,8 @@ export function useTimelineChart({
         newStageButtonRef,
         newCodebaseSubtrackButtonRef,
         codebaseSubtracks,
+        blueprintCodebaseLinks,
+        pendingBlueprintLinkEventId,
         hoveredCodebaseFilePath,
         hoveredBlueprintComponentNodeId,
         dispatch,
@@ -1119,8 +1214,10 @@ export function useTimelineChart({
         onToggleCodebaseSubtrackCollapsed,
         onToggleCodebaseSubtrackInactive,
         onDeleteCodebaseSubtrack,
+        onCreateBlueprintCodebaseLink,
         setMilestoneMenu,
         setSelectedMilestone,
+        setBlueprintLinkMenu,
         setTagPicker,
         setStageMenu,
         setNameEdit,

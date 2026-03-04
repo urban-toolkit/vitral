@@ -1,4 +1,5 @@
 import type {
+  BlueprintCodebaseLink,
   BlueprintEvent,
   CodebaseSubtrack,
   DesignStudyEvent,
@@ -9,6 +10,7 @@ import type {
 } from "@/config/types";
 
 export type {
+  BlueprintCodebaseLink,
   BlueprintEvent,
   CodebaseSubtrack,
   DesignStudyEvent,

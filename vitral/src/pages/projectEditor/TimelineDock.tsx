@@ -5,7 +5,8 @@ import { faAnglesUp } from "@fortawesome/free-solid-svg-icons";
 import { Timeline, type BlueprintEvent, type KnowledgeBaseEvent } from "@/components/timeline/Timeline";
 import type { DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
 
-const TIMELINE_DOCK_HEIGHT = 380;
+export const TIMELINE_DOCK_HEIGHT = 380;
+export const TIMELINE_DOCK_TOGGLE_HEIGHT = 35;
 
 const KNOWLEDGE_BASE_EVENTS: KnowledgeBaseEvent[] = [];
 
@@ -48,7 +49,7 @@ export const TimelineDock = memo(function TimelineDock({
                 style={{
                     ...(open ? { bottom: `${TIMELINE_DOCK_HEIGHT}px` } : { bottom: 0 }),
                     cursor: "pointer",
-                    height: "25px",
+                    height: `${TIMELINE_DOCK_TOGGLE_HEIGHT - 10}px`,
                     padding: "5px",
                     position: "fixed",
                     backgroundColor: "white",

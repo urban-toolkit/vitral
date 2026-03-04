@@ -158,6 +158,11 @@
     stroke-width: 1;
 }
 
+.codebaseSubtrackLinkTarget {
+    fill: transparent;
+    stroke: none;
+}
+
 .laneLabel {
     opacity: 0.7;
     font-weight: bold;
@@ -178,6 +183,19 @@
     fill: rgba(0, 0, 0, 0.8);
     stroke: rgba(255, 255, 255, 0.85);
     stroke-width: 1;
+}
+
+.blueprintCodebaseLink {
+    fill: none;
+    stroke: rgba(45, 125, 210, 0.45);
+    stroke-width: 2;
+    stroke-dasharray: 5 4;
+    pointer-events: none;
+}
+
+.blueprintCodebaseLinkActive {
+    stroke: #2d7dd2;
+    stroke-width: 2.5;
 }
 
 /* tooltip */
@@ -205,6 +223,56 @@
     font-size: 11px;
     font-family: "Consolas", "Menlo", "Monaco", monospace;
     pointer-events: none;
+}
+
+.timelineContextMenu {
+    position: absolute;
+    z-index: 30;
+    min-width: 140px;
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 8px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+    padding: 6px;
+}
+
+.timelineContextMenuButton {
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.timelineContextMenuButton:hover {
+    background: rgba(45, 125, 210, 0.12);
+}
+
+.linkModeHint {
+    position: absolute;
+    right: 16px;
+    top: 10px;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(45, 125, 210, 0.35);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+
+.linkModeButton {
+    border: 1px solid rgba(0, 0, 0, 0.16);
+    border-radius: 6px;
+    background: #fff;
+    padding: 2px 8px;
+    font-size: 12px;
+    cursor: pointer;
 }
 
 /* Github pill */

@@ -1,26 +1,138 @@
 .root {
     position: fixed;
-    left: 16px;
-    top: 16px;
+    left: 0;
+    top: 0;
     z-index: 12;
     display: flex;
     align-items: stretch;
     background: rgba(255, 255, 255, 0.92);
     border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 12px;
+    border-left: none;
+    border-radius: 0 12px 12px 0;
     box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
     backdrop-filter: blur(4px);
+    overflow: visible;
+}
+
+.rootCollapsed {
+    left: 16px;
+    top: 16px;
+    height: auto;
+    border-left: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
 }
 
 .panel {
     width: 320px;
+    min-width: 320px;
     padding: 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
-.collapsedPanel {
-    width: 0;
+.panelCollapsed {
+    width: 236px;
+    min-width: 236px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
     overflow: hidden;
+}
+
+.projectHeader {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.projectHeaderActions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.projectTitleButton {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
     padding: 0;
+    text-align: left;
+    cursor: text;
+}
+
+.projectTitleText {
+    display: block;
+    font-size: var(--font-size-xl);
+    line-height: 1.2;
+    color: #1a1a1a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.projectTitleInput {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--font-size-xl);
+    line-height: 1.2;
+    border: 1px solid #d6d6d6;
+    border-radius: 8px;
+    padding: 4px 8px;
+}
+
+.settingsButton {
+    border: 1px solid #c9c9c9;
+    background: white;
+    color: #444;
+    border-radius: 8px;
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    cursor: pointer;
+}
+
+.settingsButton:hover {
+    background: #f4f4f4;
+}
+
+.toggleHeaderButton {
+    border: 1px solid #c9c9c9;
+    background: white;
+    color: #444;
+    border-radius: 8px;
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    cursor: pointer;
+}
+
+.toggleHeaderButton:hover {
+    background: #f4f4f4;
+}
+
+.projectSubtitle {
+    margin: 0 0 4px;
+    font-size: var(--font-size-md);
+    color: var(--subtitle-color);
+}
+
+.socialTag {
+    background-color: var(--social-color);
+}
+
+.technicalTag {
+    background-color: var(--technical-color);
+}
+
+.socialTag,
+.technicalTag {
+    padding: 0 3px;
+    font-weight: bold;
 }
 
 .title {
@@ -70,17 +182,6 @@
     margin-bottom: 12px;
     font-size: 12px;
     color: #6f6f6f;
-}
-
-.toggle {
-    border: none;
-    width: 36px;
-    min-width: 36px;
-    border-left: 1px solid rgba(0, 0, 0, 0.08);
-    background: transparent;
-    cursor: pointer;
-    font-size: 14px;
-    color: #343434;
 }
 
 .labelGrid {

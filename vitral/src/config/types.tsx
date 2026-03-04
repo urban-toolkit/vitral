@@ -201,6 +201,12 @@ export type CodebaseSubtrack = {
     inactive: boolean;
 };
 
+export type BlueprintCodebaseLink = {
+    id: string;
+    blueprintEventId: string;
+    codebaseSubtrackId: string;
+};
+
 export type BlueprintEvent = {
     id: string;
     name: string;
@@ -229,6 +235,7 @@ export type TimelineState = {
         allIds: string[];
     };
     codebaseSubtracks: CodebaseSubtrack[];
+    blueprintCodebaseLinks: BlueprintCodebaseLink[];
     hoveredCodebaseFilePath: string | null;
     hoveredBlueprintComponentNodeId: string | null;
     defaultStages: string[];
@@ -244,6 +251,7 @@ export type TimelineStatePayload = {
     designStudyEvents: DesignStudyEvent[];
     blueprintEvents: BlueprintEvent[];
     codebaseSubtracks: CodebaseSubtrack[];
+    blueprintCodebaseLinks: BlueprintCodebaseLink[];
     defaultStages: string[];
     timelineStartEnd: {
         start: string;

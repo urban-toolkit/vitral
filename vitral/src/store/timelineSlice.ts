@@ -1,6 +1,7 @@
 import { createSelector, createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/store/rootReducer";
 import type {
+    BlueprintCodebaseLink,
     BlueprintEvent,
     CodebaseSubtrack,
     DesignStudyEvent,
@@ -30,6 +31,7 @@ const initialState: TimelineState = {
         allIds: []
     },
     codebaseSubtracks: [],
+    blueprintCodebaseLinks: [],
     hoveredCodebaseFilePath: null,
     hoveredBlueprintComponentNodeId: null,
     defaultStages: [],
@@ -303,6 +305,9 @@ export const timelineSlice = createSlice({
             delete state.blueprintEvents.byId[id];
             state.blueprintEvents.allIds =
                 state.blueprintEvents.allIds.filter((eventId) => eventId !== id);
+            state.blueprintCodebaseLinks = state.blueprintCodebaseLinks.filter(
+                (link) => link.blueprintEventId !== id
+            );
         },
 
         // Codebase subtracks
@@ -362,6 +367,9 @@ export const timelineSlice = createSlice({
             state.codebaseSubtracks = state.codebaseSubtracks.filter(
                 (subtrack) => subtrack.id !== action.payload
             );
+            state.blueprintCodebaseLinks = state.blueprintCodebaseLinks.filter(
+                (link) => link.codebaseSubtrackId !== action.payload
+            );
         },
 
         toggleCodebaseSubtrackInactive: (state, action: PayloadAction<string>) => {
@@ -376,6 +384,54 @@ export const timelineSlice = createSlice({
 
         setHoveredBlueprintComponentNodeId: (state, action: PayloadAction<string | null>) => {
             state.hoveredBlueprintComponentNodeId = action.payload;
+        },
+
+        // Blueprint event <-> codebase subtrack links
+        setBlueprintCodebaseLinks: (state, action: PayloadAction<BlueprintCodebaseLink[]>) => {
+            state.blueprintCodebaseLinks = action.payload
+                .filter(
+                    (link) =>
+                        typeof link.blueprintEventId === "string" &&
+                        link.blueprintEventId.trim() !== "" &&
+                        typeof link.codebaseSubtrackId === "string" &&
+                        link.codebaseSubtrackId.trim() !== ""
+                )
+                .map((link) => ({
+                    id: link.id || crypto.randomUUID(),
+                    blueprintEventId: link.blueprintEventId,
+                    codebaseSubtrackId: link.codebaseSubtrackId,
+                }));
+        },
+
+        addBlueprintCodebaseLink: (
+            state,
+            action: PayloadAction<{
+                id?: string;
+                blueprintEventId: string;
+                codebaseSubtrackId: string;
+            }>
+        ) => {
+            const { id, blueprintEventId, codebaseSubtrackId } = action.payload;
+            if (!blueprintEventId || !codebaseSubtrackId) return;
+
+            const duplicate = state.blueprintCodebaseLinks.some(
+                (link) =>
+                    link.blueprintEventId === blueprintEventId &&
+                    link.codebaseSubtrackId === codebaseSubtrackId
+            );
+            if (duplicate) return;
+
+            state.blueprintCodebaseLinks.push({
+                id: id || crypto.randomUUID(),
+                blueprintEventId,
+                codebaseSubtrackId,
+            });
+        },
+
+        deleteBlueprintCodebaseLink: (state, action: PayloadAction<string>) => {
+            state.blueprintCodebaseLinks = state.blueprintCodebaseLinks.filter(
+                (link) => link.id !== action.payload
+            );
         },
 
         // Default stages
@@ -435,6 +491,9 @@ export const {
     toggleCodebaseSubtrackInactive,
     setHoveredCodebaseFilePath,
     setHoveredBlueprintComponentNodeId,
+    setBlueprintCodebaseLinks,
+    addBlueprintCodebaseLink,
+    deleteBlueprintCodebaseLink,
 } = timelineSlice.actions;
 
 export default timelineSlice.reducer;
@@ -478,6 +537,11 @@ export const selectAllBlueprintEvents = createSelector(
 export const selectCodebaseSubtracks = createSelector(
     selectTimelineState,
     s => s.codebaseSubtracks
+);
+
+export const selectBlueprintCodebaseLinks = createSelector(
+    selectTimelineState,
+    s => s.blueprintCodebaseLinks
 );
 
 export const selectHoveredCodebaseFilePath = createSelector(

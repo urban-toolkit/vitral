@@ -1,5 +1,6 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faChevronLeft, faChevronRight, faGear } from "@fortawesome/free-solid-svg-icons";
 import type { cardLabel } from "@/config/types";
 import type { QuerySystemPapersResult, SystemPaper } from "@/api/stateApi";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
@@ -124,6 +125,10 @@ function SystemPaperThumbnail({
 }
 
 type CanvasSidebarProps = {
+    title: string;
+    onSetTitle: (newTitle: string) => void;
+    onOpenSettings?: () => void;
+    bottomOffsetPx?: number;
     collapsed: boolean;
     onToggleCollapsed: () => void;
     viewMode: CanvasViewMode;
@@ -273,6 +278,10 @@ function resolveTooltipPosition(cursorX: number, cursorY: number, size: number):
 }
 
 export const CanvasSidebar = memo(function CanvasSidebar({
+    title,
+    onSetTitle,
+    onOpenSettings,
+    bottomOffsetPx = 0,
     collapsed,
     onToggleCollapsed,
     viewMode,
@@ -292,12 +301,93 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     onSystemPapersRefresh,
 }: CanvasSidebarProps) {
     const [paperTooltip, setPaperTooltip] = useState<PaperTooltipState | null>(null);
+    const [editingTitle, setEditingTitle] = useState(false);
+    const [draftTitle, setDraftTitle] = useState(title);
+
+    useEffect(() => {
+        setDraftTitle(title);
+    }, [title]);
+
+    const commitTitleEdit = () => {
+        setEditingTitle(false);
+        const nextTitle = draftTitle.trim() || title || "Untitled";
+        setDraftTitle(nextTitle);
+        if (nextTitle !== title) {
+            onSetTitle(nextTitle);
+        }
+    };
+
+    const sidebarHeight = `calc(100vh - ${Math.max(0, bottomOffsetPx)}px)`;
 
     return (
-        <aside className={styles.root}>
-            <div className={collapsed ? styles.collapsedPanel : styles.panel}>
+        <aside
+            className={`${styles.root} ${collapsed ? styles.rootCollapsed : ""}`}
+            style={collapsed ? undefined : { height: sidebarHeight }}
+        >
+            <div className={collapsed ? styles.panelCollapsed : styles.panel}>
+                <div className={styles.projectHeader}>
+                    {editingTitle ? (
+                        <input
+                            type="text"
+                            className={styles.projectTitleInput}
+                            value={draftTitle}
+                            onChange={(event) => setDraftTitle(event.target.value)}
+                            onBlur={commitTitleEdit}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                    commitTitleEdit();
+                                }
+                                if (event.key === "Escape") {
+                                    setEditingTitle(false);
+                                    setDraftTitle(title);
+                                }
+                            }}
+                            autoFocus
+                        />
+                    ) : (
+                        <button
+                            type="button"
+                            className={styles.projectTitleButton}
+                            onClick={() => {
+                                if (collapsed) return;
+                                setEditingTitle(true);
+                            }}
+                            title={draftTitle}
+                        >
+                            <span className={styles.projectTitleText}>{draftTitle || "Untitled"}</span>
+                        </button>
+                    )}
+
+                    <div className={styles.projectHeaderActions}>
+                        {onOpenSettings ? (
+                            <button
+                                type="button"
+                                className={styles.settingsButton}
+                                onClick={onOpenSettings}
+                                title="Project settings"
+                                aria-label="Project settings"
+                            >
+                                <FontAwesomeIcon icon={faGear} />
+                            </button>
+                        ) : null}
+                        <button
+                            type="button"
+                            className={styles.toggleHeaderButton}
+                            onClick={onToggleCollapsed}
+                            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                        >
+                            <FontAwesomeIcon icon={collapsed ? faChevronRight : faChevronLeft} />
+                        </button>
+                    </div>
+                </div>
+
                 {!collapsed && (
                     <>
+                        <p className={styles.projectSubtitle}>
+                            Design studies are <span className={styles.socialTag}>social</span> and <span className={styles.technicalTag}>technical</span>
+                        </p>
+
                         <h3 className={styles.title}>Views</h3>
 
                         <p className={styles.sectionLabel}>View mode</p>
@@ -473,9 +563,6 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                 </div>
             ) : null}
 
-            <button type="button" className={styles.toggle} onClick={onToggleCollapsed}>
-                {collapsed ? ">" : "<"}
-            </button>
         </aside>
     );
 });
