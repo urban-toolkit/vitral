@@ -12,18 +12,6 @@ Given text generated during a design study activity, your task is to generate ca
 
 Based on the content generate one or more cards. 
 
-And the assets available in the system:
-
-{
-    assets: [
-        {
-            id: string,
-            name: string,
-            ext: string
-        }
-    ]
-}
-
 Output a list of cards in the following JSON format:
 
 {

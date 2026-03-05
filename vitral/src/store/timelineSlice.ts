@@ -5,6 +5,7 @@ import type {
     BlueprintEvent,
     CodebaseSubtrack,
     DesignStudyEvent,
+    ProjectParticipant,
     Stage,
     SubStage,
     TimelineState,
@@ -32,6 +33,7 @@ const initialState: TimelineState = {
     },
     codebaseSubtracks: [],
     blueprintCodebaseLinks: [],
+    participants: [],
     hoveredCodebaseFilePath: null,
     hoveredBlueprintComponentNodeId: null,
     defaultStages: [],
@@ -378,6 +380,23 @@ export const timelineSlice = createSlice({
             subtrack.inactive = !subtrack.inactive;
         },
 
+        setParticipants: (state, action: PayloadAction<ProjectParticipant[]>) => {
+            state.participants = action.payload
+                .filter((participant) =>
+                    typeof participant?.id === "string" &&
+                    participant.id.trim() !== "" &&
+                    typeof participant?.name === "string" &&
+                    participant.name.trim() !== ""
+                )
+                .map((participant, index) => ({
+                    id: participant.id,
+                    name: participant.name,
+                    role: typeof participant.role === "string" && participant.role.trim() !== ""
+                        ? participant.role
+                        : `Role ${index + 1}`,
+                }));
+        },
+
         setHoveredCodebaseFilePath: (state, action: PayloadAction<string | null>) => {
             state.hoveredCodebaseFilePath = action.payload;
         },
@@ -400,6 +419,7 @@ export const timelineSlice = createSlice({
                     id: link.id || crypto.randomUUID(),
                     blueprintEventId: link.blueprintEventId,
                     codebaseSubtrackId: link.codebaseSubtrackId,
+                    origin: link.origin === "auto" ? "auto" : "manual",
                 }));
         },
 
@@ -409,23 +429,79 @@ export const timelineSlice = createSlice({
                 id?: string;
                 blueprintEventId: string;
                 codebaseSubtrackId: string;
+                origin?: "manual" | "auto";
             }>
         ) => {
-            const { id, blueprintEventId, codebaseSubtrackId } = action.payload;
+            const { id, blueprintEventId, codebaseSubtrackId, origin } = action.payload;
             if (!blueprintEventId || !codebaseSubtrackId) return;
+            const resolvedOrigin = origin === "auto" ? "auto" : "manual";
 
-            const duplicate = state.blueprintCodebaseLinks.some(
+            const duplicate = state.blueprintCodebaseLinks.find(
                 (link) =>
                     link.blueprintEventId === blueprintEventId &&
                     link.codebaseSubtrackId === codebaseSubtrackId
             );
-            if (duplicate) return;
+            if (duplicate) {
+                if (resolvedOrigin === "manual") {
+                    duplicate.origin = "manual";
+                }
+                return;
+            }
 
             state.blueprintCodebaseLinks.push({
                 id: id || crypto.randomUUID(),
                 blueprintEventId,
                 codebaseSubtrackId,
+                origin: resolvedOrigin,
             });
+        },
+
+        reconcileBlueprintCodebaseAutoLinks: (
+            state,
+            action: PayloadAction<Array<{ blueprintEventId: string; codebaseSubtrackId: string }>>
+        ) => {
+            const requiredKeys = new Set<string>();
+            const requiredPairs: Array<{ blueprintEventId: string; codebaseSubtrackId: string }> = [];
+
+            for (const pair of action.payload) {
+                if (!pair.blueprintEventId || !pair.codebaseSubtrackId) continue;
+                const key = `${pair.blueprintEventId}::${pair.codebaseSubtrackId}`;
+                if (requiredKeys.has(key)) continue;
+                requiredKeys.add(key);
+                requiredPairs.push(pair);
+            }
+
+            const nextLinks: BlueprintCodebaseLink[] = [];
+            const existingKeys = new Set<string>();
+            let changed = false;
+
+            for (const link of state.blueprintCodebaseLinks) {
+                const key = `${link.blueprintEventId}::${link.codebaseSubtrackId}`;
+                const keep = link.origin === "manual" || requiredKeys.has(key);
+                if (!keep) {
+                    changed = true;
+                    continue;
+                }
+                nextLinks.push(link);
+                existingKeys.add(key);
+            }
+
+            for (const pair of requiredPairs) {
+                const key = `${pair.blueprintEventId}::${pair.codebaseSubtrackId}`;
+                if (existingKeys.has(key)) continue;
+                nextLinks.push({
+                    id: crypto.randomUUID(),
+                    blueprintEventId: pair.blueprintEventId,
+                    codebaseSubtrackId: pair.codebaseSubtrackId,
+                    origin: "auto",
+                });
+                existingKeys.add(key);
+                changed = true;
+            }
+
+            if (changed) {
+                state.blueprintCodebaseLinks = nextLinks;
+            }
         },
 
         deleteBlueprintCodebaseLink: (state, action: PayloadAction<string>) => {
@@ -489,10 +565,12 @@ export const {
     renameCodebaseSubtrack,
     deleteCodebaseSubtrack,
     toggleCodebaseSubtrackInactive,
+    setParticipants,
     setHoveredCodebaseFilePath,
     setHoveredBlueprintComponentNodeId,
     setBlueprintCodebaseLinks,
     addBlueprintCodebaseLink,
+    reconcileBlueprintCodebaseAutoLinks,
     deleteBlueprintCodebaseLink,
 } = timelineSlice.actions;
 
@@ -547,6 +625,11 @@ export const selectBlueprintCodebaseLinks = createSelector(
 export const selectHoveredCodebaseFilePath = createSelector(
     selectTimelineState,
     s => s.hoveredCodebaseFilePath
+);
+
+export const selectParticipants = createSelector(
+    selectTimelineState,
+    s => s.participants
 );
 
 export const selectHoveredBlueprintComponentNodeId = createSelector(

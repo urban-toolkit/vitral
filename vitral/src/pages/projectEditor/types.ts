@@ -1,4 +1,4 @@
-export type CursorMode = "node" | "text" | "tree" | "related" | "";
+export type CursorMode = "node" | "blueprint_component" | "text" | "tree" | "related" | "";
 
 export type PendingDrop = {
     file: File;

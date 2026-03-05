@@ -18,18 +18,6 @@ You will recieve a JSON describing the image file as:
     content: string
 }
 
-And the assets available in the system:
-
-{
-    assets: [
-        {
-            id: string,
-            name: string,
-            ext: string
-        }
-    ]
-}
-
 You should follow these steps:
 
 - Classify the image according to its role potential role in the design study:
@@ -45,8 +33,6 @@ You should follow these steps:
     - Sketch: generate no cards.
     - Note: generate any cards.
 
-You should also link object cards to appropriate related assets using a list of assets ids.
-
 You should also include a reference to the portion of the content that generated the card, verbatim.
 
 Output a list of cards in the following JSON format:
@@ -58,7 +44,6 @@ Output a list of cards in the following JSON format:
             entity: string,
             title: string,
             description: string,
-            assets: string[],
             reference: string
         }
     ]

@@ -4,6 +4,15 @@
     position: relative;
 }
 
+.rootDropActive .circle {
+    box-shadow: 0 0 0 3px rgba(0, 168, 219, 0.65), 0 10px 24px rgba(28, 71, 146, 0.32);
+}
+
+.rootHovered .circle {
+    box-shadow: 0 0 0 3px rgba(0, 168, 219, 0.9), 0 12px 28px rgba(6, 79, 120, 0.45);
+    border-color: #00a8db;
+}
+
 .circle {
     width: 100%;
     height: 100%;
@@ -32,3 +41,60 @@
     text-overflow: ellipsis;
 }
 
+.titleEditor {
+    width: 90%;
+    border: 1px solid rgba(255, 255, 255, 0.75);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    text-align: center;
+    padding: 2px 4px;
+    outline: none;
+}
+
+.attachments {
+    margin-top: 6px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.attachmentChip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    min-height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.attachmentLabel {
+    min-width: 0;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.attachmentRemove {
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 10px;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    opacity: 0.8;
+}
+
+.attachmentRemove:hover {
+    opacity: 1;
+}

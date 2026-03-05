@@ -41,7 +41,16 @@ import {
     type BlueprintDragPayload,
 } from "@/components/blueprint/blueprintDnD";
 
-import { addNode, addNodes, connectEdges, onEdgesChange, onNodesChange, updateNode } from "@/store/flowSlice";
+import {
+    addNode,
+    addNodes,
+    connectEdges,
+    detachFileIdFromNode,
+    onEdgesChange,
+    onNodesChange,
+    removeNode,
+    updateNode,
+} from "@/store/flowSlice";
 import { selectAllFiles } from "@/store/filesSlice";
 import { selectAllGitHubEvents, setGithubEvents } from "@/store/gitEventsSlice";
 import {
@@ -51,10 +60,15 @@ import {
     changeStageBoundary,
     deleteStage,
     selectAllBlueprintEvents,
+    selectCodebaseSubtracks,
     selectAllDesignStudyEvents,
     selectAllStages,
     selectDefaultStages,
+    selectParticipants,
+    selectHoveredCodebaseFilePath,
+    reconcileBlueprintCodebaseAutoLinks,
     selectTimelineStartEnd,
+    updateBlueprintEvent,
     updateStage,
 } from "@/store/timelineSlice";
 
@@ -73,6 +87,10 @@ import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttach
 
 const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["task", "requirement"]);
 
+function normalizePath(path: string): string {
+    return path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+}
+
 function toBlueprintData(payload: BlueprintDragPayload): BlueprintData {
     const highBlocks: BlueprintHighBlock[] = payload.paper.HighBlocks.map((high) => ({
         name: high.HighBlockName,
@@ -83,6 +101,7 @@ function toBlueprintData(payload: BlueprintDragPayload): BlueprintData {
                 name: granular.GranularBlockName,
                 feedsInto: Array.isArray(granular.FeedsInto) ? granular.FeedsInto : [],
                 description: granular.PaperDescription,
+                referenceCitation: granular.ReferenceCitation,
                 highBlockName: high.HighBlockName,
                 intermediateBlockName: intermediate.IntermediateBlockName,
             })),
@@ -362,6 +381,7 @@ function buildBlueprintComponentGraph(
                         label: "blueprint_component",
                         type: "technical",
                         title: component.name,
+                        codebaseFilePaths: [],
                         description: `${component.highBlockName} / ${component.intermediateBlockName}`,
                         blueprintComponent: component,
                         blueprintPaperTitle: blueprint.paperTitle,
@@ -419,7 +439,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [cursorMode, setCursorMode] = useState<CursorMode>("");
     const [timelineOpen, setTimelineOpen] = useState(false);
     const [viewMode, setViewMode] = useState<CanvasViewMode>("explore");
-    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
     const [selectedLabels, setSelectedLabels] = useState<cardLabel[]>([...CARD_LABELS]);
     const [queryInput, setQueryInput] = useState("");
     const [activeQuery, setActiveQuery] = useState("");
@@ -430,6 +450,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [systemPapersLoading, setSystemPapersLoading] = useState(false);
     const [systemPapersError, setSystemPapersError] = useState<string | null>(null);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
+    const [hoveredAssetFileId, setHoveredAssetFileId] = useState<string | null>(null);
     const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
     const queryRequestIdRef = useRef(0);
@@ -440,11 +461,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const allFiles = useSelector(selectAllFiles);
     const gitEvents = useSelector(selectAllGitHubEvents);
 
-  const timelineStages = useSelector(selectAllStages);
-  const defaultStages = useSelector(selectDefaultStages);
-  const timelineStartEnd = useSelector(selectTimelineStartEnd);
+    const timelineStages = useSelector(selectAllStages);
+    const defaultStages = useSelector(selectDefaultStages);
+    const participants = useSelector(selectParticipants);
+    const timelineStartEnd = useSelector(selectTimelineStartEnd);
   const designStudyEvents = useSelector(selectAllDesignStudyEvents);
   const blueprintEvents = useSelector(selectAllBlueprintEvents);
+  const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
+  const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
 
     const {
         onAttachFile,
@@ -557,6 +581,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 paperDescription: blueprintComponent && typeof blueprintComponent.description === "string"
                     ? blueprintComponent.description
                     : "",
+                referenceCitation: blueprintComponent && typeof blueprintComponent.referenceCitation === "string"
+                    ? blueprintComponent.referenceCitation
+                    : "",
                 paperTitle: typeof componentData.blueprintPaperTitle === "string"
                     ? componentData.blueprintPaperTitle
                     : undefined,
@@ -567,15 +594,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
     }, [dispatch, nodes, edges, blueprintEvents]);
 
-    const onDataPropertyChange = useCallback((nodeProps: nodeType, value: string, propertyName: string) => {
+    const onDataPropertyChange = useCallback((nodeProps: nodeType, value: unknown, propertyName: string) => {
         const data = { ...nodeProps.data } as Record<string, unknown> & nodeType["data"];
-        let resolvedType: cardType = "social";
-
-        if (value === "requirement" || value === "insight") {
-            resolvedType = "technical";
-        }
-
-        if (propertyName === "label") {
+        if (propertyName === "label" && typeof value === "string") {
+            let resolvedType: cardType = "social";
+            if (value === "requirement" || value === "insight") {
+                resolvedType = "technical";
+            }
             data.type = resolvedType;
         }
 
@@ -587,12 +612,38 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }));
     }, [dispatch]);
 
+    const onDeleteNode = useCallback((nodeId: string) => {
+        dispatch(removeNode(nodeId));
+    }, [dispatch]);
+
+    const onDetachFile = useCallback((nodeId: string, fileId: string) => {
+        dispatch(detachFileIdFromNode({ nodeId, fileId }));
+    }, [dispatch]);
+
+    const participantNames = useMemo(() => {
+        const seen = new Set<string>();
+        const names: string[] = [];
+        for (const participant of participants) {
+            const name = String(participant?.name ?? "").trim();
+            const role = String(participant?.role ?? "").trim();
+            if (!name) continue;
+            const formatted = role ? `${name} (${role})` : name;
+            if (seen.has(formatted)) continue;
+            seen.add(formatted);
+            names.push(formatted);
+        }
+        return names;
+    }, [participants]);
+
     const nodeTypes = useMemo(() => ({
         card: (nodeProps: NodeProps) => {
             const cardProps = {
                 ...(nodeProps as unknown as CardProps),
                 onAttachFile,
+                onDetachFile,
                 onDataPropertyChange,
+                onDeleteNode,
+                participantOptions: participantNames,
             };
 
             return <Card {...cardProps} />;
@@ -600,7 +651,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         blueprint: BlueprintNode,
         blueprintGroup: BlueprintGroupNode,
         blueprintComponent: BlueprintComponentNode,
-    }), [onAttachFile, onDataPropertyChange]);
+    }), [onAttachFile, onDetachFile, onDataPropertyChange, onDeleteNode, participantNames]);
 
     const edgeTypes = useMemo(() => ({
         relation: RelationEdge,
@@ -647,26 +698,66 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         return emphasized;
     }, [nodes, edges]);
+    const connectedBlueprintComponentNodeIds = useMemo(
+        () => Array.from(emphasizedBlueprintComponentIds),
+        [emphasizedBlueprintComponentIds]
+    );
 
     const filteredNodes = useMemo(() => {
         const baseNodes = queryMatchedNodeSet
             ? labelFilteredNodes.filter((node) => queryMatchedNodeSet.has(node.id))
             : labelFilteredNodes;
+        const normalizedHoveredCodebasePath = hoveredCodebaseFilePath
+            ? normalizePath(hoveredCodebaseFilePath)
+            : "";
 
         return baseNodes.map((node) => {
             const nodeLabel = String(node.data?.label ?? "").toLowerCase();
-            if (nodeLabel !== "blueprint_component") return node;
+            const nodeData = node.data as Record<string, unknown>;
+            if (nodeLabel === "blueprint_component") {
+                const attachedCodebasePaths = Array.isArray(nodeData.codebaseFilePaths)
+                    ? nodeData.codebaseFilePaths
+                        .filter((path): path is string => typeof path === "string")
+                        .map((path) => normalizePath(path))
+                    : [];
+                const isHoveredByFile = normalizedHoveredCodebasePath !== "" &&
+                    attachedCodebasePaths.includes(normalizedHoveredCodebasePath);
+                const isEmphasized = emphasizedBlueprintComponentIds.has(node.id) || isHoveredByFile;
+                return {
+                    ...node,
+                    style: {
+                        ...(node.style ?? {}),
+                        opacity: isEmphasized ? 1 : 0.35,
+                    },
+                };
+            }
 
-            const isEmphasized = emphasizedBlueprintComponentIds.has(node.id);
-            return {
-                ...node,
-                style: {
-                    ...(node.style ?? {}),
-                    opacity: isEmphasized ? 1 : 0.35,
-                },
-            };
+            const isCardNode = CARD_LABELS.includes(nodeLabel as cardLabel);
+            if (isCardNode && hoveredAssetFileId) {
+                const attachmentIds = Array.isArray(nodeData.attachmentIds)
+                    ? nodeData.attachmentIds.filter((id): id is string => typeof id === "string")
+                    : [];
+                if (attachmentIds.includes(hoveredAssetFileId)) {
+                    return {
+                        ...node,
+                        style: {
+                            ...(node.style ?? {}),
+                            boxShadow: "0 0 0 3px rgba(0, 168, 219, 0.85)",
+                            borderRadius: 18,
+                        },
+                    };
+                }
+            }
+
+            return node;
         });
-    }, [labelFilteredNodes, queryMatchedNodeSet, emphasizedBlueprintComponentIds]);
+    }, [
+        labelFilteredNodes,
+        queryMatchedNodeSet,
+        emphasizedBlueprintComponentIds,
+        hoveredCodebaseFilePath,
+        hoveredAssetFileId,
+    ]);
 
     const filteredEdges = useMemo(() => {
         const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
@@ -675,18 +766,107 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         ));
     }, [edges, filteredNodes]);
 
+    const evolutionBaseNodes = useMemo(() => {
+        if (viewMode !== "evolution") return filteredNodes;
+        return filteredNodes.filter((node) => {
+            const label = String(node.data?.label ?? "").toLowerCase();
+            return label !== "blueprint_component" && label !== "blueprint_group";
+        });
+    }, [viewMode, filteredNodes]);
+
     const displayedNodes = useMemo(() => {
         if (viewMode === "evolution") {
-            return buildEvolutionLayoutNodes(filteredNodes, filteredEdges);
+            return buildEvolutionLayoutNodes(evolutionBaseNodes, filteredEdges);
         }
-        return filteredNodes;
-    }, [viewMode, filteredNodes, filteredEdges]);
+        return evolutionBaseNodes;
+    }, [viewMode, evolutionBaseNodes, filteredEdges]);
+
+    const displayedEdges = useMemo(() => {
+        const visibleNodeIds = new Set(displayedNodes.map((node) => node.id));
+        return filteredEdges.filter((edge) => (
+            visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+        ));
+    }, [filteredEdges, displayedNodes]);
+
+    const isInsideSystemBlueprintParentBox = useCallback((position: { x: number; y: number }) => {
+        const nodeById = new Map(nodes.map((node) => [node.id, node]));
+        const absolutePositionById = new Map<string, { x: number; y: number }>();
+        const resolveAbsolutePosition = (nodeId: string): { x: number; y: number } => {
+            const cached = absolutePositionById.get(nodeId);
+            if (cached) return cached;
+            const node = nodeById.get(nodeId);
+            if (!node) return { x: 0, y: 0 };
+            if (!node.parentId) {
+                const root = { x: node.position.x, y: node.position.y };
+                absolutePositionById.set(nodeId, root);
+                return root;
+            }
+            const parentAbs = resolveAbsolutePosition(node.parentId);
+            const abs = { x: parentAbs.x + node.position.x, y: parentAbs.y + node.position.y };
+            absolutePositionById.set(nodeId, abs);
+            return abs;
+        };
+
+        for (const node of nodes) {
+            const nodeData = node.data as Record<string, unknown>;
+            const label = String(nodeData.label ?? "").toLowerCase();
+            if (label !== "blueprint_group") continue;
+            if (typeof nodeData.blueprintFileName !== "string" || nodeData.blueprintFileName.trim() === "") continue;
+
+            const absolute = resolveAbsolutePosition(node.id);
+            const style = node.style as Record<string, unknown> | undefined;
+            const width = typeof style?.width === "number"
+                ? style.width
+                : Number.parseFloat(String(style?.width ?? "0")) || 0;
+            const height = typeof style?.height === "number"
+                ? style.height
+                : Number.parseFloat(String(style?.height ?? "0")) || 0;
+            if (width <= 0 || height <= 0) continue;
+
+            const insideX = position.x >= absolute.x && position.x <= absolute.x + width;
+            const insideY = position.y >= absolute.y && position.y <= absolute.y + height;
+            if (insideX && insideY) return true;
+        }
+
+        return false;
+    }, [nodes]);
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
         if (viewMode === "evolution") return;
-        if (cursorMode !== "node") return;
+        if (cursorMode !== "node" && cursorMode !== "blueprint_component") return;
 
         const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        if (cursorMode === "blueprint_component") {
+            if (isInsideSystemBlueprintParentBox(position)) return;
+
+            const componentId = Math.floor(Date.now() + Math.random() * 1000);
+            dispatch(addNode({
+                id: crypto.randomUUID(),
+                position,
+                type: "blueprintComponent",
+                data: {
+                    label: "blueprint_component",
+                    type: "technical",
+                    title: "Blueprint component",
+                    codebaseFilePaths: [],
+                    manualCreated: true,
+                    description: "",
+                    blueprintComponent: {
+                        id: componentId,
+                        name: "Blueprint component",
+                        feedsInto: [],
+                        description: "",
+                        referenceCitation: "",
+                        highBlockName: "Manual",
+                        intermediateBlockName: "Manual",
+                    },
+                    blueprintPaperTitle: "Manual component",
+                    blueprintFileName: "",
+                },
+            }));
+            return;
+        }
+
         dispatch(addNode({
             id: crypto.randomUUID(),
             position,
@@ -695,15 +875,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 label: "activity",
                 type: "social",
                 title: "Untitled",
+                createdAt: new Date().toISOString(),
+                relevant: true,
             },
         }));
-    }, [dispatch, viewMode, cursorMode, screenToFlowPosition]);
+    }, [dispatch, viewMode, cursorMode, screenToFlowPosition, isInsideSystemBlueprintParentBox]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
         const dragTypes = Array.from(e.dataTransfer?.types ?? []);
         const hasFiles = dragTypes.includes("Files");
         const hasBlueprint = dragTypes.includes(BLUEPRINT_DRAG_MIME);
-        if (!hasFiles && !hasBlueprint) return;
+        const hasGitHubFile = dragTypes.includes("application/x-vitral-github-file");
+        if (!hasFiles && !hasBlueprint && !hasGitHubFile) return;
 
         e.preventDefault();
         e.dataTransfer.dropEffect = viewMode === "evolution" ? "none" : "copy";
@@ -728,6 +911,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             if (graph.edges.length > 0) {
                 dispatch(connectEdges(graph.edges));
             }
+            return;
+        }
+
+        const githubFileRaw = e.dataTransfer?.getData("application/x-vitral-github-file");
+        if (githubFileRaw) {
+            e.preventDefault();
             return;
         }
 
@@ -757,8 +946,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 await requestCardsLLMTextInput(userText);
 
             if (response?.cards) {
-                const { nodes: generatedNodes, idMap } = llmCardsToNodes(response.cards, screenToFlowPosition({ x, y }));
-                const generatedEdges = llmConnectionsToEdges(response.connections, idMap);
+                const { nodes: generatedNodes, idMap } = llmCardsToNodes(
+                    response.cards,
+                    screenToFlowPosition({ x, y }),
+                    { createdAt: new Date().toISOString() },
+                );
+                const generatedEdges = llmConnectionsToEdges(
+                    response.connections,
+                    idMap,
+                    response.cards
+                );
 
                 dispatch(addNodes(generatedNodes));
                 dispatch(connectEdges(generatedEdges));
@@ -786,6 +983,150 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [fetchGithubEvents]);
 
     useEffect(() => {
+        const normalizePath = (path: string) => path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+        const pairKey = (blueprintEventId: string, codebaseSubtrackId: string) =>
+            `${blueprintEventId}::${codebaseSubtrackId}`;
+
+        const subtrackIdsByFilePath = new Map<string, Set<string>>();
+        for (const subtrack of codebaseSubtracks) {
+            for (const rawPath of subtrack.filePaths) {
+                const normalizedPath = normalizePath(rawPath);
+                if (!normalizedPath) continue;
+                if (!subtrackIdsByFilePath.has(normalizedPath)) {
+                    subtrackIdsByFilePath.set(normalizedPath, new Set<string>());
+                }
+                subtrackIdsByFilePath.get(normalizedPath)?.add(subtrack.id);
+            }
+        }
+
+        const blueprintEventIdByComponentNodeId = new Map<string, string>();
+        const blueprintEventByComponentNodeId = new Map<string, typeof blueprintEvents[number]>();
+        const existingBlueprintEventIds = new Set<string>();
+        for (const eventData of blueprintEvents) {
+            existingBlueprintEventIds.add(eventData.id);
+            if (typeof eventData.componentNodeId === "string" && eventData.componentNodeId.trim() !== "") {
+                blueprintEventIdByComponentNodeId.set(eventData.componentNodeId, eventData.id);
+                blueprintEventByComponentNodeId.set(eventData.componentNodeId, eventData);
+            }
+        }
+
+        const missingBlueprintEvents: Array<{
+            id: string;
+            name: string;
+            occurredAt: string;
+            componentNodeId: string;
+            paperDescription?: string;
+            referenceCitation?: string;
+            paperTitle?: string;
+            blueprintFileName?: string;
+        }> = [];
+        const updatedBlueprintEvents: typeof blueprintEvents = [];
+        const requiredAutoLinks: Array<{ blueprintEventId: string; codebaseSubtrackId: string }> = [];
+        const requiredAutoLinkKeys = new Set<string>();
+
+        for (const node of nodes) {
+            const nodeLabel = String(node.data?.label ?? "").toLowerCase();
+            if (nodeLabel !== "blueprint_component") continue;
+
+            const componentData = node.data as Record<string, unknown>;
+            const blueprintComponent = (
+                componentData.blueprintComponent &&
+                typeof componentData.blueprintComponent === "object"
+            )
+                ? (componentData.blueprintComponent as Record<string, unknown>)
+                : null;
+            const nextEventName = typeof componentData.title === "string" && componentData.title.trim() !== ""
+                ? componentData.title
+                : "Blueprint component";
+            const nextPaperDescription = blueprintComponent && typeof blueprintComponent.description === "string"
+                ? blueprintComponent.description
+                : "";
+            const nextReferenceCitation = blueprintComponent && typeof blueprintComponent.referenceCitation === "string"
+                ? blueprintComponent.referenceCitation
+                : "";
+            const nextPaperTitle = typeof componentData.blueprintPaperTitle === "string"
+                ? componentData.blueprintPaperTitle
+                : undefined;
+            const nextBlueprintFileName = typeof componentData.blueprintFileName === "string"
+                ? componentData.blueprintFileName
+                : undefined;
+
+            const existingBlueprintEvent = blueprintEventByComponentNodeId.get(node.id);
+            if (existingBlueprintEvent) {
+                const shouldUpdate =
+                    existingBlueprintEvent.name !== nextEventName ||
+                    (existingBlueprintEvent.paperDescription ?? "") !== nextPaperDescription ||
+                    (existingBlueprintEvent.referenceCitation ?? "") !== nextReferenceCitation ||
+                    (existingBlueprintEvent.paperTitle ?? "") !== (nextPaperTitle ?? "") ||
+                    (existingBlueprintEvent.blueprintFileName ?? "") !== (nextBlueprintFileName ?? "");
+
+                if (shouldUpdate) {
+                    updatedBlueprintEvents.push({
+                        ...existingBlueprintEvent,
+                        name: nextEventName,
+                        paperDescription: nextPaperDescription,
+                        referenceCitation: nextReferenceCitation,
+                        paperTitle: nextPaperTitle,
+                        blueprintFileName: nextBlueprintFileName,
+                    });
+                }
+            }
+
+            const attachedPaths = Array.isArray(componentData.codebaseFilePaths)
+                ? componentData.codebaseFilePaths
+                    .filter((path): path is string => typeof path === "string")
+                    .map((path) => normalizePath(path))
+                    .filter((path) => path !== "")
+                : [];
+            if (attachedPaths.length === 0) continue;
+
+            let blueprintEventId = blueprintEventIdByComponentNodeId.get(node.id);
+            if (!blueprintEventId) {
+                blueprintEventId = `blueprint-component:${node.id}`;
+                blueprintEventIdByComponentNodeId.set(node.id, blueprintEventId);
+
+                if (!existingBlueprintEventIds.has(blueprintEventId)) {
+                    missingBlueprintEvents.push({
+                        id: blueprintEventId,
+                        name: nextEventName,
+                        occurredAt: new Date().toISOString(),
+                        componentNodeId: node.id,
+                        paperDescription: nextPaperDescription,
+                        referenceCitation: nextReferenceCitation,
+                        paperTitle: nextPaperTitle,
+                        blueprintFileName: nextBlueprintFileName,
+                    });
+                    existingBlueprintEventIds.add(blueprintEventId);
+                }
+            }
+
+            for (const attachedPath of attachedPaths) {
+                const subtrackIds = subtrackIdsByFilePath.get(attachedPath);
+                if (!subtrackIds || subtrackIds.size === 0) continue;
+
+                for (const subtrackId of subtrackIds) {
+                    const key = pairKey(blueprintEventId, subtrackId);
+                    if (requiredAutoLinkKeys.has(key)) continue;
+                    requiredAutoLinkKeys.add(key);
+                    requiredAutoLinks.push({
+                        blueprintEventId,
+                        codebaseSubtrackId: subtrackId,
+                    });
+                }
+            }
+        }
+
+        for (const eventData of missingBlueprintEvents) {
+            dispatch(addBlueprintEvent(eventData));
+        }
+        for (const eventData of updatedBlueprintEvents) {
+            dispatch(updateBlueprintEvent(eventData));
+        }
+
+        dispatch(reconcileBlueprintCodebaseAutoLinks(requiredAutoLinks));
+    }, [dispatch, nodes, blueprintEvents, codebaseSubtracks]);
+
+    useEffect(() => {
         dispatch(setGithubEvents([]));
         void checkGitStatus();
     }, [dispatch, checkGitStatus]);
@@ -796,6 +1137,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 document.body.style.cursor = "text";
                 break;
             case "node":
+            case "blueprint_component":
                 document.body.style.cursor = "pointer";
                 break;
             default:
@@ -964,12 +1306,20 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         navigate(`/project/${projectId}/setup`);
     }, [navigate, projectId]);
 
+    const handleGoHome = useCallback(() => {
+        navigate("/projects");
+    }, [navigate]);
+
     const handleFreeInputClicked = useCallback(() => {
         setCursorMode("text");
     }, []);
 
     const handleNodeInputClicked = useCallback(() => {
         setCursorMode("node");
+    }, []);
+
+    const handleBlueprintComponentInputClicked = useCallback(() => {
+        setCursorMode("blueprint_component");
     }, []);
 
     const handlePointerClicked = useCallback(() => {
@@ -1004,6 +1354,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }));
     }, [dispatch]);
 
+    const handleSyncCodebaseEvents = useCallback(async () => {
+        await checkGitStatus();
+    }, [checkGitStatus]);
+
     if (status === "loading") return <div>Loading...</div>;
     if (status === "error") return <div>Error: {error}</div>;
 
@@ -1016,7 +1370,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             <FlowCanvas
                 projectId={projectId}
                 nodes={displayedNodes}
-                edges={filteredEdges}
+                edges={displayedEdges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 nodesDraggable={viewMode === "explore"}
@@ -1031,6 +1385,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             <CanvasSidebar
                 title={title}
                 onSetTitle={handleSetTitle}
+                onGoHome={handleGoHome}
                 onOpenSettings={handleOpenSettings}
                 bottomOffsetPx={canvasSidebarBottomOffset}
                 collapsed={sidebarCollapsed}
@@ -1059,6 +1414,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             <Toolbar
                 onFreeInputClicked={handleFreeInputClicked}
                 onNodeInputClicked={handleNodeInputClicked}
+                onBlueprintComponentClicked={handleBlueprintComponentInputClicked}
                 onPointerClicked={handlePointerClicked}
                 shifted={timelineOpen}
             />
@@ -1068,6 +1424,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 connectionStatus={gitConnectionStatus}
                 assetsRecords={allFiles}
                 bottomOffsetPx={canvasSidebarBottomOffset}
+                onAssetHover={setHoveredAssetFileId}
             />
 
             {cursorMode === "text" ? (
@@ -1092,6 +1449,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 codebaseEvents={gitEvents}
                 designStudyEvents={designStudyEvents}
                 blueprintEvents={blueprintEvents}
+                connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}
                 stages={timelineStages}
                 defaultStages={defaultStages}
                 onStageUpdate={handleStageUpdate}
@@ -1099,6 +1457,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onStageLaneCreation={handleStageLaneCreation}
                 onStageLaneDeletion={handleStageLaneDeletion}
                 onStageBoundaryChange={handleStageBoundaryChange}
+                onSyncCodebaseEvents={handleSyncCodebaseEvents}
             />
         </>
     );

@@ -28,7 +28,7 @@
 	flex-direction: row;
 	align-items: center;
 	height: 25px;
-	width: 165px;
+	width: 188px;
 	margin-left: auto;
 	position: relative;
 	padding: 0 5px 0 5px;
@@ -36,9 +36,44 @@
 	font-size: var(--font-size-xs);
 }
 
-.header p,
+.headerLeft {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.headerRight {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.headerDeleteButton {
+	border: none;
+	background: transparent;
+	color: rgba(0, 0, 0, 0.72);
+	padding: 0;
+	width: 14px;
+	height: 14px;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.headerDeleteButton:hover {
+	color: rgba(0, 0, 0, 0.96);
+}
+
 .footer p {
 	margin: 0;
+}
+
+.header p {
+	margin-top: 0;
+	margin-bottom: 0;
+	margin-left: 18px;
 }
 
 .title {
@@ -100,6 +135,90 @@
 	overflow-y: auto;
 	text-align: left;
 	margin: 0;
+	max-height: 84px;
+}
+
+.relevantToggle {
+	border: 1px solid rgba(255, 255, 255, 0.5);
+	border-radius: 999px;
+	padding: 2px 6px;
+	font-size: 9px;
+	line-height: 1;
+	background: transparent;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.relevantToggleOn {
+	color: rgba(9, 83, 22, 0.95);
+	background: rgba(224, 255, 224, 0.55);
+	border-color: rgba(9, 83, 22, 0.45);
+}
+
+.relevantToggleOff {
+	color: rgba(107, 36, 16, 0.95);
+	background: rgba(255, 238, 232, 0.45);
+	border-color: rgba(107, 36, 16, 0.45);
+}
+
+.assignedText {
+	font-size: 10px;
+	text-align: left;
+	padding: 0 10px 6px 10px;
+	margin: 0;
+	opacity: 0.85;
+}
+
+.createdAtText {
+	margin: 8px 0 0 0;
+	font-size: 10px;
+	line-height: 1.2;
+	opacity: 0.82;
+}
+
+.metaSection {
+	margin-top: 8px;
+	padding-top: 6px;
+	text-align: left;
+	border-top: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.metaText {
+	margin: 0 0 4px 0;
+	font-size: 10px;
+	line-height: 1.35;
+	word-break: break-word;
+}
+
+.metaLabel {
+	font-weight: 600;
+}
+
+.assignmentSection {
+	margin-top: 8px;
+	padding-top: 6px;
+	text-align: left;
+	border-top: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.assignmentLabel {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 10px;
+}
+
+.assignmentSelect {
+	border: 1px solid rgba(255, 255, 255, 0.4);
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.18);
+	color: white;
+	font-size: 11px;
+	padding: 2px 6px;
+}
+
+.assignmentSelect option {
+	color: black;
 }
 
 .labelIcon {
@@ -136,6 +255,10 @@
 
 .flipCard {
 	perspective: 1000px;
+}
+
+.cardNotRelevant {
+	opacity: 0.58;
 }
 
 .flipCardInner {

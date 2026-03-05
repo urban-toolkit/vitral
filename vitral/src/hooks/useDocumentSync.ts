@@ -11,6 +11,7 @@ import {
     selectAllBlueprintEvents,
     selectBlueprintCodebaseLinks,
     selectAllDesignStudyEvents,
+    selectParticipants,
     selectAllStages,
     selectAllSubStages,
     selectCodebaseSubtracks,
@@ -19,6 +20,7 @@ import {
     setCodebaseSubtracks,
     setBlueprintCodebaseLinks,
     setBlueprintEvents,
+    setParticipants,
     setDefaultStages,
     setDesignStudyEvents,
     setStages,
@@ -45,6 +47,7 @@ export function useDocumentSync(projectId: string) {
     const blueprintEvents = useSelector(selectAllBlueprintEvents);
     const blueprintCodebaseLinks = useSelector(selectBlueprintCodebaseLinks);
     const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
+    const participants = useSelector(selectParticipants);
     const defaultStages = useSelector(selectDefaultStages);
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
 
@@ -67,10 +70,11 @@ export function useDocumentSync(projectId: string) {
             blueprintEvents: blueprintEvents,
             blueprintCodebaseLinks: blueprintCodebaseLinks,
             codebaseSubtracks: codebaseSubtracks,
+            participants: participants,
             defaultStages: defaultStages,
             timelineStartEnd: timelineStartEnd
         });
-    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, codebaseSubtracks]);
+    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, codebaseSubtracks, participants]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
@@ -86,6 +90,7 @@ export function useDocumentSync(projectId: string) {
                 blueprintCodebaseLinks: BlueprintCodebaseLink[],
                 subStages: SubStage[],
                 codebaseSubtracks: CodebaseSubtrack[],
+                participants: Array<{ id: string; name: string; role: string }>,
                 defaultStages: string[],
                 timelineStartEnd: {start: string, end: string},  
                 title?: string) => {
@@ -106,6 +111,7 @@ export function useDocumentSync(projectId: string) {
                         blueprintCodebaseLinks,
                         subStages,
                         codebaseSubtracks,
+                        participants,
                         defaultStages,
                         timelineStartEnd
                     }, title);
@@ -157,6 +163,7 @@ export function useDocumentSync(projectId: string) {
                 const blueprintCodebaseLinks = timeline?.blueprintCodebaseLinks ?? [];
                 const subStages = timeline?.subStages ?? [];
                 const codebaseSubtracks = timeline?.codebaseSubtracks ?? [];
+                const participants = timeline?.participants ?? [];
                 const defaultStages = timeline?.defaultStages ?? [];
                 const timelineStartEnd = timeline?.timelineStartEnd ?? {start: "June 15, 2023 03:24:00", end: "December 04, 2023 00:24:00"};
 
@@ -166,6 +173,7 @@ export function useDocumentSync(projectId: string) {
                 dispatch(setBlueprintCodebaseLinks(blueprintCodebaseLinks));
                 dispatch(setSubStages(subStages));
                 dispatch(setCodebaseSubtracks(codebaseSubtracks));
+                dispatch(setParticipants(participants));
                 dispatch(setDefaultStages(defaultStages));
                 dispatch(setTimelineStartEnd(timelineStartEnd));
 
@@ -179,6 +187,7 @@ export function useDocumentSync(projectId: string) {
                     blueprintCodebaseLinks,
                     subStages,
                     codebaseSubtracks,
+                    participants,
                     defaultStages,
                     timelineStartEnd });
                 hasLoadedRef.current = true;
@@ -205,8 +214,8 @@ export function useDocumentSync(projectId: string) {
 
         if (currentHash === lastSavedHashRef.current) return;
 
-        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, subStages, codebaseSubtracks, defaultStages, timelineStartEnd, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, subStages, codebaseSubtracks, defaultStages, timelineStartEnd]);
+        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, subStages, codebaseSubtracks, participants, defaultStages, timelineStartEnd, flow.title);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, subStages, codebaseSubtracks, defaultStages, timelineStartEnd, participants]);
 
     return { status, error };
 }

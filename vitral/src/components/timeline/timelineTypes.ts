@@ -47,11 +47,13 @@ export type TimelineProps = {
   onStageLaneCreation: (name: string) => void;
   onStageLaneDeletion: (id: string) => void;
   onStageBoundaryChange: (prevId: string, nextId: string, date: Date) => void;
+  onSyncCodebaseEvents?: () => Promise<void> | void;
   stages?: Stage[];
   codebaseEvents?: GitHubEvent[];
   knowledgeBaseEvents?: KnowledgeBaseEvent[];
   designStudyEvents?: DesignStudyEvent[];
   blueprintEvents?: BlueprintEvent[];
+  connectedBlueprintComponentNodeIds?: string[];
   margin?: { top: number; right: number; bottom: number; left: number };
 };
 

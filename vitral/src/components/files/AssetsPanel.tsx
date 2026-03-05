@@ -6,6 +6,7 @@ type Props = {
     records: fileRecord[];
     title?: string;
     className?: string;
+    onAssetHover?: (fileId: string | null) => void;
 };
 
 function formatBytes(bytes: number): string {
@@ -31,6 +32,7 @@ export default function AssetsPanel({
     records,
     title = "Assets",
     className,
+    onAssetHover,
 }: Props) {
     const [query] = useState("");
 
@@ -71,6 +73,8 @@ export default function AssetsPanel({
                         <div
                             key={r.id}
                             className={styles.card}
+                            onMouseEnter={() => onAssetHover?.(r.id)}
+                            onMouseLeave={() => onAssetHover?.(null)}
                         >
                             <div className={styles.cardTop}>
                                 <span className={styles.name}>{r.name}</span>

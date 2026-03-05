@@ -39,6 +39,28 @@
     display: flex;
 }
 
+.removeFileButton {
+    position: absolute;
+    right: 4px;
+    top: 4px;
+    z-index: 5;
+    width: 18px;
+    height: 18px;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.95);
+    color: #404040;
+    line-height: 1;
+    font-size: 11px;
+    padding: 0;
+    cursor: pointer;
+}
+
+.removeFileButton:hover {
+    background: #ffffff;
+    color: #1f1f1f;
+}
+
 .fileCarousel, .fileSlide, .carouselWrap {
   box-sizing: border-box;
 }

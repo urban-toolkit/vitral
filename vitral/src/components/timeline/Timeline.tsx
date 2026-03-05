@@ -3,12 +3,13 @@ import * as d3 from "d3";
 import classes from "./Timeline.module.css";
 import type { BlueprintEvent, DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faCaretDown, faPlus, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
+import { faArrowsRotate, faCaretDown, faPlus, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
 import { StagePicker } from "@/components/timeline/StagePicker";
 import { useDispatch, useSelector } from "react-redux";
 import {
   addBlueprintCodebaseLink,
   addCodebaseSubtrack,
+  deleteBlueprintCodebaseLink,
   selectBlueprintCodebaseLinks,
   selectHoveredBlueprintComponentNodeId,
   addDesignStudyEvent,
@@ -51,12 +52,14 @@ export const Timeline = ({
   knowledgeBaseEvents = [],
   designStudyEvents = [],
   blueprintEvents = [],
+  connectedBlueprintComponentNodeIds = [],
   defaultStages = [],
   onStageUpdate,
   onStageCreation,
   onStageLaneCreation,
   onStageLaneDeletion,
   onStageBoundaryChange,
+  onSyncCodebaseEvents,
   margin = { top: 22, right: 16, bottom: 34, left: 16 },
 }: TimelineProps) => {
   const dispatch = useDispatch();
@@ -75,6 +78,11 @@ export const Timeline = ({
     x: number;
     y: number;
     blueprintEventId: string;
+  } | null>(null);
+  const [blueprintCodebaseLinkMenu, setBlueprintCodebaseLinkMenu] = useState<{
+    x: number;
+    y: number;
+    linkId: string;
   } | null>(null);
   const [pendingBlueprintLinkEventId, setPendingBlueprintLinkEventId] = useState<string | null>(null);
 
@@ -108,7 +116,9 @@ export const Timeline = ({
   const todayCaretRef = useRef<HTMLSpanElement | null>(null);
   const newStageButtonRef = useRef<HTMLSpanElement | null>(null);
   const newCodebaseSubtrackButtonRef = useRef<HTMLSpanElement | null>(null);
+  const syncCodebaseButtonRef = useRef<HTMLSpanElement | null>(null);
   const llmButtonRef = useRef<HTMLSpanElement | null>(null);
+  const [isSyncingCodebase, setIsSyncingCodebase] = useState(false);
 
   const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
   const blueprintCodebaseLinks = useSelector(selectBlueprintCodebaseLinks);
@@ -135,6 +145,7 @@ export const Timeline = ({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setBlueprintLinkMenu(null);
+      setBlueprintCodebaseLinkMenu(null);
       setPendingBlueprintLinkEventId(null);
     };
 
@@ -164,6 +175,7 @@ export const Timeline = ({
     todayCaretRef,
     newStageButtonRef,
     newCodebaseSubtrackButtonRef,
+    syncCodebaseButtonRef,
     width,
     height,
     margin,
@@ -174,6 +186,7 @@ export const Timeline = ({
     pendingBlueprintLinkEventId,
     hoveredCodebaseFilePath,
     hoveredBlueprintComponentNodeId,
+    connectedBlueprintComponentNodeIds,
     dispatch,
     onStageBoundaryChange,
     onStageLaneDeletion,
@@ -190,12 +203,13 @@ export const Timeline = ({
       dispatch(deleteCodebaseSubtrack(subtrackId));
     },
     onCreateBlueprintCodebaseLink: (blueprintEventId, codebaseSubtrackId) => {
-      dispatch(addBlueprintCodebaseLink({ blueprintEventId, codebaseSubtrackId }));
+      dispatch(addBlueprintCodebaseLink({ blueprintEventId, codebaseSubtrackId, origin: "manual" }));
       setPendingBlueprintLinkEventId(null);
     },
     setMilestoneMenu,
     setSelectedMilestone,
     setBlueprintLinkMenu,
+    setBlueprintCodebaseLinkMenu,
     setTagPicker,
     setStageMenu,
     setNameEdit,
@@ -314,6 +328,7 @@ export const Timeline = ({
           setShowTooltip(false);
           setMilestoneMenu(null);
           setBlueprintLinkMenu(null);
+          setBlueprintCodebaseLinkMenu(null);
         }}
       >
         <svg ref={svgRef} className={classes.svg} />
@@ -364,6 +379,24 @@ export const Timeline = ({
         </span>
 
         <span
+          ref={syncCodebaseButtonRef}
+          className={classes.newStage}
+          title="Sync codebase commits"
+          onClick={async (event) => {
+            event.stopPropagation();
+            if (!onSyncCodebaseEvents || isSyncingCodebase) return;
+            setIsSyncingCodebase(true);
+            try {
+              await onSyncCodebaseEvents();
+            } finally {
+              setIsSyncingCodebase(false);
+            }
+          }}
+        >
+          <FontAwesomeIcon icon={faArrowsRotate} spin={isSyncingCodebase} />
+        </span>
+
+        <span
           ref={llmButtonRef}
           style={{ left: 125, top: margin.top + 67, position: "absolute", cursor: "pointer" }}
           onClick={handleGenerateMilestones}
@@ -403,6 +436,26 @@ export const Timeline = ({
               }}
             >
               Create link
+            </button>
+          </div>
+        )}
+
+        {blueprintCodebaseLinkMenu && (
+          <div
+            className={classes.timelineContextMenu}
+            style={{ left: blueprintCodebaseLinkMenu.x, top: blueprintCodebaseLinkMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className={classes.timelineContextMenuButton}
+              onClick={() => {
+                dispatch(deleteBlueprintCodebaseLink(blueprintCodebaseLinkMenu.linkId));
+                setBlueprintCodebaseLinkMenu(null);
+                setShowTooltip(false);
+              }}
+            >
+              Delete link
             </button>
           </div>
         )}

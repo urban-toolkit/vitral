@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronLeft, faChevronRight, faGear } from "@fortawesome/free-solid-svg-icons";
+import { faChevronLeft, faChevronRight, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
 import type { cardLabel } from "@/config/types";
 import type { QuerySystemPapersResult, SystemPaper } from "@/api/stateApi";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
@@ -127,6 +127,7 @@ function SystemPaperThumbnail({
 type CanvasSidebarProps = {
     title: string;
     onSetTitle: (newTitle: string) => void;
+    onGoHome?: () => void;
     onOpenSettings?: () => void;
     bottomOffsetPx?: number;
     collapsed: boolean;
@@ -280,6 +281,7 @@ function resolveTooltipPosition(cursorX: number, cursorY: number, size: number):
 export const CanvasSidebar = memo(function CanvasSidebar({
     title,
     onSetTitle,
+    onGoHome,
     onOpenSettings,
     bottomOffsetPx = 0,
     collapsed,
@@ -359,6 +361,17 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                     )}
 
                     <div className={styles.projectHeaderActions}>
+                        {onGoHome ? (
+                            <button
+                                type="button"
+                                className={styles.homeButton}
+                                onClick={onGoHome}
+                                title="Back to projects"
+                                aria-label="Back to projects"
+                            >
+                                <FontAwesomeIcon icon={faHouse} />
+                            </button>
+                        ) : null}
                         {onOpenSettings ? (
                             <button
                                 type="button"

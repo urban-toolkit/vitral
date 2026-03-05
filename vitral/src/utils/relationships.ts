@@ -13,8 +13,8 @@ const ALLOWED_RELATION_LABEL_BY_PAIR: Record<string, string> = {
     "activity|task": "derived from",
     "object|task": "relevant to",
     "blueprint_component|blueprint_component": "feeds into",
-    "blueprint_component|requirement": "implements",
-    "blueprint_component|task": "implements",
+    "blueprint_component|requirement": "tackled in",
+    "blueprint_component|task": "tackled in",
 };
 
 export function relationPairKey(a: string, b: string): string {

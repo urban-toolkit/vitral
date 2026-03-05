@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import styles from "./GitRepoModal.module.css";
 import type { GitHubRepo } from "@/api/githubApi";
 
@@ -30,8 +31,9 @@ export function GitRepoModal({
   }, [repos, query]);
 
   if (!isOpen) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div className={styles.backdrop} onMouseDown={onClose} role="dialog" aria-modal="true">
       <div className={styles.card} onMouseDown={(e) => e.stopPropagation()}>
         <div className={styles.header}>
@@ -84,7 +86,8 @@ export function GitRepoModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

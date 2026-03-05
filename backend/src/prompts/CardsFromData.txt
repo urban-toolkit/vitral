@@ -17,18 +17,6 @@ You will receive a JSON describing the data file as:
     content: string
 }
 
-And the assets available in the system:
-
-{
-    assets: [
-        {
-            id: string,
-            name: string,
-            ext: string
-        }
-    ]
-}
-
 You should follow these steps:
 
 - Classify the data file according to its potential role in the design study:
@@ -40,8 +28,6 @@ You should follow these steps:
     - dataset: generate one object for each data field.
     - metadata: generate one object for each data field.
     - results: generate one object for each data field.
-
-You should also link object cards to appropriate related assets using a list of assets ids.
 
 You should also include a reference to the portion of the content that generated the card, verbatim.
 
@@ -55,7 +41,6 @@ Output a list of cards in the following JSON format:
             entity: string,
             title: string,
             description: string,
-            assets: string[],
             reference: string
         }
     ]

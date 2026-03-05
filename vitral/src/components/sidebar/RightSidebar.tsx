@@ -8,6 +8,7 @@ type RightSidebarProps = {
     connectionStatus: { connected: boolean; user?: { id: number; login: string } };
     assetsRecords: fileRecord[];
     bottomOffsetPx?: number;
+    onAssetHover?: (fileId: string | null) => void;
 };
 
 export function RightSidebar({
@@ -15,6 +16,7 @@ export function RightSidebar({
     connectionStatus,
     assetsRecords,
     bottomOffsetPx = 0,
+    onAssetHover,
 }: RightSidebarProps) {
     const sidebarHeight = `calc(100vh - ${Math.max(0, bottomOffsetPx)}px)`;
 
@@ -34,6 +36,7 @@ export function RightSidebar({
                         records={assetsRecords}
                         title="Assets"
                         className={styles.sectionCard}
+                        onAssetHover={onAssetHover}
                     />
                 </div>
             </div>

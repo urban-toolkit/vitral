@@ -10,10 +10,12 @@ export function FileCarousel({
     files,
     children,
     persistKey,
+    onRemoveFile,
 }: {
     files: fileRecord[];
     children?: React.ReactNode;
     persistKey?: string;
+    onRemoveFile?: (fileId: string) => void;
 }) {
     const scrollerRef = useRef<HTMLDivElement | null>(null);
     const prevFileCountRef = useRef(files.length);
@@ -129,6 +131,20 @@ export function FileCarousel({
             <div className={classes.fileCarousel} ref={scrollerRef}>
                 {files.map((file) => (
                     <div className={classes.fileSlide} key={file.id}>
+                        {onRemoveFile ? (
+                            <button
+                                type="button"
+                                className={classes.removeFileButton}
+                                title={`Detach ${file.name}`}
+                                onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    onRemoveFile(file.id);
+                                }}
+                            >
+                                x
+                            </button>
+                        ) : null}
                         <FilePreview file={file} />
                     </div>
                 ))}

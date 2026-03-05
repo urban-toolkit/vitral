@@ -30,7 +30,12 @@ export function BlueprintTooltip({ event }: BlueprintTooltipProps) {
           ? event.paperDescription
           : "No paper description available."}
       </p>
+
+      {event.referenceCitation && event.referenceCitation.trim() !== "" ? (
+        <p style={{ fontSize: "var(--font-size-xs)", whiteSpace: "pre-wrap", color: "var(--subtitle-color)" }}>
+          <strong>Reference citation:</strong> {event.referenceCitation}
+        </p>
+      ) : null}
     </div>
   );
 }
-

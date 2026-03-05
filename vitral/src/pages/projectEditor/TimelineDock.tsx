@@ -18,6 +18,7 @@ type TimelineDockProps = {
     codebaseEvents: GitHubEvent[];
     designStudyEvents: DesignStudyEvent[];
     blueprintEvents?: BlueprintEvent[];
+    connectedBlueprintComponentNodeIds?: string[];
     stages: Stage[];
     defaultStages: string[];
     onStageUpdate: (stage: Stage) => void;
@@ -25,6 +26,7 @@ type TimelineDockProps = {
     onStageLaneCreation: (name: string) => void;
     onStageLaneDeletion: (id: string) => void;
     onStageBoundaryChange: (prevId: string, nextId: string, date: Date) => void;
+    onSyncCodebaseEvents?: () => Promise<void> | void;
 };
 
 export const TimelineDock = memo(function TimelineDock({
@@ -35,6 +37,7 @@ export const TimelineDock = memo(function TimelineDock({
     codebaseEvents,
     designStudyEvents,
     blueprintEvents = [],
+    connectedBlueprintComponentNodeIds = [],
     stages,
     defaultStages,
     onStageUpdate,
@@ -42,6 +45,7 @@ export const TimelineDock = memo(function TimelineDock({
     onStageLaneCreation,
     onStageLaneDeletion,
     onStageBoundaryChange,
+    onSyncCodebaseEvents,
 }: TimelineDockProps) {
     return (
         <>
@@ -89,6 +93,7 @@ export const TimelineDock = memo(function TimelineDock({
                     knowledgeBaseEvents={KNOWLEDGE_BASE_EVENTS}
                     designStudyEvents={designStudyEvents}
                     blueprintEvents={blueprintEvents}
+                    connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}
                     stages={stages}
                     defaultStages={defaultStages}
                     onStageUpdate={onStageUpdate}
@@ -96,6 +101,7 @@ export const TimelineDock = memo(function TimelineDock({
                     onStageLaneCreation={onStageLaneCreation}
                     onStageLaneDeletion={onStageLaneDeletion}
                     onStageBoundaryChange={onStageBoundaryChange}
+                    onSyncCodebaseEvents={onSyncCodebaseEvents}
                 />
             </div>
         </>

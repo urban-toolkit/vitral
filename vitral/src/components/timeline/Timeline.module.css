@@ -189,7 +189,6 @@
     fill: none;
     stroke: rgba(45, 125, 210, 0.45);
     stroke-width: 2;
-    stroke-dasharray: 5 4;
     pointer-events: none;
 }
 

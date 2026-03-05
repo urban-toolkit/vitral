@@ -13,7 +13,11 @@ import type {
     LaneType,
     Stage
 } from "@/config/types";
-import { addSubStage, deleteSubStage } from "@/store/timelineSlice";
+import {
+    addSubStage,
+    deleteSubStage,
+    setHoveredBlueprintComponentNodeId,
+} from "@/store/timelineSlice";
 import classes from "./Timeline.module.css";
 import type {
     CodebaseSubtrack,
@@ -36,6 +40,12 @@ type BlueprintLinkMenuState = {
     x: number;
     y: number;
     blueprintEventId: string;
+} | null;
+
+type BlueprintCodebaseLinkMenuState = {
+    x: number;
+    y: number;
+    linkId: string;
 } | null;
 
 type NameEditState = {
@@ -87,6 +97,7 @@ type UseTimelineChartParams = {
     todayCaretRef: RefObject<HTMLSpanElement | null>;
     newStageButtonRef: RefObject<HTMLSpanElement | null>;
     newCodebaseSubtrackButtonRef: RefObject<HTMLSpanElement | null>;
+    syncCodebaseButtonRef: RefObject<HTMLSpanElement | null>;
     width: number;
     height: number;
     margin: { top: number; right: number; bottom: number; left: number };
@@ -97,6 +108,7 @@ type UseTimelineChartParams = {
     pendingBlueprintLinkEventId: string | null;
     hoveredCodebaseFilePath: string | null;
     hoveredBlueprintComponentNodeId: string | null;
+    connectedBlueprintComponentNodeIds: string[];
     dispatch: (action: unknown) => void;
     onStageBoundaryChange: (prevId: string, nextId: string, date: Date) => void;
     onStageLaneDeletion: (id: string) => void;
@@ -108,6 +120,7 @@ type UseTimelineChartParams = {
     setMilestoneMenu: Dispatch<SetStateAction<MilestoneMenuState>>;
     setSelectedMilestone: Dispatch<SetStateAction<DesignStudyEvent | null>>;
     setBlueprintLinkMenu: Dispatch<SetStateAction<BlueprintLinkMenuState>>;
+    setBlueprintCodebaseLinkMenu: Dispatch<SetStateAction<BlueprintCodebaseLinkMenuState>>;
     setTagPicker: Dispatch<SetStateAction<TagPickerState>>;
     setStageMenu: Dispatch<SetStateAction<StageMenuState>>;
     setNameEdit: Dispatch<SetStateAction<NameEditState>>;
@@ -125,6 +138,7 @@ export function useTimelineChart({
     todayCaretRef,
     newStageButtonRef,
     newCodebaseSubtrackButtonRef,
+    syncCodebaseButtonRef,
     width,
     height,
     margin,
@@ -135,6 +149,7 @@ export function useTimelineChart({
     pendingBlueprintLinkEventId,
     hoveredCodebaseFilePath,
     hoveredBlueprintComponentNodeId,
+    connectedBlueprintComponentNodeIds,
     dispatch,
     onStageBoundaryChange,
     onStageLaneDeletion,
@@ -146,6 +161,7 @@ export function useTimelineChart({
     setMilestoneMenu,
     setSelectedMilestone,
     setBlueprintLinkMenu,
+    setBlueprintCodebaseLinkMenu,
     setTagPicker,
     setStageMenu,
     setNameEdit,
@@ -190,6 +206,39 @@ export function useTimelineChart({
         const normalizedHoveredPath = hoveredCodebaseFilePath
             ? normalizePath(hoveredCodebaseFilePath)
             : null;
+        const highlightedSubtrackIdsFromBlueprintHover = new Set<string>();
+        const highlightedBlueprintEventIdsFromFileHover = new Set<string>();
+        const connectedBlueprintComponentNodeIdSet = new Set(connectedBlueprintComponentNodeIds);
+
+        if (normalizedHoveredPath) {
+            const highlightedSubtrackIdsFromFileHover = new Set(
+                codebaseSubtracks
+                    .filter((subtrack) =>
+                        subtrack.filePaths.some((path) => normalizePath(path) === normalizedHoveredPath)
+                    )
+                    .map((subtrack) => subtrack.id)
+            );
+
+            for (const link of blueprintCodebaseLinks) {
+                if (highlightedSubtrackIdsFromFileHover.has(link.codebaseSubtrackId)) {
+                    highlightedBlueprintEventIdsFromFileHover.add(link.blueprintEventId);
+                }
+            }
+        }
+
+        if (hoveredBlueprintComponentNodeId) {
+            const hoveredBlueprintEventIds = new Set(
+                parsed.bp
+                    .filter((eventData) => eventData.componentNodeId === hoveredBlueprintComponentNodeId)
+                    .map((eventData) => eventData.id)
+            );
+
+            for (const link of blueprintCodebaseLinks) {
+                if (hoveredBlueprintEventIds.has(link.blueprintEventId)) {
+                    highlightedSubtrackIdsFromBlueprintHover.add(link.codebaseSubtrackId);
+                }
+            }
+        }
 
         const codebaseSubtrackRows = codebaseSubtracks.map((subtrack, index) => {
             let top = laneY.codebase + laneH + laneGap;
@@ -208,9 +257,10 @@ export function useTimelineChart({
                 top,
                 height: heightForRow,
                 center: top + heightForRow / 2,
-                isHighlighted: normalizedHoveredPath
-                    ? subtrack.filePaths.some((path) => normalizePath(path) === normalizedHoveredPath)
-                    : false,
+                isHighlighted:
+                    (normalizedHoveredPath
+                        ? subtrack.filePaths.some((path) => normalizePath(path) === normalizedHoveredPath)
+                        : false) || highlightedSubtrackIdsFromBlueprintHover.has(subtrack.id),
             };
         });
 
@@ -228,6 +278,18 @@ export function useTimelineChart({
             .style("height", `${svgHeight}px`);
 
         svg.selectAll("*").remove();
+        const defs = svg.append("defs");
+        defs.append("marker")
+            .attr("id", "blueprint-link-arrow-head")
+            .attr("viewBox", "0 0 10 10")
+            .attr("refX", 5)
+            .attr("refY", 5)
+            .attr("markerWidth", 6)
+            .attr("markerHeight", 6)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M 0 0 L 10 5 L 0 10 z")
+            .attr("fill", "rgba(45, 125, 210, 0.8)");
 
         const x0 = d3
             .scaleTime()
@@ -801,6 +863,11 @@ export function useTimelineChart({
                 margin.left + 8,
                 laneY.codebase + 40
             );
+            setRefPos(
+                syncCodebaseButtonRef.current,
+                timelineLeft - 20,
+                laneY.codebase + 5
+            );
 
             stageG
                 .selectAll("line.markerLine")
@@ -1016,14 +1083,28 @@ export function useTimelineChart({
                     classes.blueprintCodebaseLinkActive,
                     (entry: any) => entry.link.blueprintEventId === pendingBlueprintLinkEventId
                 )
+                .style("pointer-events", "stroke")
+                .style("cursor", "context-menu")
                 .attr("d", (entry: any) => {
                     const sourceX = x(entry.blueprintEvent.date);
                     const sourceY = laneY.blueprint + laneH / 2;
-                    const targetX = timelineLeft + 1;
                     const targetY = entry.subtrackRow.center;
-                    const midY = (sourceY + targetY) / 2;
 
-                    return `M ${sourceX} ${sourceY} C ${sourceX} ${midY}, ${targetX} ${midY}, ${targetX} ${targetY}`;
+                    return `M ${sourceX} ${sourceY} L ${sourceX} ${targetY}`;
+                })
+                .attr("marker-end", "url(#blueprint-link-arrow-head)")
+                .on("contextmenu", (event: any, entry: any) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const [sx, sy] = d3.pointer(event, containerRef.current);
+                    setMilestoneMenu(null);
+                    setBlueprintLinkMenu(null);
+                    setBlueprintCodebaseLinkMenu({
+                        x: sx,
+                        y: sy,
+                        linkId: entry.link.id,
+                    });
+                    setShowTooltip(false);
                 });
 
             const plot = (
@@ -1049,10 +1130,14 @@ export function useTimelineChart({
                     )
                     .style("opacity", opacity)
                     .attr("transform", (eventData: any) => {
-                        const isHighlightedBlueprintEvent =
+                        const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
                             eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        const isHighlightedByFileHover =
+                            kind === "blueprint" &&
+                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
+                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
                         const scale = isHighlightedBlueprintEvent ? 1.35 : 1;
                         return `translate(${x(toDate(eventData.date))}, ${centerY}) scale(${scale})`;
                     })
@@ -1062,25 +1147,87 @@ export function useTimelineChart({
                     .selectAll("rect, circle, path")
                     .attr("class", classes.eventShape)
                     .style("fill", (eventData: any) => {
-                        const isHighlightedBlueprintEvent =
+                        const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
                             eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        const isHighlightedByFileHover =
+                            kind === "blueprint" &&
+                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
+                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
                         return isHighlightedBlueprintEvent ? "#00A8DB" : null;
                     })
                     .style("stroke", (eventData: any) => {
-                        const isHighlightedBlueprintEvent =
+                        const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
                             eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        const isHighlightedByFileHover =
+                            kind === "blueprint" &&
+                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
+                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
+                        const isDisconnectedBlueprintEvent =
+                            kind === "blueprint" &&
+                            typeof eventData.componentNodeId === "string" &&
+                            eventData.componentNodeId.trim() !== "" &&
+                            !connectedBlueprintComponentNodeIdSet.has(eventData.componentNodeId);
+                        if (isDisconnectedBlueprintEvent) return "#4D4D4D";
                         return isHighlightedBlueprintEvent ? "#005E79" : null;
                     })
                     .style("stroke-width", (eventData: any) => {
-                        const isHighlightedBlueprintEvent =
+                        const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
                             eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        const isHighlightedByFileHover =
+                            kind === "blueprint" &&
+                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
+                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
+                        const isDisconnectedBlueprintEvent =
+                            kind === "blueprint" &&
+                            typeof eventData.componentNodeId === "string" &&
+                            eventData.componentNodeId.trim() !== "" &&
+                            !connectedBlueprintComponentNodeIdSet.has(eventData.componentNodeId);
+                        if (isDisconnectedBlueprintEvent) return 1.8;
                         return isHighlightedBlueprintEvent ? 2.2 : null;
+                    })
+                    .style("opacity", (eventData: any) => {
+                        const isHoveredBlueprintComponentEvent =
+                            kind === "blueprint" &&
+                            hoveredBlueprintComponentNodeId &&
+                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
+                        const isHighlightedByFileHover =
+                            kind === "blueprint" &&
+                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
+                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
+                        const isDisconnectedBlueprintEvent =
+                            kind === "blueprint" &&
+                            typeof eventData.componentNodeId === "string" &&
+                            eventData.componentNodeId.trim() !== "" &&
+                            !connectedBlueprintComponentNodeIdSet.has(eventData.componentNodeId);
+                        if (isHighlightedBlueprintEvent) return 1;
+                        return isDisconnectedBlueprintEvent ? 0.45 : 1;
+                    })
+                    .style("stroke-dasharray", (eventData: any) => {
+                        const isDisconnectedBlueprintEvent =
+                            kind === "blueprint" &&
+                            typeof eventData.componentNodeId === "string" &&
+                            eventData.componentNodeId.trim() !== "" &&
+                            !connectedBlueprintComponentNodeIdSet.has(eventData.componentNodeId);
+                        return isDisconnectedBlueprintEvent ? "4 3" : null;
+                    })
+                    .on("mouseenter", (_event: any, eventData: any) => {
+                        if (kind !== "blueprint") return;
+                        if (typeof eventData.componentNodeId !== "string" || eventData.componentNodeId.trim() === "") {
+                            return;
+                        }
+                        if (hoveredBlueprintComponentNodeId === eventData.componentNodeId) return;
+                        dispatch(setHoveredBlueprintComponentNodeId(eventData.componentNodeId));
+                    })
+                    .on("mouseleave", () => {
+                        if (kind !== "blueprint") return;
+                        if (!hoveredBlueprintComponentNodeId) return;
+                        dispatch(setHoveredBlueprintComponentNodeId(null));
                     })
                     .on("click", (event: any, eventData: any) => {
                         if (kind !== "codebase" && kind !== "blueprint") return;
@@ -1105,6 +1252,7 @@ export function useTimelineChart({
                         event.stopPropagation();
                         const [sx, sy] = d3.pointer(event, containerRef.current);
                         setMilestoneMenu(null);
+                        setBlueprintCodebaseLinkMenu(null);
                         setBlueprintLinkMenu({
                             x: sx,
                             y: sy,
@@ -1113,9 +1261,12 @@ export function useTimelineChart({
                         setShowTooltip(false);
                     });
 
-                if (kind === "blueprint" && hoveredBlueprintComponentNodeId) {
+                if (kind === "blueprint" && (hoveredBlueprintComponentNodeId || highlightedBlueprintEventIdsFromFileHover.size > 0)) {
                     eventMarks
-                        .filter((eventData: any) => eventData.componentNodeId === hoveredBlueprintComponentNodeId)
+                        .filter((eventData: any) =>
+                            eventData.componentNodeId === hoveredBlueprintComponentNodeId ||
+                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id)
+                        )
                         .raise();
                 }
             };
@@ -1202,11 +1353,13 @@ export function useTimelineChart({
         todayCaretRef,
         newStageButtonRef,
         newCodebaseSubtrackButtonRef,
+        syncCodebaseButtonRef,
         codebaseSubtracks,
         blueprintCodebaseLinks,
         pendingBlueprintLinkEventId,
         hoveredCodebaseFilePath,
         hoveredBlueprintComponentNodeId,
+        connectedBlueprintComponentNodeIds,
         dispatch,
         onStageBoundaryChange,
         onStageLaneDeletion,
@@ -1218,6 +1371,7 @@ export function useTimelineChart({
         setMilestoneMenu,
         setSelectedMilestone,
         setBlueprintLinkMenu,
+        setBlueprintCodebaseLinkMenu,
         setTagPicker,
         setStageMenu,
         setNameEdit,

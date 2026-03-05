@@ -193,12 +193,31 @@ function toTimelinePayload(setup: SetupState): TimelineStatePayload {
         blueprintEvents: [],
         codebaseSubtracks: [],
         blueprintCodebaseLinks: [],
+        participants: setup.participants.map((participant, index) => ({
+            id: participant.id || crypto.randomUUID(),
+            name: participant.name?.trim() || `Participant ${index + 1}`,
+            role: participant.role?.trim() || "Researcher",
+        })),
         defaultStages: Array.from(new Set(stages.map((stage) => stage.name))),
         timelineStartEnd: {
             start: safeIso(setup.timeline.expectedStart, fallbackStartIso),
             end: safeIso(setup.timeline.expectedEnd, fallbackEndIso),
         },
     };
+}
+
+function timelineToSetupParticipants(
+    timeline: TimelineStatePayload | undefined,
+): Participant[] {
+    if (!Array.isArray(timeline?.participants) || timeline.participants.length === 0) {
+        return [{ id: crypto.randomUUID(), name: "You", role: "Researcher" }];
+    }
+
+    return timeline.participants.map((participant, index) => ({
+        id: participant.id || crypto.randomUUID(),
+        name: participant.name || `Participant ${index + 1}`,
+        role: participant.role || "Researcher",
+    }));
 }
 
 function timelineToSetupTimeline(
@@ -317,12 +336,19 @@ export function ProjectSetupPage() {
                         initial.timeline.expectedStart,
                         initial.timeline.expectedEnd,
                     );
+                    const participants = timelineToSetupParticipants(doc.timeline);
+                    const availableRoles = uniqueRoles([
+                        ...initial.availableRoles,
+                        ...participants.map((participant) => participant.role),
+                    ]);
 
                     setExistingFlowState(doc.state ?? { flow: { nodes: [], edges: [] } });
                     setSetup((prev) => ({
                         ...prev,
                         projectName: doc.title || "Untitled",
                         goal: doc.description || "",
+                        availableRoles: availableRoles.length > 0 ? availableRoles : initial.availableRoles,
+                        participants,
                         timeline,
                     }));
                 } catch {
