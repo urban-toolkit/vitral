@@ -137,12 +137,14 @@ type CanvasSidebarProps = {
     selectedLabels: cardLabel[];
     onToggleLabel: (label: cardLabel) => void;
     queryValue: string;
+    activeQuery: string;
     onQueryValueChange: (value: string) => void;
     onQuerySubmit: () => void;
     onQueryClear: () => void;
     queryLoading: boolean;
     queryError: string | null;
     queryResultCount: number | null;
+    queryScopeCount: number | null;
     systemPaperResults: QuerySystemPapersResult[];
     systemPapersLoading: boolean;
     systemPapersError: string | null;
@@ -291,12 +293,14 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     selectedLabels,
     onToggleLabel,
     queryValue,
+    activeQuery,
     onQueryValueChange,
     onQuerySubmit,
     onQueryClear,
     queryLoading,
     queryError,
     queryResultCount,
+    queryScopeCount,
     systemPaperResults,
     systemPapersLoading,
     systemPapersError,
@@ -305,6 +309,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     const [paperTooltip, setPaperTooltip] = useState<PaperTooltipState | null>(null);
     const [editingTitle, setEditingTitle] = useState(false);
     const [draftTitle, setDraftTitle] = useState(title);
+    const queryFilterActive = activeQuery.trim().length > 0;
 
     useEffect(() => {
         setDraftTitle(title);
@@ -454,7 +459,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 
                         <p className={styles.sectionLabel}>Query</p>
                         <form
-                            className={styles.queryForm}
+                            className={`${styles.queryForm} ${queryFilterActive ? styles.queryFormActive : ""}`}
                             onSubmit={(event) => {
                                 event.preventDefault();
                                 onQuerySubmit();
@@ -485,6 +490,14 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                 </button>
                             </div>
                         </form>
+                        {queryFilterActive ? (
+                            <div className={styles.queryNotice} role="status">
+                                <span className={styles.queryNoticeLabel}>Filtered view</span>
+                                <p className={styles.queryNoticeText}>
+                                    Showing {queryResultCount ?? 0} of {queryScopeCount ?? 0} cards for "{activeQuery}".
+                                </p>
+                            </div>
+                        ) : null}
                         {queryError ? (
                             <p className={styles.queryError}>{queryError}</p>
                         ) : null}

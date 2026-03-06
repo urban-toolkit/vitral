@@ -9,6 +9,8 @@ type RightSidebarProps = {
     assetsRecords: fileRecord[];
     bottomOffsetPx?: number;
     onAssetHover?: (fileId: string | null) => void;
+    deletingAssetId?: string | null;
+    onDeleteAsset?: (file: fileRecord) => void;
 };
 
 export function RightSidebar({
@@ -17,6 +19,8 @@ export function RightSidebar({
     assetsRecords,
     bottomOffsetPx = 0,
     onAssetHover,
+    deletingAssetId,
+    onDeleteAsset,
 }: RightSidebarProps) {
     const sidebarHeight = `calc(100vh - ${Math.max(0, bottomOffsetPx)}px)`;
 
@@ -37,6 +41,8 @@ export function RightSidebar({
                         title="Assets"
                         className={styles.sectionCard}
                         onAssetHover={onAssetHover}
+                        deletingFileId={deletingAssetId}
+                        onDeleteAsset={onDeleteAsset}
                     />
                 </div>
             </div>

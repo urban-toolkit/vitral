@@ -194,6 +194,13 @@ const flowSlice = createSlice({
             const ids = ensureAttachmentArray(node);
             node.data!.attachmentIds = ids.filter((id) => id !== fileId);
         },
+        detachFileIdFromAllNodes: (state, action: PayloadAction<string>) => {
+            const fileId = action.payload;
+            for (const node of state.nodes) {
+                if (!Array.isArray(node.data?.attachmentIds)) continue;
+                node.data.attachmentIds = node.data.attachmentIds.filter((id) => id !== fileId);
+            }
+        },
         attachCodebaseFilePathToNode: (
             state,
             action: PayloadAction<{ nodeId: string; filePath: string }>
@@ -260,6 +267,7 @@ export const {
     setTitle,
     attachFileIdToNode,
     detachFileIdFromNode,
+    detachFileIdFromAllNodes,
     attachCodebaseFilePathToNode,
     detachCodebaseFilePathFromNode,
     renameNodeTitle,

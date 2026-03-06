@@ -244,6 +244,17 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    padding: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.78);
+}
+
+.queryFormActive {
+    border-color: #b55d14;
+    background:
+        linear-gradient(180deg, rgba(255, 243, 229, 0.96), rgba(255, 248, 240, 0.92));
+    box-shadow: inset 0 0 0 1px rgba(181, 93, 20, 0.12);
 }
 
 .queryInput {
@@ -295,6 +306,34 @@
     margin: 8px 0 0;
     color: #565656;
     font-size: 11px;
+}
+
+.queryNotice {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(181, 93, 20, 0.24);
+    background: #fff3e6;
+}
+
+.queryNoticeLabel {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #b55d14;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.queryNoticeText {
+    margin: 8px 0 0;
+    color: #6c3f13;
+    font-size: 12px;
+    line-height: 1.35;
 }
 
 .systemPaperActions {

@@ -69,10 +69,17 @@
 
 .cardTop {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 10px;
     margin-bottom: 6px;
+}
+
+.cardActions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
 }
 
 .size {
@@ -114,4 +121,24 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.deleteButton {
+    border: 1px solid rgba(128, 20, 20, 0.18);
+    background: #fff;
+    color: #8b1e1e;
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.deleteButton:hover:not(:disabled) {
+    background: #fff0f0;
+}
+
+.deleteButton:disabled {
+    opacity: 0.6;
+    cursor: default;
 }

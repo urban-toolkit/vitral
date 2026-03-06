@@ -2,6 +2,8 @@ import { memo } from "react";
 import { ReactFlow, Background, BackgroundVariant, type NodeChange, type EdgeChange, type Connection, type NodeTypes, type EdgeTypes } from "@xyflow/react";
 
 import type { edgeType, nodeType } from "@/config/types";
+import type { CursorMode } from "@/pages/projectEditor/types";
+import styles from "./FlowCanvas.module.css";
 
 type FlowCanvasProps = {
     projectId: string;
@@ -10,6 +12,7 @@ type FlowCanvasProps = {
     nodeTypes: NodeTypes;
     edgeTypes: EdgeTypes;
     nodesDraggable: boolean;
+    cursorMode: CursorMode;
     onNodesChange: (changes: NodeChange<nodeType>[]) => void;
     onEdgesChange: (changes: EdgeChange<edgeType>[]) => void;
     onConnect: (connection: Connection) => void;
@@ -25,6 +28,7 @@ export const FlowCanvas = memo(function FlowCanvas({
     nodeTypes,
     edgeTypes,
     nodesDraggable,
+    cursorMode,
     onNodesChange,
     onEdgesChange,
     onConnect,
@@ -32,9 +36,18 @@ export const FlowCanvas = memo(function FlowCanvas({
     onDragOver,
     onDrop,
 }: FlowCanvasProps) {
+    const cursorClassName = cursorMode === "text"
+        ? styles.cursorText
+        : cursorMode === "node"
+            ? styles.cursorNode
+            : cursorMode === "blueprint_component"
+                ? styles.cursorBlueprintComponent
+                : styles.cursorPointer;
+
     return (
         <ReactFlow
             key={projectId}
+            className={`${styles.flowCanvas} ${cursorClassName}`}
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}

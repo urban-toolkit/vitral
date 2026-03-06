@@ -1,0 +1,26 @@
+.flowCanvas {
+    width: 100%;
+    height: 100%;
+}
+
+.cursorPointer :global(.react-flow__pane) {
+    cursor: grab;
+}
+
+.cursorNode :global(.react-flow__pane),
+.cursorNode :global(.react-flow__viewport),
+.cursorNode :global(.react-flow__renderer) {
+    cursor: copy !important;
+}
+
+.cursorBlueprintComponent :global(.react-flow__pane),
+.cursorBlueprintComponent :global(.react-flow__viewport),
+.cursorBlueprintComponent :global(.react-flow__renderer) {
+    cursor: cell !important;
+}
+
+.cursorText :global(.react-flow__pane),
+.cursorText :global(.react-flow__viewport),
+.cursorText :global(.react-flow__renderer) {
+    cursor: text !important;
+}

@@ -9,19 +9,37 @@
     border-radius: 12px;
     border: var(--border-style);
     gap: 10px;
-    padding-left: 5px;
-    padding-right: 5px;
+    /* padding-left: 5px;
+    padding-right: 5px; */
+    padding: 5px;
     align-items: center;
     align-content: center;
     z-index: 4;
 }
 
 .tool {
-    width: 18px;
-    height: 18px;
+    width: 36px;
+    height: 36px;
     padding: 9px;
     display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
     cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.tool:hover {
+    background: #f3f3f3;
+}
+
+.toolActive {
+    background: #171717;
+    border-color: #171717;
+    color: #fff;
+    transform: translateY(-1px);
 }
 
 .toolIcon {

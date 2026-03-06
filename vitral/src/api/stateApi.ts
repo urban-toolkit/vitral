@@ -276,6 +276,18 @@ export async function listFiles(docId: string): Promise<{ files: fileRecord[] }>
     return res.json();
 }
 
+export async function deleteFile(docId: string, fileId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/files/${fileId}`, {
+        method: "DELETE",
+        credentials: "include",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to delete file");
+    }
+}
+
 // Only text
 export async function getFileContent(docId: string, fileId: string): Promise<fileRecord & {content: string}> {
     const res = await fetch(`${API_BASE}/api/state/${docId}/files/${fileId}/content`, {

@@ -7,6 +7,8 @@ type Props = {
     title?: string;
     className?: string;
     onAssetHover?: (fileId: string | null) => void;
+    deletingFileId?: string | null;
+    onDeleteAsset?: (file: fileRecord) => void;
 };
 
 function formatBytes(bytes: number): string {
@@ -33,6 +35,8 @@ export default function AssetsPanel({
     title = "Assets",
     className,
     onAssetHover,
+    deletingFileId,
+    onDeleteAsset,
 }: Props) {
     const [query] = useState("");
 
@@ -78,7 +82,24 @@ export default function AssetsPanel({
                         >
                             <div className={styles.cardTop}>
                                 <span className={styles.name}>{r.name}</span>
-                                <span className={styles.size}>{formatBytes(r.sizeBytes)}</span>
+                                <div className={styles.cardActions}>
+                                    <span className={styles.size}>{formatBytes(r.sizeBytes)}</span>
+                                    {onDeleteAsset ? (
+                                        <button
+                                            type="button"
+                                            className={styles.deleteButton}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                onDeleteAsset(r);
+                                            }}
+                                            disabled={deletingFileId === r.id}
+                                            aria-label={`Delete ${r.name}`}
+                                            title={`Delete ${r.name}`}
+                                        >
+                                            {deletingFileId === r.id ? "Deleting..." : "Delete"}
+                                        </button>
+                                    ) : null}
+                                </div>
                             </div>
 
                             <div className={styles.metaGrid}>

@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
 import type { Readable } from "node:stream";
 import path from "node:path";
@@ -898,6 +898,52 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             });
 
             return reply.send({ files });
+        } finally {
+            client.release();
+        }
+    });
+
+    /**
+     * Delete a file from a document
+     * DELETE /api/state/:docId/files/:id
+     */
+    app.delete("/state/:docId/files/:id", async (request, reply) => {
+        const { docId } = request.params as { docId: string };
+        const { id } = request.params as { id: string };
+
+        const client = await request.server.pg.connect();
+        try {
+            const res = await client.query<{
+                storage_bucket: string | null;
+                storage_key: string | null;
+            }>(
+                `
+                DELETE FROM document_files
+                WHERE document_id = $1 AND id = $2
+                RETURNING storage_bucket, storage_key
+                `,
+                [docId, id]
+            );
+
+            const row = res.rows[0];
+            if (!row) {
+                return reply.code(404).send({ error: "File not found" });
+            }
+
+            if (row.storage_bucket && row.storage_key) {
+                try {
+                    await request.server.s3.send(
+                        new DeleteObjectCommand({
+                            Bucket: row.storage_bucket,
+                            Key: row.storage_key,
+                        })
+                    );
+                } catch (error) {
+                    request.log.warn({ err: error, docId, fileId: id }, "Failed to delete file object from storage");
+                }
+            }
+
+            return reply.code(204).send();
         } finally {
             client.release();
         }

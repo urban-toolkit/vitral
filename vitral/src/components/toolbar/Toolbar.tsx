@@ -2,12 +2,14 @@ import classes from './Toolbar.module.css'
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faSquare, faFont, faDiagramProject, faCircleNodes, faWandSparkles, faArrowPointer, faCircle } from '@fortawesome/free-solid-svg-icons'
+import type { CursorMode } from '@/pages/projectEditor/types';
 
 type ToolbarProps = {
     onFreeInputClicked: () => void;
     onNodeInputClicked: () => void;
     onBlueprintComponentClicked: () => void;
     onPointerClicked: () => void;
+    activeMode: CursorMode;
     shifted?: boolean;
 };
 
@@ -16,8 +18,10 @@ export function Toolbar({
     onNodeInputClicked,
     onBlueprintComponentClicked,
     onPointerClicked,
+    activeMode,
     shifted,
 }: ToolbarProps) {
+    const isActive = (mode: CursorMode) => activeMode === mode;
 
     return (
         <div 
@@ -30,31 +34,24 @@ export function Toolbar({
                 {bottom: "15px"}
             }    
         >
-            <div className={classes.tool}>
-                <FontAwesomeIcon icon={faArrowPointer} className={classes.toolIcon} onClick={() => { onPointerClicked() }} />
-            </div>
-            <div className={classes.tool}>
-                <FontAwesomeIcon icon={faSquare} className={classes.toolIcon} onClick={() => { onNodeInputClicked() }} />
-            </div>
-            <div className={classes.tool}>
+            <button type="button" className={`${classes.tool} ${isActive("") ? classes.toolActive : ""}`} onClick={onPointerClicked} title="Pointer">
+                <FontAwesomeIcon icon={faArrowPointer} className={classes.toolIcon} />
+            </button>
+            <button type="button" className={`${classes.tool} ${isActive("node") ? classes.toolActive : ""}`} onClick={onNodeInputClicked} title="New card">
+                <FontAwesomeIcon icon={faSquare} className={classes.toolIcon} />
+            </button>
+            <button type="button" className={`${classes.tool} ${isActive("blueprint_component") ? classes.toolActive : ""}`} onClick={onBlueprintComponentClicked} title="New system component">
                 <FontAwesomeIcon
                     icon={faCircle}
                     className={classes.toolIcon}
-                    onClick={() => { onBlueprintComponentClicked() }}
                 />
-            </div>
-            <div className={classes.tool}>
-                <FontAwesomeIcon icon={faFont} className={classes.toolIcon} onClick={() => { onFreeInputClicked() }} />
-            </div>
-            <div className={classes.tool}>
-                <FontAwesomeIcon icon={faDiagramProject} className={classes.toolIcon} />
-            </div>
-            <div className={classes.tool}>
-                <FontAwesomeIcon icon={faCircleNodes} className={classes.toolIcon} />
-            </div>
-            <div className={classes.tool}>
+            </button>
+            <button type="button" className={`${classes.tool} ${isActive("text") ? classes.toolActive : ""}`} onClick={onFreeInputClicked} title="Text tool">
+                <FontAwesomeIcon icon={faFont} className={classes.toolIcon} />
+            </button>
+            <button type="button" className={classes.tool}>
                 <FontAwesomeIcon icon={faWandSparkles} className={classes.toolIcon} />
-            </div>
+            </button>
         </div>
     );
 }

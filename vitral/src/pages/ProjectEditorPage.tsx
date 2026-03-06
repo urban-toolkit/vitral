@@ -20,7 +20,7 @@ import type {
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
 import { requestCardsLLMTextInput, llmCardsToNodes, llmConnectionsToEdges } from "@/func/LLMRequest";
-import { queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
+import { deleteFile, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { getGitHubEvents } from "@/api/eventsApi";
 
@@ -45,13 +45,14 @@ import {
     addNode,
     addNodes,
     connectEdges,
+    detachFileIdFromAllNodes,
     detachFileIdFromNode,
     onEdgesChange,
     onNodesChange,
     removeNode,
     updateNode,
 } from "@/store/flowSlice";
-import { selectAllFiles } from "@/store/filesSlice";
+import { removeFile, selectAllFiles } from "@/store/filesSlice";
 import { selectAllGitHubEvents, setGithubEvents } from "@/store/gitEventsSlice";
 import {
     addBlueprintEvent,
@@ -451,6 +452,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [systemPapersError, setSystemPapersError] = useState<string | null>(null);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
     const [hoveredAssetFileId, setHoveredAssetFileId] = useState<string | null>(null);
+    const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
     const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
     const queryRequestIdRef = useRef(0);
@@ -520,6 +522,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
         dispatch(onEdgesChange(changes));
     }, [dispatch]);
+
+    const resetFiltersForCanvasCreation = useCallback(() => {
+        setViewMode("explore");
+        setQueryInput("");
+        setActiveQuery("");
+        setQueryMatchedNodeIds(null);
+        setQueryError(null);
+    }, []);
 
     const handleConnect = useCallback((connection: Connection) => {
         if (!connection.source || !connection.target) return;
@@ -839,6 +849,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (cursorMode === "blueprint_component") {
             if (isInsideSystemBlueprintParentBox(position)) return;
 
+            resetFiltersForCanvasCreation();
             const componentId = Math.floor(Date.now() + Math.random() * 1000);
             dispatch(addNode({
                 id: crypto.randomUUID(),
@@ -867,6 +878,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             return;
         }
 
+        resetFiltersForCanvasCreation();
         dispatch(addNode({
             id: crypto.randomUUID(),
             position,
@@ -879,7 +891,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 relevant: true,
             },
         }));
-    }, [dispatch, viewMode, cursorMode, screenToFlowPosition, isInsideSystemBlueprintParentBox]);
+    }, [dispatch, viewMode, cursorMode, screenToFlowPosition, isInsideSystemBlueprintParentBox, resetFiltersForCanvasCreation]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
         const dragTypes = Array.from(e.dataTransfer?.types ?? []);
@@ -1216,6 +1228,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 query: trimmed,
                 scopeNodeIds,
                 limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
+                minScore: 0.3
             });
             if (requestId !== queryRequestIdRef.current) return;
             setActiveQuery(trimmed);
@@ -1358,6 +1371,23 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         await checkGitStatus();
     }, [checkGitStatus]);
 
+    const handleDeleteAsset = useCallback(async (file: { id: string; name: string }) => {
+        setDeletingAssetId(file.id);
+        try {
+            await deleteFile(projectId, file.id);
+            dispatch(detachFileIdFromAllNodes(file.id));
+            dispatch(removeFile(file.id));
+            if (hoveredAssetFileId === file.id) {
+                setHoveredAssetFileId(null);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to delete asset.";
+            window.alert(message);
+        } finally {
+            setDeletingAssetId((current) => (current === file.id ? null : current));
+        }
+    }, [dispatch, hoveredAssetFileId, projectId]);
+
     if (status === "loading") return <div>Loading...</div>;
     if (status === "error") return <div>Error: {error}</div>;
 
@@ -1374,6 +1404,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 nodesDraggable={viewMode === "explore"}
+                cursorMode={cursorMode}
                 onNodesChange={handleNodesChange}
                 onEdgesChange={handleEdgesChange}
                 onConnect={handleConnect}
@@ -1395,12 +1426,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 selectedLabels={selectedLabels}
                 onToggleLabel={handleToggleLabelWithQueryRefresh}
                 queryValue={queryInput}
+                activeQuery={activeQuery}
                 onQueryValueChange={setQueryInput}
                 onQuerySubmit={handleQuerySubmit}
                 onQueryClear={handleQueryClear}
                 queryLoading={queryLoading}
                 queryError={queryError}
                 queryResultCount={activeQuery ? filteredNodes.length : null}
+                queryScopeCount={activeQuery ? labelFilteredNodes.length : null}
                 systemPaperResults={systemPaperResults}
                 systemPapersLoading={systemPapersLoading}
                 systemPapersError={systemPapersError}
@@ -1416,6 +1449,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onNodeInputClicked={handleNodeInputClicked}
                 onBlueprintComponentClicked={handleBlueprintComponentInputClicked}
                 onPointerClicked={handlePointerClicked}
+                activeMode={cursorMode}
                 shifted={timelineOpen}
             />
 
@@ -1425,6 +1459,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 assetsRecords={allFiles}
                 bottomOffsetPx={canvasSidebarBottomOffset}
                 onAssetHover={setHoveredAssetFileId}
+                deletingAssetId={deletingAssetId}
+                onDeleteAsset={handleDeleteAsset}
             />
 
             {cursorMode === "text" ? (
