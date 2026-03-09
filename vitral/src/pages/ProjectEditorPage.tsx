@@ -20,7 +20,7 @@ import type {
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
 import { requestCardsLLMTextInput, llmCardsToNodes, llmConnectionsToEdges } from "@/func/LLMRequest";
-import { deleteFile, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
+import { deleteFile, queryCanvasChat, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { getGitHubEvents } from "@/api/eventsApi";
 
@@ -79,6 +79,8 @@ import { fromDate } from "@/pages/projectEditor/dateUtils";
 import type { CursorMode, GitConnectionStatus } from "@/pages/projectEditor/types";
 import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
 import { PendingFileModal } from "@/pages/projectEditor/PendingFileModal";
+import { CanvasChatOverlay, type CanvasChatEntry } from "@/pages/projectEditor/CanvasChatOverlay";
+import { EdgeConnectMenu, type EdgeConnectOption } from "@/pages/projectEditor/EdgeConnectMenu";
 import {
     TimelineDock,
     TIMELINE_DOCK_HEIGHT,
@@ -86,10 +88,75 @@ import {
 } from "@/pages/projectEditor/TimelineDock";
 import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttachmentProcessing";
 
-const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["task", "requirement"]);
+const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["requirement"]);
+const REFERENCED_BY_EDGE_LABEL = "referenced by";
+const ITERATION_OF_EDGE_LABEL = "iteration of";
+
+type PendingConnectionMenu = {
+    sourceId: string;
+    targetId: string;
+    sourceLabel: string;
+    targetLabel: string;
+    defaultLabel: string;
+    x: number;
+    y: number;
+};
 
 function normalizePath(path: string): string {
     return path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+}
+
+function normalizeNodeLabel(label: string): string {
+    const normalized = label.trim().toLowerCase();
+    if (normalized === "task") return "requirement";
+    return normalized;
+}
+
+function edgeLabelFrom(edge: edgeType): string {
+    if (typeof edge.label === "string" && edge.label.trim() !== "") {
+        return edge.label.trim().toLowerCase();
+    }
+    if (typeof edge.data?.label === "string" && edge.data.label.trim() !== "") {
+        return edge.data.label.trim().toLowerCase();
+    }
+    return "";
+}
+
+function resolveAbsoluteNodePositions(allNodes: nodeType[]): Map<string, { x: number; y: number }> {
+    const byId = new Map(allNodes.map((node) => [node.id, node]));
+    const absoluteById = new Map<string, { x: number; y: number }>();
+
+    const resolve = (nodeId: string): { x: number; y: number } => {
+        const cached = absoluteById.get(nodeId);
+        if (cached) return cached;
+
+        const current = byId.get(nodeId);
+        if (!current) {
+            const fallback = { x: 0, y: 0 };
+            absoluteById.set(nodeId, fallback);
+            return fallback;
+        }
+
+        if (!current.parentId) {
+            const root = { x: current.position.x, y: current.position.y };
+            absoluteById.set(nodeId, root);
+            return root;
+        }
+
+        const parentAbsolute = resolve(current.parentId);
+        const result = {
+            x: parentAbsolute.x + current.position.x,
+            y: parentAbsolute.y + current.position.y,
+        };
+        absoluteById.set(nodeId, result);
+        return result;
+    };
+
+    for (const node of allNodes) {
+        resolve(node.id);
+    }
+
+    return absoluteById;
 }
 
 function toBlueprintData(payload: BlueprintDragPayload): BlueprintData {
@@ -442,20 +509,25 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [viewMode, setViewMode] = useState<CanvasViewMode>("explore");
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
     const [selectedLabels, setSelectedLabels] = useState<cardLabel[]>([...CARD_LABELS]);
-    const [queryInput, setQueryInput] = useState("");
     const [activeQuery, setActiveQuery] = useState("");
     const [queryMatchedNodeIds, setQueryMatchedNodeIds] = useState<string[] | null>(null);
-    const [queryLoading, setQueryLoading] = useState(false);
-    const [queryError, setQueryError] = useState<string | null>(null);
+    const [chatOpen, setChatOpen] = useState(false);
+    const [chatInput, setChatInput] = useState("");
+    const [chatMessages, setChatMessages] = useState<CanvasChatEntry[]>([]);
+    const [chatLoading, setChatLoading] = useState(false);
+    const [chatError, setChatError] = useState<string | null>(null);
     const [systemPaperResults, setSystemPaperResults] = useState<QuerySystemPapersResult[]>([]);
     const [systemPapersLoading, setSystemPapersLoading] = useState(false);
     const [systemPapersError, setSystemPapersError] = useState<string | null>(null);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
     const [hoveredAssetFileId, setHoveredAssetFileId] = useState<string | null>(null);
     const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
+    const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
     const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
     const queryRequestIdRef = useRef(0);
+    const chatRequestIdRef = useRef(0);
+    const pointerPositionRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
     const nodes = useSelector((state: RootState) => state.flow.nodes);
     const edges = useSelector((state: RootState) => state.flow.edges);
@@ -484,13 +556,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         projectId,
         dispatch,
         nodes,
+        edges,
         allFiles,
         setLoading,
     });
 
     const flushQueuedPositionChanges = useCallback(() => {
         nodeChangeRafRef.current = null;
-        if (viewMode === "evolution") {
+        if (viewMode !== "explore") {
             queuedPositionChangesRef.current = [];
             return;
         }
@@ -502,7 +575,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [dispatch, viewMode]);
 
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
-        if (viewMode === "evolution") return;
+        if (viewMode !== "explore") return;
 
         const immediateChanges = changes.filter((change) => change.type !== "position");
         const positionChanges = changes.filter((change) => change.type === "position");
@@ -525,84 +598,143 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const resetFiltersForCanvasCreation = useCallback(() => {
         setViewMode("explore");
-        setQueryInput("");
         setActiveQuery("");
         setQueryMatchedNodeIds(null);
-        setQueryError(null);
     }, []);
 
-    const handleConnect = useCallback((connection: Connection) => {
-        if (!connection.source || !connection.target) return;
-
-        const sourceNode = nodes.find((node) => node.id === connection.source);
-        const targetNode = nodes.find((node) => node.id === connection.target);
-        const sourceLabel = String(sourceNode?.data?.label ?? "").toLowerCase();
-        const targetLabel = String(targetNode?.data?.label ?? "").toLowerCase();
-
-        if (!isAllowedConnection(sourceLabel, targetLabel)) return;
-
-        const alreadyConnected = edges.some(
-            (edge) => edge.source === connection.source && edge.target === connection.target,
-        );
-        if (alreadyConnected) return;
-
-        const label = relationLabelFor(sourceLabel, targetLabel);
-        if (!label) return;
-        dispatch(connectEdges([{
-            id: crypto.randomUUID(),
-            source: connection.source,
-            target: connection.target,
-            type: "relation",
-            label,
-            data: { label, from: sourceLabel, to: targetLabel },
-        }]));
-
-        const sourceIsTaskOrRequirement = sourceLabel === "task" || sourceLabel === "requirement";
-        const targetIsTaskOrRequirement = targetLabel === "task" || targetLabel === "requirement";
+    const maybeCreateBlueprintEventFromConnection = useCallback((
+        sourceNode: nodeType | undefined,
+        targetNode: nodeType | undefined,
+        sourceLabel: string,
+        targetLabel: string,
+    ) => {
+        const sourceIsTaskOrRequirement = sourceLabel === "requirement";
+        const targetIsTaskOrRequirement = targetLabel === "requirement";
         const sourceIsBlueprintComponent = sourceLabel === "blueprint_component";
         const targetIsBlueprintComponent = targetLabel === "blueprint_component";
 
         if (
-            (sourceIsTaskOrRequirement && targetIsBlueprintComponent) ||
-            (targetIsTaskOrRequirement && sourceIsBlueprintComponent)
+            !((
+                sourceIsTaskOrRequirement && targetIsBlueprintComponent
+            ) || (
+                targetIsTaskOrRequirement && sourceIsBlueprintComponent
+            ))
         ) {
-            const componentNode = sourceIsBlueprintComponent ? sourceNode : targetNode;
-            if (!componentNode) return;
-
-            const eventId = `blueprint-component:${componentNode.id}`;
-            const hasEvent = blueprintEvents.some((event) => event.id === eventId);
-            if (hasEvent) return;
-
-            const componentData = componentNode.data as Record<string, unknown>;
-            const blueprintComponent = (
-                componentData.blueprintComponent &&
-                typeof componentData.blueprintComponent === "object"
-            )
-                ? (componentData.blueprintComponent as Record<string, unknown>)
-                : null;
-
-            dispatch(addBlueprintEvent({
-                id: eventId,
-                name: typeof componentData.title === "string" && componentData.title.trim() !== ""
-                    ? componentData.title
-                    : "Blueprint component",
-                occurredAt: new Date().toISOString(),
-                componentNodeId: componentNode.id,
-                paperDescription: blueprintComponent && typeof blueprintComponent.description === "string"
-                    ? blueprintComponent.description
-                    : "",
-                referenceCitation: blueprintComponent && typeof blueprintComponent.referenceCitation === "string"
-                    ? blueprintComponent.referenceCitation
-                    : "",
-                paperTitle: typeof componentData.blueprintPaperTitle === "string"
-                    ? componentData.blueprintPaperTitle
-                    : undefined,
-                blueprintFileName: typeof componentData.blueprintFileName === "string"
-                    ? componentData.blueprintFileName
-                    : undefined,
-            }));
+            return;
         }
-    }, [dispatch, nodes, edges, blueprintEvents]);
+
+        const componentNode = sourceIsBlueprintComponent ? sourceNode : targetNode;
+        if (!componentNode) return;
+
+        const eventId = `blueprint-component:${componentNode.id}`;
+        const hasEvent = blueprintEvents.some((event) => event.id === eventId);
+        if (hasEvent) return;
+
+        const componentData = componentNode.data as Record<string, unknown>;
+        const blueprintComponent = (
+            componentData.blueprintComponent &&
+            typeof componentData.blueprintComponent === "object"
+        )
+            ? (componentData.blueprintComponent as Record<string, unknown>)
+            : null;
+
+        dispatch(addBlueprintEvent({
+            id: eventId,
+            name: typeof componentData.title === "string" && componentData.title.trim() !== ""
+                ? componentData.title
+                : "Blueprint component",
+            occurredAt: new Date().toISOString(),
+            componentNodeId: componentNode.id,
+            paperDescription: blueprintComponent && typeof blueprintComponent.description === "string"
+                ? blueprintComponent.description
+                : "",
+            referenceCitation: blueprintComponent && typeof blueprintComponent.referenceCitation === "string"
+                ? blueprintComponent.referenceCitation
+                : "",
+            paperTitle: typeof componentData.blueprintPaperTitle === "string"
+                ? componentData.blueprintPaperTitle
+                : undefined,
+            blueprintFileName: typeof componentData.blueprintFileName === "string"
+                ? componentData.blueprintFileName
+                : undefined,
+        }));
+    }, [dispatch, blueprintEvents]);
+
+    const handleConnectSelection = useCallback((option: EdgeConnectOption) => {
+        setPendingConnectionMenu((pending) => {
+            if (!pending) return null;
+
+            const label = option === "default"
+                ? pending.defaultLabel
+                : option === "referenced_by"
+                    ? REFERENCED_BY_EDGE_LABEL
+                    : ITERATION_OF_EDGE_LABEL;
+            const kind = option === "default" ? undefined : option;
+            const sourceNode = nodes.find((node) => node.id === pending.sourceId);
+            const targetNode = nodes.find((node) => node.id === pending.targetId);
+
+            const alreadyConnected = edges.some((edge) => (
+                edge.source === pending.sourceId &&
+                edge.target === pending.targetId &&
+                edgeLabelFrom(edge) === label
+            ));
+            if (!alreadyConnected) {
+                dispatch(connectEdges([{
+                    id: crypto.randomUUID(),
+                    source: pending.sourceId,
+                    target: pending.targetId,
+                    type: "relation",
+                    label,
+                    data: {
+                        label,
+                        from: pending.sourceLabel,
+                        to: pending.targetLabel,
+                        ...(kind ? { kind } : {}),
+                    },
+                }]));
+            }
+
+            maybeCreateBlueprintEventFromConnection(
+                sourceNode,
+                targetNode,
+                pending.sourceLabel,
+                pending.targetLabel,
+            );
+
+            return null;
+        });
+    }, [dispatch, edges, nodes, maybeCreateBlueprintEventFromConnection]);
+
+    const handleConnect = useCallback((connection: Connection) => {
+        if (!connection.source || !connection.target) return;
+        if (viewMode !== "explore") return;
+
+        const sourceNode = nodes.find((node) => node.id === connection.source);
+        const targetNode = nodes.find((node) => node.id === connection.target);
+        const sourceLabel = normalizeNodeLabel(String(sourceNode?.data?.label ?? ""));
+        const targetLabel = normalizeNodeLabel(String(targetNode?.data?.label ?? ""));
+
+        if (!isAllowedConnection(sourceLabel, targetLabel)) return;
+
+        const defaultLabel = relationLabelFor(sourceLabel, targetLabel);
+        if (!defaultLabel) return;
+
+        const { x: pointerX, y: pointerY } = pointerPositionRef.current;
+        const menuWidth = 380;
+        const menuHeight = 44;
+        const x = Math.max(12, Math.min(window.innerWidth - menuWidth - 12, pointerX - (menuWidth / 2)));
+        const y = Math.max(12, Math.min(window.innerHeight - menuHeight - 12, pointerY - menuHeight - 8));
+
+        setPendingConnectionMenu({
+            sourceId: connection.source,
+            targetId: connection.target,
+            sourceLabel,
+            targetLabel,
+            defaultLabel,
+            x,
+            y,
+        });
+    }, [nodes, viewMode]);
 
     const onDataPropertyChange = useCallback((nodeProps: nodeType, value: unknown, propertyName: string) => {
         const data = { ...nodeProps.data } as Record<string, unknown> & nodeType["data"];
@@ -675,7 +807,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const labelFilteredNodes = useMemo(() => {
         return nodes.filter((node) => {
-            const rawLabel = String(node.data?.label ?? "").toLowerCase();
+            const rawLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
             if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
             return selectedLabelSet.has(rawLabel as cardLabel);
         });
@@ -691,12 +823,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const targetNode = nodeById.get(edge.target);
             if (!sourceNode || !targetNode) continue;
 
-            const sourceLabel = String(sourceNode.data?.label ?? "").toLowerCase();
-            const targetLabel = String(targetNode.data?.label ?? "").toLowerCase();
+            const sourceLabel = normalizeNodeLabel(String(sourceNode.data?.label ?? ""));
+            const targetLabel = normalizeNodeLabel(String(targetNode.data?.label ?? ""));
             const sourceIsComponent = sourceLabel === "blueprint_component";
             const targetIsComponent = targetLabel === "blueprint_component";
-            const sourceIsTaskOrRequirement = sourceLabel === "task" || sourceLabel === "requirement";
-            const targetIsTaskOrRequirement = targetLabel === "task" || targetLabel === "requirement";
+            const sourceIsTaskOrRequirement = sourceLabel === "requirement";
+            const targetIsTaskOrRequirement = targetLabel === "requirement";
 
             if (sourceIsComponent && targetIsTaskOrRequirement) {
                 emphasized.add(sourceNode.id);
@@ -722,7 +854,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             : "";
 
         return baseNodes.map((node) => {
-            const nodeLabel = String(node.data?.label ?? "").toLowerCase();
+            const nodeLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
             const nodeData = node.data as Record<string, unknown>;
             if (nodeLabel === "blueprint_component") {
                 const attachedCodebasePaths = Array.isArray(nodeData.codebaseFilePaths)
@@ -769,6 +901,105 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         hoveredAssetFileId,
     ]);
 
+    const compactBlueprintNodes = useMemo(() => {
+        if (viewMode !== "blueprintComponents") return null;
+
+        const absoluteById = resolveAbsoluteNodePositions(nodes);
+        const nodeById = new Map(nodes.map((node) => [node.id, node]));
+        const visibleNodeIds = new Set<string>();
+
+        const blueprintComponents = nodes.filter((node) => (
+            String(node.data?.label ?? "").toLowerCase() === "blueprint_component"
+        ));
+
+        if (blueprintComponents.length === 0) return [];
+
+        for (const componentNode of blueprintComponents) {
+            visibleNodeIds.add(componentNode.id);
+            let parentId = componentNode.parentId;
+            while (parentId) {
+                const parentNode = nodeById.get(parentId);
+                if (!parentNode) break;
+                const parentLabel = String(parentNode.data?.label ?? "").toLowerCase();
+                if (parentLabel !== "blueprint_group") break;
+                visibleNodeIds.add(parentNode.id);
+                parentId = parentNode.parentId;
+            }
+        }
+
+        const visibleBlueprintNodes = nodes.filter((node) => visibleNodeIds.has(node.id));
+        const visibleById = new Map(visibleBlueprintNodes.map((node) => [node.id, node]));
+
+        const toDimension = (value: unknown, fallback: number) => {
+            if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+            const parsed = Number.parseFloat(String(value ?? ""));
+            if (Number.isFinite(parsed) && parsed > 0) return parsed;
+            return fallback;
+        };
+
+        const roots = visibleBlueprintNodes
+            .filter((node) => {
+                if (node.parentId && visibleById.has(node.parentId)) return false;
+                const label = String(node.data?.label ?? "").toLowerCase();
+                return label === "blueprint_group" || label === "blueprint_component";
+            })
+            .map((node) => {
+                const absolute = absoluteById.get(node.id) ?? { x: node.position.x, y: node.position.y };
+                const label = String(node.data?.label ?? "").toLowerCase();
+                const style = node.style as Record<string, unknown> | undefined;
+                const width = label === "blueprint_group"
+                    ? toDimension(style?.width, 360)
+                    : 112;
+                const height = label === "blueprint_group"
+                    ? toDimension(style?.height, 220)
+                    : 112;
+                return {
+                    id: node.id,
+                    x: absolute.x,
+                    y: absolute.y,
+                    width,
+                    height,
+                };
+            })
+            .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
+
+        const compactGap = 34;
+        const startX = 120;
+        const startY = 120;
+        const columns = Math.max(1, Math.ceil(Math.sqrt(roots.length)));
+        const newRootAbsolutePositions = new Map<string, { x: number; y: number }>();
+
+        let cursorX = startX;
+        let cursorY = startY;
+        let rowMaxHeight = 0;
+
+        for (let index = 0; index < roots.length; index++) {
+            const root = roots[index];
+            const col = index % columns;
+            if (col === 0 && index > 0) {
+                cursorY += rowMaxHeight + compactGap;
+                cursorX = startX;
+                rowMaxHeight = 0;
+            }
+
+            newRootAbsolutePositions.set(root.id, { x: cursorX, y: cursorY });
+            cursorX += root.width + compactGap;
+            rowMaxHeight = Math.max(rowMaxHeight, root.height);
+        }
+
+        return visibleBlueprintNodes.map((node) => {
+            const newRootAbsolute = newRootAbsolutePositions.get(node.id);
+            if (!newRootAbsolute) return node;
+
+            if (node.parentId && visibleById.has(node.parentId)) return node;
+
+            return {
+                ...node,
+                position: newRootAbsolute,
+            };
+        });
+    }, [nodes, viewMode]);
+
     const filteredEdges = useMemo(() => {
         const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
         return edges.filter((edge) => (
@@ -776,13 +1007,120 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         ));
     }, [edges, filteredNodes]);
 
+    const featureViewNodes = useMemo(() => {
+        if (viewMode !== "features") return null;
+
+        const nodeById = new Map(nodes.map((node) => [node.id, node]));
+        const adjacency = new Map<string, string[]>();
+
+        const connect = (a: string, b: string) => {
+            const listA = adjacency.get(a);
+            if (listA) {
+                listA.push(b);
+            } else {
+                adjacency.set(a, [b]);
+            }
+        };
+
+        for (const edge of edges) {
+            connect(edge.source, edge.target);
+            connect(edge.target, edge.source);
+        }
+
+        const requirementOrBlueprintIds = new Set(
+            nodes
+                .filter((node) => {
+                    const label = String(node.data?.label ?? "").toLowerCase();
+                    if (label === "blueprint_component") return true;
+                    return normalizeNodeLabel(label) === "requirement";
+                })
+                .map((node) => node.id)
+        );
+
+        const bfsDistances = (startIds: string[]): Map<string, number> => {
+            const distances = new Map<string, number>();
+            const queue: string[] = [];
+            for (const startId of startIds) {
+                distances.set(startId, 0);
+                queue.push(startId);
+            }
+
+            let index = 0;
+            while (index < queue.length) {
+                const currentId = queue[index++];
+                const currentDist = distances.get(currentId);
+                if (currentDist === undefined) continue;
+                const nextIds = adjacency.get(currentId) ?? [];
+                for (const nextId of nextIds) {
+                    if (distances.has(nextId)) continue;
+                    distances.set(nextId, currentDist + 1);
+                    queue.push(nextId);
+                }
+            }
+            return distances;
+        };
+
+        const activityIds = nodes
+            .filter((node) => normalizeNodeLabel(String(node.data?.label ?? "")) === "activity")
+            .map((node) => node.id);
+
+        const includedNodeIds = new Set<string>(requirementOrBlueprintIds);
+
+        for (const anchorId of requirementOrBlueprintIds) {
+            const neighbors = adjacency.get(anchorId) ?? [];
+            for (const neighborId of neighbors) {
+                includedNodeIds.add(neighborId);
+            }
+        }
+
+        const distancesFromAnchors = bfsDistances(Array.from(requirementOrBlueprintIds));
+
+        for (const activityId of activityIds) {
+            const shortestToAnchor = distancesFromAnchors.get(activityId);
+            if (shortestToAnchor === undefined) continue;
+
+            const distancesFromActivity = bfsDistances([activityId]);
+            for (const [nodeId, distFromAnchor] of distancesFromAnchors.entries()) {
+                const distFromActivity = distancesFromActivity.get(nodeId);
+                if (distFromActivity === undefined) continue;
+                if (distFromAnchor + distFromActivity === shortestToAnchor) {
+                    includedNodeIds.add(nodeId);
+                }
+            }
+        }
+
+        const includeBlueprintAncestors = (nodeId: string) => {
+            let parentId = nodeById.get(nodeId)?.parentId;
+            while (parentId) {
+                const parentNode = nodeById.get(parentId);
+                if (!parentNode) break;
+                const label = String(parentNode.data?.label ?? "").toLowerCase();
+                if (label !== "blueprint_group") break;
+                includedNodeIds.add(parentNode.id);
+                parentId = parentNode.parentId;
+            }
+        };
+
+        for (const nodeId of Array.from(includedNodeIds)) {
+            includeBlueprintAncestors(nodeId);
+        }
+
+        return nodes.filter((node) => includedNodeIds.has(node.id));
+    }, [viewMode, nodes, edges]);
+
     const evolutionBaseNodes = useMemo(() => {
+        if (viewMode === "blueprintComponents") {
+            return compactBlueprintNodes ?? [];
+        }
+        if (viewMode === "features") {
+            return featureViewNodes ?? [];
+        }
         if (viewMode !== "evolution") return filteredNodes;
         return filteredNodes.filter((node) => {
             const label = String(node.data?.label ?? "").toLowerCase();
             return label !== "blueprint_component" && label !== "blueprint_group";
         });
-    }, [viewMode, filteredNodes]);
+    }, [viewMode, filteredNodes, compactBlueprintNodes, featureViewNodes]);
 
     const displayedNodes = useMemo(() => {
         if (viewMode === "evolution") {
@@ -792,11 +1130,17 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [viewMode, evolutionBaseNodes, filteredEdges]);
 
     const displayedEdges = useMemo(() => {
+        if (viewMode === "blueprintComponents" || viewMode === "features") {
+            const visibleNodeIds = new Set(displayedNodes.map((node) => node.id));
+            return edges.filter((edge) => (
+                visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+            ));
+        }
         const visibleNodeIds = new Set(displayedNodes.map((node) => node.id));
         return filteredEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
         ));
-    }, [filteredEdges, displayedNodes]);
+    }, [viewMode, edges, filteredEdges, displayedNodes]);
 
     const isInsideSystemBlueprintParentBox = useCallback((position: { x: number; y: number }) => {
         const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -842,7 +1186,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [nodes]);
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
-        if (viewMode === "evolution") return;
+        if (viewMode !== "explore") return;
         if (cursorMode !== "node" && cursorMode !== "blueprint_component") return;
 
         const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
@@ -901,16 +1245,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (!hasFiles && !hasBlueprint && !hasGitHubFile) return;
 
         e.preventDefault();
-        e.dataTransfer.dropEffect = viewMode === "evolution" ? "none" : "copy";
+        e.dataTransfer.dropEffect = viewMode === "explore" ? "copy" : "none";
 
-        if (viewMode === "evolution") return;
+        if (viewMode !== "explore") return;
     }, [viewMode]);
 
     const handleCanvasDrop = useCallback((e: React.DragEvent) => {
         const blueprintRaw = e.dataTransfer?.getData(BLUEPRINT_DRAG_MIME);
         if (blueprintRaw) {
             e.preventDefault();
-            if (viewMode === "evolution") return;
+            if (viewMode !== "explore") return;
 
             const payload = parseBlueprintDragPayload(blueprintRaw);
             if (!payload) return;
@@ -936,7 +1280,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (droppedFiles.length === 0) return;
 
         e.preventDefault();
-        if (viewMode === "evolution") return;
+        if (viewMode !== "explore") return;
 
         const basePosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
         void (async () => {
@@ -1144,6 +1488,35 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [dispatch, checkGitStatus]);
 
     useEffect(() => {
+        const handlePointerMove = (event: PointerEvent) => {
+            pointerPositionRef.current = { x: event.clientX, y: event.clientY };
+        };
+
+        window.addEventListener("pointermove", handlePointerMove, { passive: true });
+        return () => window.removeEventListener("pointermove", handlePointerMove);
+    }, []);
+
+    useEffect(() => {
+        if (!pendingConnectionMenu) return;
+
+        const handleWindowPointerDown = () => {
+            setPendingConnectionMenu(null);
+        };
+        const handleWindowKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                setPendingConnectionMenu(null);
+            }
+        };
+
+        window.addEventListener("pointerdown", handleWindowPointerDown);
+        window.addEventListener("keydown", handleWindowKeyDown);
+        return () => {
+            window.removeEventListener("pointerdown", handleWindowPointerDown);
+            window.removeEventListener("keydown", handleWindowKeyDown);
+        };
+    }, [pendingConnectionMenu]);
+
+    useEffect(() => {
         switch (cursorMode) {
             case "text":
                 document.body.style.cursor = "text";
@@ -1159,6 +1532,23 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [cursorMode]);
 
     useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if ((event.ctrlKey || event.metaKey) && event.code === "Space") {
+                event.preventDefault();
+                setChatOpen((prev) => !prev);
+                return;
+            }
+
+            if (event.key === "Escape") {
+                setChatOpen(false);
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, []);
+
+    useEffect(() => {
         if (viewMode !== "explore") return;
 
         const t = window.setTimeout(() => {
@@ -1169,7 +1559,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [viewMode, selectedLabels, queryMatchedNodeIds, fitView]);
 
     useEffect(() => {
-        if (viewMode !== "evolution") return;
+        if (viewMode === "explore") return;
 
         const t = window.setTimeout(() => {
             fitView({ padding: 0.2, duration: 350 });
@@ -1179,12 +1569,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [viewMode, displayedNodes, fitView]);
 
     useEffect(() => {
-        if (viewMode !== "evolution") return;
+        if (viewMode === "explore") return;
         queuedPositionChangesRef.current = [];
         if (nodeChangeRafRef.current !== null) {
             window.cancelAnimationFrame(nodeChangeRafRef.current);
             nodeChangeRafRef.current = null;
         }
+        setPendingConnectionMenu(null);
     }, [viewMode]);
 
     useEffect(() => {
@@ -1203,7 +1594,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const labelSet = new Set(labels);
         return nodes
             .filter((node) => {
-                const rawLabel = String(node.data?.label ?? "").toLowerCase();
+                const rawLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
                 if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
                 return labelSet.has(rawLabel as cardLabel);
             })
@@ -1215,13 +1606,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (!trimmed) {
             setActiveQuery("");
             setQueryMatchedNodeIds(null);
-            setQueryError(null);
             return;
         }
 
         const requestId = ++queryRequestIdRef.current;
-        setQueryLoading(true);
-        setQueryError(null);
 
         try {
             const response = await queryDocumentNodes(projectId, {
@@ -1235,40 +1623,87 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             setQueryMatchedNodeIds(response.matchedNodeIds);
         } catch (error) {
             if (requestId !== queryRequestIdRef.current) return;
-            const message = error instanceof Error ? error.message : "Failed to run natural language query.";
-            setQueryError(message);
-        } finally {
-            if (requestId === queryRequestIdRef.current) {
-                setQueryLoading(false);
-            }
+            console.error("Failed to refresh filtered nodes for the current query.", error);
         }
     }, [projectId]);
 
-    const handleQuerySubmit = useCallback(() => {
-        const scopeNodeIds = labelFilteredNodes.map((node) => node.id);
-        void runNaturalLanguageQuery(queryInput, scopeNodeIds);
-    }, [labelFilteredNodes, queryInput, runNaturalLanguageQuery]);
-
-    const handleQueryClear = useCallback(() => {
-        setQueryInput("");
+    const clearCanvasFilter = useCallback(() => {
         setActiveQuery("");
         setQueryMatchedNodeIds(null);
-        setQueryError(null);
+        setViewMode("explore");
+        setChatError(null);
     }, []);
+
+    const handleSendChatMessage = useCallback(() => {
+        const trimmed = chatInput.trim();
+        if (!trimmed || chatLoading) return;
+
+        const requestId = ++chatRequestIdRef.current;
+        const userEntry: CanvasChatEntry = {
+            id: crypto.randomUUID(),
+            role: "user",
+            content: trimmed,
+        };
+        const conversationPayload = [
+            ...chatMessages.map((message) => ({ role: message.role, content: message.content })),
+            { role: "user" as const, content: trimmed },
+        ].slice(-20);
+
+        setChatMessages((prev) => [...prev, userEntry]);
+        setChatInput("");
+        setChatError(null);
+        setChatLoading(true);
+
+        const scopeNodeIds = labelFilteredNodes.map((node) => node.id);
+
+        void (async () => {
+            try {
+                const response = await queryCanvasChat(projectId, {
+                    message: trimmed,
+                    conversation: conversationPayload,
+                    scopeNodeIds,
+                    limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
+                    minScore: 0.3,
+                });
+                if (requestId !== chatRequestIdRef.current) return;
+
+                const assistantEntry: CanvasChatEntry = {
+                    id: crypto.randomUUID(),
+                    role: "assistant",
+                    content: response.reply,
+                };
+                setChatMessages((prev) => [...prev, assistantEntry].slice(-40));
+
+                if (response.applyFilter) {
+                    setViewMode("explore");
+                    setActiveQuery(trimmed);
+                    setQueryMatchedNodeIds(response.matchedNodeIds);
+                }
+            } catch (error) {
+                if (requestId !== chatRequestIdRef.current) return;
+                const message = error instanceof Error ? error.message : "Failed to chat with canvas assistant.";
+                setChatError(message);
+            } finally {
+                if (requestId === chatRequestIdRef.current) {
+                    setChatLoading(false);
+                }
+            }
+        })();
+    }, [chatInput, chatLoading, chatMessages, labelFilteredNodes, projectId]);
 
     const handleSystemPapersRefresh = useCallback(() => {
         const cards = nodes
             .map((node) => node.data)
-            .filter((data) => SYSTEM_PAPER_CARD_LABELS.has(String(data?.label ?? "").toLowerCase() as cardLabel))
+            .filter((data) => SYSTEM_PAPER_CARD_LABELS.has(normalizeNodeLabel(String(data?.label ?? "")) as cardLabel))
             .map((data) => ({
-                label: String(data?.label ?? "").toLowerCase(),
+                label: normalizeNodeLabel(String(data?.label ?? "")),
                 title: String(data?.title ?? ""),
                 description: String(data?.description ?? ""),
             }));
 
         if (cards.length === 0) {
             setSystemPaperResults([]);
-            setSystemPapersError("Add at least one task or requirement card before refreshing.");
+            setSystemPapersError("Add at least one requirement card before refreshing.");
             return;
         }
 
@@ -1413,6 +1848,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onDrop={handleCanvasDrop}
             />
 
+            <EdgeConnectMenu
+                x={pendingConnectionMenu?.x ?? 0}
+                y={pendingConnectionMenu?.y ?? 0}
+                defaultLabel={pendingConnectionMenu?.defaultLabel ?? "related to"}
+                open={pendingConnectionMenu !== null}
+                onClose={() => setPendingConnectionMenu(null)}
+                onSelect={handleConnectSelection}
+            />
+
             <CanvasSidebar
                 title={title}
                 onSetTitle={handleSetTitle}
@@ -1425,15 +1869,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onViewModeChange={setViewMode}
                 selectedLabels={selectedLabels}
                 onToggleLabel={handleToggleLabelWithQueryRefresh}
-                queryValue={queryInput}
-                activeQuery={activeQuery}
-                onQueryValueChange={setQueryInput}
-                onQuerySubmit={handleQuerySubmit}
-                onQueryClear={handleQueryClear}
-                queryLoading={queryLoading}
-                queryError={queryError}
-                queryResultCount={activeQuery ? filteredNodes.length : null}
-                queryScopeCount={activeQuery ? labelFilteredNodes.length : null}
                 systemPaperResults={systemPaperResults}
                 systemPapersLoading={systemPapersLoading}
                 systemPapersError={systemPapersError}
@@ -1461,6 +1896,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onAssetHover={setHoveredAssetFileId}
                 deletingAssetId={deletingAssetId}
                 onDeleteAsset={handleDeleteAsset}
+            />
+
+            <CanvasChatOverlay
+                open={chatOpen}
+                loading={chatLoading}
+                error={chatError}
+                inputValue={chatInput}
+                filterActive={activeQuery.trim().length > 0}
+                messages={chatMessages}
+                onInputValueChange={setChatInput}
+                onSend={handleSendChatMessage}
+                onClose={() => setChatOpen(false)}
+                onClearFilter={clearCanvasFilter}
             />
 
             {cursorMode === "text" ? (

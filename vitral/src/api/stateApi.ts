@@ -56,6 +56,47 @@ export type QueryDocumentNodesResponse = {
     usedVectorSearch: boolean;
 };
 
+export type CanvasChatMessage = {
+    role: "user" | "assistant";
+    content: string;
+};
+
+export type QueryCanvasChatRequest = {
+    message: string;
+    conversation?: CanvasChatMessage[];
+    limit?: number;
+    minScore?: number;
+    scopeNodeIds?: string[];
+};
+
+export type QueryCanvasChatResponse = {
+    reply: string;
+    applyFilter: boolean;
+    matchedNodeIds: string[];
+    parsed: ParsedNodeQuery;
+    usedVectorSearch: boolean;
+};
+
+export type SimilarityCardInput = {
+    id: string;
+    label: string;
+    title: string;
+    description: string;
+};
+
+export type CompareCardsSimilarityRequest = {
+    newCards: SimilarityCardInput[];
+    existingCards: SimilarityCardInput[];
+};
+
+export type CompareCardsSimilarityResponse = {
+    matches: Array<{
+        newCardId: string;
+        existingCardId: string | null;
+        similarity: number;
+    }>;
+};
+
 export type SystemPaperQueryCard = {
     label?: string;
     title?: string;
@@ -114,6 +155,54 @@ export type QuerySystemPapersResponse = {
 };
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
+
+function normalizeFileRecord(raw: unknown, fallbackDocId: string): fileRecord | null {
+    if (!raw || typeof raw !== "object") return null;
+    const row = raw as Record<string, unknown>;
+
+    const id = typeof row.id === "string" ? row.id : "";
+    if (!id) return null;
+
+    const name = typeof row.name === "string" ? row.name : "file";
+    const docIdRaw = typeof row.docId === "string"
+        ? row.docId
+        : (typeof row.document_id === "string" ? row.document_id : "");
+    const docId = docIdRaw.trim() || fallbackDocId;
+    const extRaw = typeof row.ext === "string"
+        ? row.ext
+        : (name.includes(".") ? (name.split(".").pop() ?? "") : "");
+    const ext = extRaw.toLowerCase();
+    const mimeType = typeof row.mimeType === "string"
+        ? row.mimeType
+        : (typeof row.mime_type === "string" ? row.mime_type : "application/octet-stream");
+    const sizeBytesRaw = typeof row.sizeBytes === "number"
+        ? row.sizeBytes
+        : (typeof row.size_bytes === "number" ? row.size_bytes : 0);
+    const createdAtRaw = typeof row.createdAt === "string"
+        ? row.createdAt
+        : (typeof row.created_at === "string" ? row.created_at : new Date().toISOString());
+    const sha256 = typeof row.sha256 === "string" ? row.sha256 : undefined;
+    const storage = row.storage && typeof row.storage === "object"
+        ? row.storage as { bucket?: unknown; key?: unknown }
+        : {
+            bucket: row.storage_bucket,
+            key: row.storage_key,
+        };
+    const bucket = typeof storage.bucket === "string" ? storage.bucket : "";
+    const key = typeof storage.key === "string" ? storage.key : "";
+
+    return {
+        id,
+        docId,
+        name,
+        ext: ext as fileRecord["ext"],
+        sizeBytes: sizeBytesRaw,
+        mimeType,
+        createdAt: createdAtRaw,
+        sha256,
+        storage: bucket && key ? { bucket, key } : undefined,
+    };
+}
 
 export async function createDocument(
     title: string,
@@ -271,6 +360,48 @@ export async function listFiles(docId: string): Promise<{ files: fileRecord[] }>
     if (!res.ok) {
         const text = await res.text();
         throw new Error(text || "Failed to list files");
+    }
+
+    const payload = await res.json() as { files?: unknown[] };
+    const rows = Array.isArray(payload.files) ? payload.files : [];
+    const files = rows
+        .map((row) => normalizeFileRecord(row, docId))
+        .filter((row): row is fileRecord => row !== null);
+
+    return { files };
+}
+
+export async function queryCanvasChat(
+    docId: string,
+    payload: QueryCanvasChatRequest,
+): Promise<QueryCanvasChatResponse> {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/query-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Query failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function compareCardsSimilarity(
+    docId: string,
+    payload: CompareCardsSimilarityRequest,
+): Promise<CompareCardsSimilarityResponse> {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/cards/similarity`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Similarity query failed: ${res.status}`);
     }
 
     return res.json();

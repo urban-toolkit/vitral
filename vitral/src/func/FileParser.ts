@@ -1,7 +1,7 @@
 import type { filePendingUpload, fileExtension } from '@/config/types';
 
 const TEXT_EXTENSIONS = new Set([
-    "txt", "json", "ipynb", "csv", "py", "js", "ts", "html", "css", "md", "docx"
+    "txt", "json", "ipynb", "csv", "py", "js", "ts", "tsx", "jsx", "html", "css", "md", "docx"
 ]);
 
 function getExt(name: string): fileExtension {

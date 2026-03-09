@@ -5,8 +5,18 @@ type Ipynb = {
     cells?: Array<{
         cell_type: "markdown" | "code" | string;
         source?: string[] | string;
+        input?: string[] | string;
         outputs?: any[];
         execution_count?: number | null;
+    }>;
+    worksheets?: Array<{
+        cells?: Array<{
+            cell_type: "markdown" | "code" | string;
+            source?: string[] | string;
+            input?: string[] | string;
+            outputs?: any[];
+            execution_count?: number | null;
+        }>;
     }>;
 };
 
@@ -25,9 +35,21 @@ function extractTextOutput(out: any): string {
     // stream
     if (out?.output_type === "stream") return arrOrStrToText(out?.text);
 
+    // errors
+    if (out?.output_type === "error" || out?.output_type === "pyerr") {
+        const traceback = arrOrStrToText(out?.traceback);
+        if (traceback) return traceback;
+        return [out?.ename, out?.evalue].filter(Boolean).join(": ");
+    }
+
     // execute_result / display_data
     const tp = out?.data?.["text/plain"];
     if (tp) return arrOrStrToText(tp);
+    const html = out?.data?.["text/html"];
+    if (html) {
+        const htmlText = arrOrStrToText(html);
+        return htmlText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
 
     // legacy / other
     if (out?.text) return arrOrStrToText(out?.text);
@@ -98,12 +120,14 @@ export function NotebookRenderer({
         );
     }
 
-    const cells = ipynb.cells ?? [];
+    const cells = Array.isArray(ipynb.cells)
+        ? ipynb.cells
+        : (Array.isArray(ipynb.worksheets?.[0]?.cells) ? ipynb.worksheets[0].cells : []);
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: compact ? 10 : 14 }}>
             {cells.map((cell, i) => {
-                const source = srcToText(cell.source);
+                const source = srcToText(cell.source ?? cell.input);
 
                 if (cell.cell_type === "markdown") {
                     return (

@@ -1,7 +1,6 @@
 import type { cardLabel } from "@/config/types";
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
 import {
-    faArrowPointer,
     faCalendar,
     faCube,
     faLightbulb,
@@ -17,7 +16,6 @@ export const CARD_LABELS: cardLabel[] = [
     "concept",
     "insight",
     "object",
-    "task",
 ];
 
 export const CARD_LABEL_COLORS: Record<cardLabel, string> = {
@@ -27,7 +25,6 @@ export const CARD_LABEL_COLORS: Record<cardLabel, string> = {
     requirement: "rgb(255, 174, 174, 0.70)",
     concept: "rgb(224, 255, 174, 0.70)",
     insight: "rgb(174, 255, 198, 0.70)",
-    task: "rgb(255, 174, 239, 0.70)",
 };
 
 export const CARD_LABEL_ICONS: Record<cardLabel, IconDefinition> = {
@@ -37,6 +34,16 @@ export const CARD_LABEL_ICONS: Record<cardLabel, IconDefinition> = {
     requirement: faListCheck,
     concept: faLinesLeaning,
     insight: faLightbulb,
-    task: faArrowPointer,
 };
+
+export function normalizeCardLabel(label: string): cardLabel {
+    const normalized = label.trim().toLowerCase();
+    if (normalized === "task") return "requirement";
+    if (normalized === "person") return "person";
+    if (normalized === "activity") return "activity";
+    if (normalized === "requirement") return "requirement";
+    if (normalized === "concept") return "concept";
+    if (normalized === "insight") return "insight";
+    return "object";
+}
 

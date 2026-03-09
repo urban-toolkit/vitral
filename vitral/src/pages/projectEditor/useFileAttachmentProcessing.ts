@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { parseFile } from "@/func/FileParser";
 import { llmCardsToNodes, requestArtifactLLM, requestCardsLLM } from "@/func/LLMRequest";
 import type { llmArtifactData } from "@/func/LLMRequest";
-import { createFile } from "@/api/stateApi";
+import { compareCardsSimilarity, createFile } from "@/api/stateApi";
 import { addNode, attachFileIdToNode, addNodes, connectEdges, updateNode } from "@/store/flowSlice";
 import { upsertFile } from "@/store/filesSlice";
 import { relationLabelFor } from "@/utils/relationships";
@@ -17,14 +17,20 @@ type Args = {
     projectId: string;
     dispatch: AppDispatch;
     nodes: nodeType[];
+    edges: edgeType[];
     allFiles: fileRecord[];
     setLoading: (value: boolean) => void;
 };
 
-const KNOWN_CARD_LABELS = new Set(["person", "activity", "requirement", "concept", "insight", "object", "task"]);
+const KNOWN_CARD_LABELS = new Set(["person", "activity", "requirement", "concept", "insight", "object"]);
+const DUPLICATE_SIMILARITY_THRESHOLD = 0.85;
+const ITERATION_SIMILARITY_THRESHOLD = 0.5;
+const REFERENCED_BY_LABEL = "referenced by";
+const ITERATION_OF_LABEL = "iteration of";
 
 function normalizeArtifactEntity(entity: string | undefined): string {
     const normalized = String(entity ?? "").trim().toLowerCase();
+    if (normalized === "task") return "requirement";
     if (KNOWN_CARD_LABELS.has(normalized)) return normalized;
     return "object";
 }
@@ -42,10 +48,12 @@ export function useFileAttachmentProcessing({
     projectId,
     dispatch,
     nodes,
+    edges,
     allFiles,
     setLoading,
 }: Args) {
     const nodesRef = useRef(nodes);
+    const edgesRef = useRef(edges);
     const allFilesRef = useRef(allFiles);
 
     const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
@@ -54,6 +62,10 @@ export function useFileAttachmentProcessing({
     useEffect(() => {
         nodesRef.current = nodes;
     }, [nodes]);
+
+    useEffect(() => {
+        edgesRef.current = edges;
+    }, [edges]);
 
     useEffect(() => {
         allFilesRef.current = allFiles;
@@ -122,26 +134,134 @@ export function useFileAttachmentProcessing({
                     createdAt: chosenCreatedAt,
                     origin: fileId,
                 });
+                const generatedNodeById = new Map(generatedNodes.map((node) => [node.id, node]));
+                const existingNodeById = new Map(nodesRef.current.map((node) => [node.id, node]));
+                const existingEdgeKeySet = new Set(
+                    edgesRef.current.map((edge) => {
+                        const edgeLabel = typeof edge.label === "string"
+                            ? edge.label
+                            : (typeof edge.data?.label === "string" ? edge.data.label : "");
+                        return `${edge.source}|${edge.target}|${edgeLabel}`;
+                    })
+                );
+                const queuedEdgeKeySet = new Set<string>();
+                const nodesToAdd: nodeType[] = [];
+                const nodeIdToSimilarity = new Map<string, { existingCardId: string | null; similarity: number }>();
+
+                const existingCardsForSimilarity = nodesRef.current
+                    .filter((node) => node.type === "card" && node.id !== rootActivityNodeId)
+                    .map((node) => {
+                        const data = node.data as Record<string, unknown>;
+                        return {
+                            id: node.id,
+                            label: normalizeArtifactEntity(String(data.label ?? "")),
+                            title: typeof data.title === "string" ? data.title : "",
+                            description: typeof data.description === "string" ? data.description : "",
+                        };
+                    });
+                const newCardsForSimilarity = generatedNodes
+                    .filter((node) => node.type === "card")
+                    .map((node) => {
+                        const data = node.data as Record<string, unknown>;
+                        return {
+                            id: node.id,
+                            label: normalizeArtifactEntity(String(data.label ?? "")),
+                            title: typeof data.title === "string" ? data.title : "",
+                            description: typeof data.description === "string" ? data.description : "",
+                        };
+                    });
+
+                if (existingCardsForSimilarity.length > 0 && newCardsForSimilarity.length > 0) {
+                    try {
+                        const similarity = await compareCardsSimilarity(projectId, {
+                            newCards: newCardsForSimilarity,
+                            existingCards: existingCardsForSimilarity,
+                        });
+                        for (const match of similarity.matches) {
+                            nodeIdToSimilarity.set(match.newCardId, {
+                                existingCardId: match.existingCardId,
+                                similarity: match.similarity,
+                            });
+                        }
+                    } catch (error) {
+                        console.error("Failed to compare generated cards with existing cards.", error);
+                    }
+                }
+
+                const queueEdge = (edge: edgeType) => {
+                    const edgeLabel = typeof edge.label === "string"
+                        ? edge.label
+                        : (typeof edge.data?.label === "string" ? edge.data.label : "");
+                    const edgeKey = `${edge.source}|${edge.target}|${edgeLabel}`;
+                    if (existingEdgeKeySet.has(edgeKey) || queuedEdgeKeySet.has(edgeKey)) return;
+                    queuedEdgeKeySet.add(edgeKey);
+                    generatedEdges.push(edge);
+                };
 
                 for (const card of response.cards) {
                     const targetNodeId = idMap[String(card.id)];
                     if (!targetNodeId || targetNodeId === rootActivityNodeId) continue;
 
-                    const label = relationLabelFor("activity", card.entity);
-                    if (!label) continue;
+                    const normalizedEntity = normalizeArtifactEntity(card.entity);
+                    const similarityMatch = nodeIdToSimilarity.get(targetNodeId);
+                    const matchedCardId = similarityMatch?.existingCardId ?? null;
+                    const similarityScore = similarityMatch?.similarity ?? 0;
+                    const isDuplicate = !!matchedCardId && similarityScore > DUPLICATE_SIMILARITY_THRESHOLD;
+                    const isIteration = !!matchedCardId &&
+                        similarityScore >= ITERATION_SIMILARITY_THRESHOLD &&
+                        similarityScore <= DUPLICATE_SIMILARITY_THRESHOLD;
 
-                    generatedEdges.push({
-                        id: crypto.randomUUID(),
-                        source: rootActivityNodeId,
-                        target: targetNodeId,
-                        type: "relation",
-                        label,
-                        data: { label, from: "activity", to: card.entity },
-                    });
+                    if (!isDuplicate) {
+                        const generatedNode = generatedNodeById.get(targetNodeId);
+                        if (generatedNode) nodesToAdd.push(generatedNode);
+                    }
+
+                    if (isDuplicate && matchedCardId) {
+                        const existingNode = existingNodeById.get(matchedCardId);
+                        const existingLabel = normalizeArtifactEntity(String(existingNode?.data?.label ?? normalizedEntity));
+                        queueEdge({
+                            id: crypto.randomUUID(),
+                            source: rootActivityNodeId,
+                            target: matchedCardId,
+                            type: "relation",
+                            label: REFERENCED_BY_LABEL,
+                            data: { label: REFERENCED_BY_LABEL, from: "activity", to: existingLabel, kind: "referenced_by" },
+                        });
+                        continue;
+                    }
+
+                    const label = relationLabelFor("activity", normalizedEntity);
+                    if (label) {
+                        queueEdge({
+                            id: crypto.randomUUID(),
+                            source: rootActivityNodeId,
+                            target: targetNodeId,
+                            type: "relation",
+                            label,
+                            data: { label, from: "activity", to: normalizedEntity },
+                        });
+                    }
+
+                    if (isIteration && matchedCardId && matchedCardId !== targetNodeId) {
+                        const existingNode = existingNodeById.get(matchedCardId);
+                        const existingLabel = normalizeArtifactEntity(String(existingNode?.data?.label ?? normalizedEntity));
+                        queueEdge({
+                            id: crypto.randomUUID(),
+                            source: targetNodeId,
+                            target: matchedCardId,
+                            type: "relation",
+                            label: ITERATION_OF_LABEL,
+                            data: { label: ITERATION_OF_LABEL, from: normalizedEntity, to: existingLabel, kind: "iteration_of" },
+                        });
+                    }
                 }
 
-                dispatch(addNodes(generatedNodes));
-                dispatch(connectEdges(generatedEdges));
+                if (nodesToAdd.length > 0) {
+                    dispatch(addNodes(nodesToAdd));
+                }
+                if (generatedEdges.length > 0) {
+                    dispatch(connectEdges(generatedEdges));
+                }
 
             }
         } finally {
@@ -211,9 +331,8 @@ export function useFileAttachmentProcessing({
 
             const label = normalizeArtifactEntity(artifact?.entity);
             const nodeId = crypto.randomUUID();
-            const role = artifact?.role?.trim();
             const artifactDescription = artifact?.description?.trim();
-            const description = [role ? `Role: ${role}` : "", artifactDescription || ""]
+            const description = [artifactDescription || ""]
                 .filter(Boolean)
                 .join("\n\n");
 

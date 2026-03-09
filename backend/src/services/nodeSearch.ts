@@ -7,7 +7,7 @@ const CARD_LABELS = new Set([
     "concept",
     "insight",
     "object",
-    "task",
+    "blueprint_component",
 ]);
 
 type UnknownRecord = Record<string, unknown>;
@@ -74,7 +74,10 @@ function sanitizeStructuredFilters(value: unknown): NodeStructuredFilters | unde
 
     const rawLabels = normalizeStringArray(value.labels);
     const labels = rawLabels
-        ?.map((label) => label.toLowerCase())
+        ?.map((label) => {
+            const normalized = label.toLowerCase();
+            return normalized === "task" ? "requirement" : normalized;
+        })
         .filter((label) => CARD_LABELS.has(label));
 
     const createdAtFrom = isNonEmptyString(value.createdAtFrom) ? value.createdAtFrom.trim() : undefined;
@@ -120,10 +123,15 @@ export function extractCardNodesForSearch(state: unknown): CardNodeForSearch[] {
     for (const rawNode of flow.nodes) {
         if (!isRecord(rawNode)) continue;
         if (typeof rawNode.id !== "string" || rawNode.id.trim().length === 0) continue;
-        if (typeof rawNode.type === "string" && rawNode.type !== "card") continue;
+        const nodeType = typeof rawNode.type === "string" ? rawNode.type : "";
+        const isSearchableType = nodeType === "card" || nodeType === "blueprintComponent";
+        if (!isSearchableType) continue;
 
         const data = isRecord(rawNode.data) ? rawNode.data : {};
-        const label = isNonEmptyString(data.label) ? data.label.trim().toLowerCase() : "";
+        let label = isNonEmptyString(data.label) ? data.label.trim().toLowerCase() : "";
+        if (label === "task") {
+            label = "requirement";
+        }
 
         nodes.push({
             id: rawNode.id,
@@ -183,12 +191,12 @@ export async function parseNaturalLanguageNodeQuery(
     if (!client) return fallback;
 
     const parsePrompt = [
-        "You parse a natural language query over knowledge cards into semantic and structured filters.",
+        "You parse a natural language query over knowledge cards and blueprint components into semantic and structured filters.",
         "Return ONLY a JSON object with this shape:",
         "{",
         '  "semanticQuery": "string",',
         '  "structuredFilters": {',
-        '    "labels": ["person" | "activity" | "requirement" | "concept" | "insight" | "object" | "task"],',
+        '    "labels": ["person" | "activity" | "requirement" | "concept" | "insight" | "object" | "blueprint_component"],',
         '    "createdAtFrom": "ISO-8601 datetime string",',
         '    "createdAtTo": "ISO-8601 datetime string",',
         '    "titleContains": ["string"],',

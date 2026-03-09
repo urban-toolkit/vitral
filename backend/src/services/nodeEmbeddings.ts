@@ -79,40 +79,22 @@ function readNodesFromState(state: unknown): unknown[] {
 }
 
 function normalizeNodePayload(node: UnknownRecord): UnknownRecord {
-    const nodeId = typeof node.id === "string" ? node.id : "";
-    const nodeType = typeof node.type === "string" ? node.type : "";
     const data = isRecord(node.data) ? node.data : {};
 
-    const attachmentIds = Array.isArray(data.attachmentIds)
-        ? data.attachmentIds.filter((value): value is string => typeof value === "string")
-        : [];
-
     return {
-        nodeId,
-        nodeType,
         label: typeof data.label === "string" ? data.label : "",
         title: typeof data.title === "string" ? data.title : "",
         description: typeof data.description === "string" ? data.description : "",
-        cardType: typeof data.type === "string" ? data.type : "",
-        createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
-        origin: typeof data.origin === "string" ? data.origin : "",
-        attachmentIds,
-        rawData: data,
     };
 }
 
 function serializeNodeForEmbedding(nodePayload: UnknownRecord): string {
+    // Embedding contract: only label/title/description are allowed.
+    // Do not add any new card fields here in future changes.
     const parts = [
-        `Node ID: ${String(nodePayload.nodeId ?? "")}`,
-        `Node type: ${String(nodePayload.nodeType ?? "")}`,
         `Card label: ${String(nodePayload.label ?? "")}`,
         `Card title: ${String(nodePayload.title ?? "")}`,
         `Card description: ${String(nodePayload.description ?? "")}`,
-        `Card type: ${String(nodePayload.cardType ?? "")}`,
-        `Created at: ${String(nodePayload.createdAt ?? "")}`,
-        `Origin: ${String(nodePayload.origin ?? "")}`,
-        `Attachment IDs: ${Array.isArray(nodePayload.attachmentIds) ? nodePayload.attachmentIds.join(", ") : ""}`,
-        `Structured payload: ${stableStringify(nodePayload.rawData)}`,
     ];
 
     return parts.join("\n");
@@ -126,7 +108,11 @@ function extractEmbeddableNodes(state: unknown): EmbeddableNodeMap {
         if (!isRecord(rawNode)) continue;
         const nodeId = typeof rawNode.id === "string" ? rawNode.id.trim() : "";
         if (!nodeId) continue;
-        if (typeof rawNode.type === "string" && rawNode.type !== "card") continue;
+        const nodeType = typeof rawNode.type === "string" ? rawNode.type : "";
+        const data = isRecord(rawNode.data) ? rawNode.data : {};
+        const label = typeof data.label === "string" ? data.label.trim().toLowerCase() : "";
+        const isEmbeddableType = nodeType === "card" || nodeType === "blueprintComponent" || label === "blueprint_component";
+        if (!isEmbeddableType) continue;
 
         const payload = normalizeNodePayload(rawNode);
         const hash = stableStringify(payload);

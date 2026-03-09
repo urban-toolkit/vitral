@@ -9,7 +9,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { streamToString } from "../utils/streams.ts";
 import { safeFilename } from "../utils/files.ts";
 import { computeNodeEmbeddingDelta, createNodeEmbeddingQueue } from "../services/nodeEmbeddings.ts";
-import { applyStructuredFilters, extractCardNodesForSearch, parseNaturalLanguageNodeQuery } from "../services/nodeSearch.ts";
+import { applyStructuredFilters, extractCardNodesForSearch, parseNaturalLanguageNodeQuery, type CardNodeForSearch } from "../services/nodeSearch.ts";
 
 type SaveBody = {
     title?: string;
@@ -25,8 +25,33 @@ type QueryNodesBody = {
     scopeNodeIds?: string[];
 };
 
+type QueryChatMessage = {
+    role?: unknown;
+    content?: unknown;
+};
+
+type QueryChatBody = {
+    message?: string;
+    conversation?: QueryChatMessage[];
+    limit?: number;
+    minScore?: number;
+    scopeNodeIds?: string[];
+};
+
+type SimilarityCardInput = {
+    id?: unknown;
+    label?: unknown;
+    title?: unknown;
+    description?: unknown;
+};
+
+type CompareCardsSimilarityBody = {
+    newCards?: SimilarityCardInput[];
+    existingCards?: SimilarityCardInput[];
+};
+
 const TEXT_EXTENSIONS = new Set([
-    "txt", "json", "ipynb", "csv", "py", "js", "ts", "html", "css", "md",
+    "txt", "json", "ipynb", "csv", "py", "js", "ts", "tsx", "jsx", "html", "css", "md",
 ]);
 
 type SetupTemplateDefinition = {
@@ -62,6 +87,45 @@ function toTemplateNameFromFile(stem: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
+}
+
+function extractJsonObject(text: string): string {
+    const trimmed = text.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
+
+    const match = trimmed.match(/\{[\s\S]*\}/);
+    return match ? match[0] : trimmed;
+}
+
+function truncateText(value: string, maxLength: number): string {
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, maxLength)}...`;
+}
+
+function embeddingTextFromCard(card: { label: string; title: string; description: string }): string {
+    return [
+        `Card label: ${card.label}`,
+        `Card title: ${card.title}`,
+        `Card description: ${card.description}`,
+    ].join("\n");
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+    }
+    if (normA <= 0 || normB <= 0) return 0;
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function isUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function normalizeTemplateDefinition(raw: SetupTemplateDefinition): SetupTemplateResponse["definition"] {
@@ -353,6 +417,310 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             matchedNodeIds,
             usedVectorSearch: true,
         });
+    });
+
+    /**
+     * Chat over canvas nodes using embeddings-backed retrieval.
+     * Returns an assistant reply and optionally node ids to filter on the frontend.
+     * POST /api/state/:id/query-chat
+     */
+    app.post("/state/:id/query-chat", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const body = request.body as QueryChatBody;
+        const rawMessage = typeof body?.message === "string" ? body.message.trim() : "";
+        const requestedLimit = typeof body?.limit === "number" ? body.limit : Number(body?.limit);
+        const requestedMinScore = typeof body?.minScore === "number" ? body.minScore : Number(body?.minScore);
+        const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, Math.floor(requestedLimit))) : 60;
+        const envMinScore = Number(process.env.NODE_QUERY_MIN_SCORE ?? 0.2);
+        const minScore = Number.isFinite(requestedMinScore)
+            ? Math.max(-1, Math.min(1, requestedMinScore))
+            : (Number.isFinite(envMinScore) ? Math.max(-1, Math.min(1, envMinScore)) : 0.2);
+        const scopeNodeIds = Array.isArray(body?.scopeNodeIds)
+            ? body.scopeNodeIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+            : undefined;
+
+        const conversation = Array.isArray(body?.conversation)
+            ? body.conversation
+                .filter((message): message is { role: "user" | "assistant"; content: string } => {
+                    if (!message || typeof message !== "object") return false;
+                    const role = message.role;
+                    const content = message.content;
+                    if (role !== "user" && role !== "assistant") return false;
+                    return typeof content === "string" && content.trim().length > 0;
+                })
+                .slice(-12)
+            : [];
+
+        if (!rawMessage) {
+            return reply.status(400).send({ error: "Missing message" });
+        }
+
+        const docRes = await app.pg.query<{ state: unknown }>(
+            `
+            SELECT state
+            FROM documents
+            WHERE id = $1
+            `,
+            [id],
+        );
+
+        if (docRes.rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        let candidateNodes = extractCardNodesForSearch(docRes.rows[0]?.state);
+        if (scopeNodeIds) {
+            const scopeSet = new Set(scopeNodeIds);
+            candidateNodes = candidateNodes.filter((node) => scopeSet.has(node.id));
+        }
+
+        const parsed = await parseNaturalLanguageNodeQuery(openAiClient, rawMessage, app.log);
+        const structuredFilteredNodes = applyStructuredFilters(candidateNodes, parsed.structuredFilters);
+        const structuredNodeIds = structuredFilteredNodes.map((node) => node.id);
+        let matchedNodeIds: string[] = structuredNodeIds.slice(0, limit);
+        let usedVectorSearch = false;
+
+        if (structuredNodeIds.length > 0) {
+            const semanticQuery = parsed.semanticQuery.trim();
+            if (semanticQuery && openAiClient) {
+                const embeddingTable = await app.pg.query<{ table_name: string | null }>(
+                    `
+                    SELECT to_regclass('public.document_node_embeddings') AS table_name
+                    `,
+                );
+
+                if (embeddingTable.rows[0]?.table_name) {
+                    let semanticVector: number[] | null = null;
+                    try {
+                        const embeddingResponse = await openAiClient.embeddings.create({
+                            model: embeddingModel,
+                            input: semanticQuery,
+                        });
+                        semanticVector = Array.isArray(embeddingResponse.data?.[0]?.embedding)
+                            ? embeddingResponse.data[0].embedding
+                            : null;
+                    } catch (error) {
+                        request.log.warn({ error }, "Failed to embed chat query; using structured filtering only.");
+                    }
+
+                    if (semanticVector) {
+                        const vectorLiteral = `[${semanticVector.join(",")}]`;
+                        const vectorRows = await app.pg.query<{ node_id: string; score: number }>(
+                            `
+                            SELECT
+                                node_id,
+                                1 - (embedding <=> $3::vector) AS score
+                            FROM document_node_embeddings
+                            WHERE doc_id = $1
+                              AND node_id = ANY($2::text[])
+                              AND 1 - (embedding <=> $3::vector) >= $5
+                            ORDER BY embedding <=> $3::vector
+                            LIMIT $4
+                            `,
+                            [id, structuredNodeIds, vectorLiteral, limit, minScore],
+                        );
+
+                        matchedNodeIds = vectorRows.rows.map((row) => row.node_id);
+                        usedVectorSearch = true;
+                    }
+                }
+            }
+        }
+
+        const structuredNodeById = new Map(structuredFilteredNodes.map((node) => [node.id, node]));
+        const rankedNodes: CardNodeForSearch[] = matchedNodeIds
+            .map((nodeId) => structuredNodeById.get(nodeId))
+            .filter((node): node is CardNodeForSearch => Boolean(node));
+        const contextNodes = (rankedNodes.length > 0 ? rankedNodes : structuredFilteredNodes).slice(0, 40);
+
+        const fallbackApplyFilter = /\b(show|list|find|filter|display|only)\b/i.test(rawMessage);
+        let applyFilter = fallbackApplyFilter;
+        let replyText = contextNodes.length > 0
+            ? `I found ${contextNodes.length} relevant nodes on the canvas.`
+            : "I could not find relevant nodes on the current canvas.";
+
+        if (openAiClient) {
+            const historyText = conversation
+                .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
+                .join("\n");
+            const contextText = contextNodes.map((node, index) => (
+                `${index + 1}. id=${node.id}; label=${node.label}; title=${truncateText(node.title, 160)}; description=${truncateText(node.description, 260)}`
+            )).join("\n");
+
+            const responsePrompt = [
+                "You are an assistant for a research canvas.",
+                "Use ONLY the provided node context and conversation.",
+                "Decide whether the user wants to filter the canvas.",
+                "Return ONLY JSON with this shape:",
+                "{",
+                '  "reply": "string",',
+                '  "applyFilter": boolean',
+                "}",
+                "Rules:",
+                "- applyFilter=true ONLY when user explicitly asks to show/list/filter/display nodes on the canvas.",
+                "- applyFilter=false for summarization, explanation, or Q&A requests.",
+                "- Keep reply concise and grounded in node context.",
+                "",
+                "Conversation history:",
+                historyText || "(none)",
+                "",
+                `User message: ${rawMessage}`,
+                "",
+                "Retrieved nodes:",
+                contextText || "(none)",
+            ].join("\n");
+
+            try {
+                const response = await openAiClient.responses.create({
+                    model: process.env.OPENAI_CANVAS_CHAT_MODEL || process.env.OPENAI_QUERY_PARSER_MODEL || "gpt-5-nano",
+                    input: [
+                        {
+                            role: "user",
+                            content: [
+                                {
+                                    type: "input_text",
+                                    text: responsePrompt,
+                                },
+                            ],
+                        },
+                    ],
+                });
+
+                const rawOutput = response.output_text ?? "";
+                const parsedOutput = JSON.parse(extractJsonObject(rawOutput)) as { reply?: unknown; applyFilter?: unknown };
+                if (typeof parsedOutput.reply === "string" && parsedOutput.reply.trim().length > 0) {
+                    replyText = parsedOutput.reply.trim();
+                }
+                if (typeof parsedOutput.applyFilter === "boolean") {
+                    applyFilter = parsedOutput.applyFilter || fallbackApplyFilter;
+                }
+            } catch (error) {
+                request.log.warn({ error }, "Canvas chat response generation failed; using fallback reply.");
+            }
+        }
+
+        if (applyFilter && matchedNodeIds.length === 0) {
+            replyText = "I applied the filter, but no matching nodes were found on the current canvas.";
+        }
+
+        return reply.send({
+            reply: replyText,
+            applyFilter,
+            matchedNodeIds: applyFilter ? matchedNodeIds : [],
+            parsed,
+            usedVectorSearch,
+        });
+    });
+
+    /**
+     * Compare newly generated cards against existing canvas cards using embeddings.
+     * POST /api/state/:id/cards/similarity
+     */
+    app.post("/state/:id/cards/similarity", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        if (!isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document id" });
+        }
+
+        const body = request.body as CompareCardsSimilarityBody;
+        const normalizeCard = (raw: SimilarityCardInput): { id: string; label: string; title: string; description: string } | null => {
+            const cardId = typeof raw.id === "string" ? raw.id.trim() : "";
+            if (!cardId) return null;
+            const normalizedLabelRaw = typeof raw.label === "string" ? raw.label.trim().toLowerCase() : "";
+            const label = normalizedLabelRaw === "task" ? "requirement" : normalizedLabelRaw;
+            return {
+                id: cardId,
+                label,
+                title: typeof raw.title === "string" ? raw.title : "",
+                description: typeof raw.description === "string" ? raw.description : "",
+            };
+        };
+
+        const newCards = Array.isArray(body?.newCards)
+            ? body.newCards.map(normalizeCard).filter((card): card is { id: string; label: string; title: string; description: string } => Boolean(card)).slice(0, 160)
+            : [];
+        const existingCards = Array.isArray(body?.existingCards)
+            ? body.existingCards.map(normalizeCard).filter((card): card is { id: string; label: string; title: string; description: string } => Boolean(card)).slice(0, 500)
+            : [];
+
+        if (newCards.length === 0) {
+            return reply.send({ matches: [] });
+        }
+
+        if (existingCards.length === 0 || !openAiClient) {
+            return reply.send({
+                matches: newCards.map((card) => ({
+                    newCardId: card.id,
+                    existingCardId: null,
+                    similarity: 0,
+                })),
+            });
+        }
+
+        const allCards = [...newCards, ...existingCards];
+        const embeddingInputs = allCards.map((card) => embeddingTextFromCard(card));
+
+        try {
+            const embeddingResponse = await openAiClient.embeddings.create({
+                model: embeddingModel,
+                input: embeddingInputs,
+            });
+
+            const vectors = Array.isArray(embeddingResponse.data)
+                ? embeddingResponse.data.map((item) => item.embedding).filter((v): v is number[] => Array.isArray(v))
+                : [];
+
+            if (vectors.length !== allCards.length) {
+                request.log.warn(
+                    { expected: allCards.length, actual: vectors.length },
+                    "Unexpected similarity embeddings response length.",
+                );
+                return reply.send({
+                    matches: newCards.map((card) => ({
+                        newCardId: card.id,
+                        existingCardId: null,
+                        similarity: 0,
+                    })),
+                });
+            }
+
+            const newVectors = vectors.slice(0, newCards.length);
+            const existingVectors = vectors.slice(newCards.length);
+
+            const matches = newCards.map((newCard, index) => {
+                const sourceVector = newVectors[index];
+                let bestId: string | null = null;
+                let bestSimilarity = 0;
+
+                for (let i = 0; i < existingCards.length; i++) {
+                    const existingCard = existingCards[i];
+                    if (existingCard.label !== newCard.label) continue;
+
+                    const similarity = cosineSimilarity(sourceVector, existingVectors[i]);
+                    if (similarity > bestSimilarity) {
+                        bestSimilarity = similarity;
+                        bestId = existingCard.id;
+                    }
+                }
+
+                return {
+                    newCardId: newCard.id,
+                    existingCardId: bestId,
+                    similarity: Number.isFinite(bestSimilarity) ? bestSimilarity : 0,
+                };
+            });
+
+            return reply.send({ matches });
+        } catch (error) {
+            request.log.warn({ error }, "Failed to compare card similarities with embeddings.");
+            return reply.send({
+                matches: newCards.map((card) => ({
+                    newCardId: card.id,
+                    existingCardId: null,
+                    similarity: 0,
+                })),
+            });
+        }
     });
 
     /**
@@ -830,12 +1198,15 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.get("/state/:id/files", async (request, reply) => {
         const { id } = request.params as { id: string };
+        if (!isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document id" });
+        }
 
         const client = await app.pg.connect();
         try {
             const res = await client.query<{
                 id: string;
-                document_id: string;
+                docId: string;
                 name: string;
                 mime_type: string | null;
                 size_bytes: number | null;
@@ -848,7 +1219,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 `
                 SELECT
                     id,
-                    document_id,
+                    document_id AS "docId",
                     name,
                     mime_type,
                     size_bytes,
@@ -865,7 +1236,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
             const rows = res.rows as Array<{
                 id: string;
-                document_id: string;
+                docId: string;
                 name: string;
                 mime_type: string | null;
                 size_bytes: number | null;
@@ -956,6 +1327,9 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.get("/state/:docId/files/:id/content", async (request, reply) => {
         const { docId } = request.params as { docId: string };
         const { id } = request.params as { id: string };
+        if (!isUuid(docId) || !isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document or file id" });
+        }
 
         const client = await request.server.pg.connect();
         try {
@@ -974,7 +1348,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             }>(
                 `
                 SELECT
-                    id, document_id, name, mime_type, ext, size_bytes, sha256, created_at,
+                    id, document_id AS "docId", name, mime_type, ext, size_bytes, sha256, created_at,
                     storage_bucket, storage_key
                 FROM document_files
                 WHERE document_id = $1 AND id = $2
@@ -1046,6 +1420,9 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.get("/state/:docId/files/:id/raw", async (request, reply) => {
         const { docId } = request.params as { docId: string };
         const { id } = request.params as { id: string };
+        if (!isUuid(docId) || !isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document or file id" });
+        }
 
         const client = await request.server.pg.connect();
         try {

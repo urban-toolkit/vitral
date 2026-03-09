@@ -303,7 +303,7 @@ export const Timeline = ({
     console.log("milestones", milestones);
 
     for (const milestone of milestones) {
-      dispatch(addDesignStudyEvent(milestone));
+      dispatch(addDesignStudyEvent({ ...milestone, generatedBy: "llm" }));
     }
   };
 
@@ -560,6 +560,7 @@ export const Timeline = ({
                       id: crypto.randomUUID(),
                       name: "Untitled",
                       occurredAt: fromDate(milestoneMenu.date),
+                      generatedBy: "manual",
                     })
                   );
                 }

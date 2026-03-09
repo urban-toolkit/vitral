@@ -7,7 +7,7 @@ import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/c
 import { BLUEPRINT_DRAG_MIME, buildBlueprintDragPayload } from "@/components/blueprint/blueprintDnD";
 import styles from "./CanvasSidebar.module.css";
 
-export type CanvasViewMode = "explore" | "evolution";
+export type CanvasViewMode = "explore" | "evolution" | "blueprintComponents" | "features";
 
 function truncateLabel(text: string, maxChars: number): string {
     if (!text) return "";
@@ -136,15 +136,6 @@ type CanvasSidebarProps = {
     onViewModeChange: (mode: CanvasViewMode) => void;
     selectedLabels: cardLabel[];
     onToggleLabel: (label: cardLabel) => void;
-    queryValue: string;
-    activeQuery: string;
-    onQueryValueChange: (value: string) => void;
-    onQuerySubmit: () => void;
-    onQueryClear: () => void;
-    queryLoading: boolean;
-    queryError: string | null;
-    queryResultCount: number | null;
-    queryScopeCount: number | null;
     systemPaperResults: QuerySystemPapersResult[];
     systemPapersLoading: boolean;
     systemPapersError: string | null;
@@ -292,15 +283,6 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     onViewModeChange,
     selectedLabels,
     onToggleLabel,
-    queryValue,
-    activeQuery,
-    onQueryValueChange,
-    onQuerySubmit,
-    onQueryClear,
-    queryLoading,
-    queryError,
-    queryResultCount,
-    queryScopeCount,
     systemPaperResults,
     systemPapersLoading,
     systemPapersError,
@@ -309,7 +291,6 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     const [paperTooltip, setPaperTooltip] = useState<PaperTooltipState | null>(null);
     const [editingTitle, setEditingTitle] = useState(false);
     const [draftTitle, setDraftTitle] = useState(title);
-    const queryFilterActive = activeQuery.trim().length > 0;
 
     useEffect(() => {
         setDraftTitle(title);
@@ -424,10 +405,27 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                             >
                                 Evolution view
                             </button>
+                            <button
+                                type="button"
+                                className={`${styles.option} ${viewMode === "blueprintComponents" ? styles.optionActive : ""}`}
+                                onClick={() => onViewModeChange("blueprintComponents")}
+                            >
+                                System view
+                            </button>
+                            <button
+                                type="button"
+                                className={`${styles.option} ${viewMode === "features" ? styles.optionActive : ""}`}
+                                onClick={() => onViewModeChange("features")}
+                            >
+                                Features view
+                            </button>
                         </div>
 
                         <p className={styles.helper}>
-                            Evolution view aligns trees on a horizontal timeline using each node timestamp.
+                            Evolution view aligns trees on a horizontal timeline using each node timestamp. Blueprint components view isolates and compacts blueprint components. Features view surfaces branches linked to requirements and blueprint components.
+                        </p>
+                        <p className={styles.helper}>
+                            Open AI chat with <strong>Ctrl + Space</strong>.
                         </p>
 
                         <p className={styles.sectionLabel}>Card types</p>
@@ -456,54 +454,6 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                 );
                             })}
                         </div>
-
-                        <p className={styles.sectionLabel}>Query</p>
-                        <form
-                            className={`${styles.queryForm} ${queryFilterActive ? styles.queryFormActive : ""}`}
-                            onSubmit={(event) => {
-                                event.preventDefault();
-                                onQuerySubmit();
-                            }}
-                        >
-                            <input
-                                type="text"
-                                className={styles.queryInput}
-                                placeholder="Find cards with natural language..."
-                                value={queryValue}
-                                onChange={(event) => onQueryValueChange(event.target.value)}
-                            />
-                            <div className={styles.queryActions}>
-                                <button
-                                    type="submit"
-                                    className={styles.queryButton}
-                                    disabled={queryLoading || queryValue.trim().length === 0}
-                                >
-                                    {queryLoading ? "Searching..." : "Search"}
-                                </button>
-                                <button
-                                    type="button"
-                                    className={styles.queryClear}
-                                    onClick={onQueryClear}
-                                    disabled={queryLoading}
-                                >
-                                    Clear
-                                </button>
-                            </div>
-                        </form>
-                        {queryFilterActive ? (
-                            <div className={styles.queryNotice} role="status">
-                                <span className={styles.queryNoticeLabel}>Filtered view</span>
-                                <p className={styles.queryNoticeText}>
-                                    Showing {queryResultCount ?? 0} of {queryScopeCount ?? 0} cards for "{activeQuery}".
-                                </p>
-                            </div>
-                        ) : null}
-                        {queryError ? (
-                            <p className={styles.queryError}>{queryError}</p>
-                        ) : null}
-                        {queryResultCount !== null ? (
-                            <p className={styles.queryMeta}>Showing {queryResultCount} matching cards.</p>
-                        ) : null}
 
                         <p className={styles.sectionLabel}>System papers</p>
                         <div className={styles.systemPaperActions}>

@@ -238,7 +238,8 @@ export const timelineSlice = createSlice({
             let designStudyEvents = action.payload.map((designStudyEvent) => {
                 return {
                     ...designStudyEvent,
-                    occurredAt: fromDate(designStudyEvent.occurredAt)
+                    occurredAt: fromDate(designStudyEvent.occurredAt),
+                    generatedBy: designStudyEvent.generatedBy === "llm" ? "llm" : "manual",
                 }
             });
 
@@ -249,7 +250,8 @@ export const timelineSlice = createSlice({
             const s = action.payload;
             state.designStudyEvents.byId[s.id] = {
                 ...s,
-                occurredAt: fromDate(s.occurredAt)
+                occurredAt: fromDate(s.occurredAt),
+                generatedBy: s.generatedBy === "llm" ? "llm" : "manual",
             };
             state.designStudyEvents.allIds.push(s.id);
         },
@@ -259,7 +261,8 @@ export const timelineSlice = createSlice({
             if (state.designStudyEvents.byId[s.id]) {
                 state.designStudyEvents.byId[s.id] = {
                     ...s,
-                    occurredAt: fromDate(s.occurredAt)
+                    occurredAt: fromDate(s.occurredAt),
+                    generatedBy: s.generatedBy === "llm" ? "llm" : "manual",
                 };
             }
         },

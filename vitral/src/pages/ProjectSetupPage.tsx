@@ -12,7 +12,8 @@ import {
     type FlowStatePayload,
     type LiteratureSetupTemplate,
 } from "@/api/stateApi";
-import type { TimelineStatePayload } from "@/config/types";
+import type { DesignStudyEvent, TimelineStatePayload } from "@/config/types";
+import { requestGoalMilestonesLLM } from "@/func/LLMRequest";
 
 import classes from "./ProjectSetupPage.module.css";
 
@@ -26,6 +27,7 @@ type MilestoneInput = {
     id: string;
     name: string;
     occurredAt: string;
+    generatedBy?: "manual" | "llm";
 };
 
 type StageInput = {
@@ -106,6 +108,7 @@ function buildInitialSetup(): SetupState {
                     id: crypto.randomUUID(),
                     name: "Kickoff",
                     occurredAt: toDateInputValue(today),
+                    generatedBy: "manual",
                 },
             ],
             stages: [
@@ -143,6 +146,7 @@ function normalizeSetup(source: unknown): SetupState {
             id: String((m as MilestoneInput).id || crypto.randomUUID()),
             name: String((m as MilestoneInput).name || "Milestone"),
             occurredAt: String((m as MilestoneInput).occurredAt || initial.timeline.expectedStart),
+            generatedBy: (m as MilestoneInput).generatedBy === "llm" ? "llm" : "manual",
         }))
         : initial.timeline.milestones;
 
@@ -184,6 +188,7 @@ function toTimelinePayload(setup: SetupState): TimelineStatePayload {
         id: milestone.id || crypto.randomUUID(),
         name: milestone.name?.trim() || `Milestone ${index + 1}`,
         occurredAt: safeIso(milestone.occurredAt, fallbackStartIso),
+        generatedBy: milestone.generatedBy === "llm" ? "llm" : "manual",
     }));
 
     return {
@@ -233,12 +238,14 @@ function timelineToSetupTimeline(
             id: event.id || crypto.randomUUID(),
             name: event.name || `Milestone ${index + 1}`,
             occurredAt: toDateInputFromUnknown(event.occurredAt, expectedStart),
+            generatedBy: event.generatedBy === "llm" ? "llm" : "manual",
         }))
         : [
             {
                 id: crypto.randomUUID(),
                 name: "Kickoff",
                 occurredAt: expectedStart,
+                generatedBy: "manual" as const,
             },
         ];
 
@@ -266,6 +273,41 @@ function timelineToSetupTimeline(
     };
 }
 
+function buildGoalMilestonesContext(setup: SetupState) {
+    const fallbackStartIso = new Date().toISOString();
+    const fallbackEndIso = plusDays(new Date(), 90).toISOString();
+
+    return {
+        projectName: setup.projectName.trim() || "Untitled",
+        goal: setup.goal.trim(),
+        expectedStart: safeIso(setup.timeline.expectedStart, fallbackStartIso),
+        expectedEnd: safeIso(setup.timeline.expectedEnd, fallbackEndIso),
+        availableRoles: setup.availableRoles.map((role) => role.trim()).filter(Boolean),
+        participants: setup.participants.map((participant) => ({
+            name: participant.name.trim() || "Participant",
+            role: participant.role.trim() || "Researcher",
+        })),
+        stages: setup.timeline.stages.map((stage, index) => ({
+            name: stage.name.trim() || `Stage ${index + 1}`,
+            start: safeIso(stage.start, fallbackStartIso),
+            end: safeIso(stage.end, fallbackEndIso),
+        })),
+        existingMilestones: setup.timeline.milestones.map((milestone, index) => ({
+            name: milestone.name.trim() || `Milestone ${index + 1}`,
+            occurredAt: safeIso(milestone.occurredAt, fallbackStartIso),
+        })),
+    };
+}
+
+function milestoneInputsFromEvents(events: DesignStudyEvent[], fallbackDate: string): MilestoneInput[] {
+    return events.map((event, index) => ({
+        id: event.id || crypto.randomUUID(),
+        name: event.name?.trim() || `Milestone ${index + 1}`,
+        occurredAt: toDateInputFromUnknown(event.occurredAt, fallbackDate),
+        generatedBy: event.generatedBy === "llm" ? "llm" : "manual",
+    }));
+}
+
 function uniqueRoles(roles: string[]): string[] {
     return Array.from(new Set(roles.map((role) => role.trim()).filter(Boolean)));
 }
@@ -287,6 +329,7 @@ export function ProjectSetupPage() {
     const [submitting, setSubmitting] = useState(false);
     const [templateLoading, setTemplateLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [loadedGoal, setLoadedGoal] = useState("");
 
     useEffect(() => {
         let active = true;
@@ -343,6 +386,7 @@ export function ProjectSetupPage() {
                     ]);
 
                     setExistingFlowState(doc.state ?? { flow: { nodes: [], edges: [] } });
+                    setLoadedGoal(doc.description || "");
                     setSetup((prev) => ({
                         ...prev,
                         projectName: doc.title || "Untitled",
@@ -380,6 +424,7 @@ export function ProjectSetupPage() {
                 id: crypto.randomUUID(),
                 name: milestone.name,
                 occurredAt: toDateInputValue(plusDays(baseDate, milestone.dayOffset ?? 0)),
+                generatedBy: "manual" as const,
             }));
 
             const stages = (template.definition.timeline?.stages ?? []).map((stage) => ({
@@ -479,7 +524,32 @@ export function ProjectSetupPage() {
         try {
             const title = sourceSetup.projectName.trim() || "Untitled";
             const goal = sourceSetup.goal.trim();
-            const timelinePayload = toTimelinePayload(sourceSetup);
+            const baselineGoal = loadedGoal.trim();
+            const shouldGenerateGoalMilestones =
+                goal.length > 0 && (!isEditMode || goal !== baselineGoal);
+
+            let effectiveSetup = sourceSetup;
+            if (shouldGenerateGoalMilestones) {
+                const generatedMilestones = await requestGoalMilestonesLLM(
+                    buildGoalMilestonesContext(sourceSetup)
+                );
+
+                if (generatedMilestones.length > 0) {
+                    effectiveSetup = {
+                        ...sourceSetup,
+                        timeline: {
+                            ...sourceSetup.timeline,
+                            milestones: milestoneInputsFromEvents(
+                                generatedMilestones,
+                                sourceSetup.timeline.expectedStart
+                            ),
+                        },
+                    };
+                    setSetup(effectiveSetup);
+                }
+            }
+
+            const timelinePayload = toTimelinePayload(effectiveSetup);
 
             if (isEditMode && projectId) {
                 await saveDocument(projectId, existingFlowState, timelinePayload, title);
@@ -790,6 +860,7 @@ export function ProjectSetupPage() {
                                             id: crypto.randomUUID(),
                                             name: `Milestone ${prev.timeline.milestones.length + 1}`,
                                             occurredAt: prev.timeline.expectedStart,
+                                            generatedBy: "manual",
                                         },
                                     ],
                                 },

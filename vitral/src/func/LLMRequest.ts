@@ -699,10 +699,13 @@ export function llmCardsToNodes(
     let idMapping: { [old: string]: string } = {};
 
     for (const card of llmCards) {
+        const normalizedEntity = String(card.entity ?? "").trim().toLowerCase() === "task"
+            ? "requirement"
+            : String(card.entity ?? "").trim().toLowerCase();
 
         let cardType = 'social';
 
-        switch (card.entity) {
+        switch (normalizedEntity) {
             case 'requirement':
                 cardType = 'technical';
                 break;
@@ -721,7 +724,7 @@ export function llmCardsToNodes(
             },
             type: 'card',
             data: {
-                label: card.entity,
+                label: normalizedEntity,
                 type: cardType as cardType,
                 title: card.title,
                 description: card.description,
@@ -748,7 +751,12 @@ export function llmConnectionsToEdges(
 ): edgeType[] {
     let resultingEdges: edgeType[] = []
     const entityByLegacyId = new Map<string, string>(
-        llmCards.map((card) => [String(card.id), String(card.entity ?? "").toLowerCase()])
+        llmCards.map((card) => {
+            const normalized = String(card.entity ?? "").trim().toLowerCase() === "task"
+                ? "requirement"
+                : String(card.entity ?? "").trim().toLowerCase();
+            return [String(card.id), normalized];
+        })
     );
 
     try {
@@ -770,40 +778,80 @@ export function llmConnectionsToEdges(
     return resultingEdges;
 }
 
-export async function requestMilestonesLLM(milestones: DesignStudyEvent[]): Promise<DesignStudyEvent[]> {
-    const contentMilestones = JSON.stringify(milestones);
+type GoalMilestonesContext = {
+    projectName: string;
+    goal: string;
+    expectedStart: string;
+    expectedEnd: string;
+    availableRoles: string[];
+    participants: Array<{ name: string; role: string }>;
+    stages: Array<{ name: string; start: string; end: string }>;
+    existingMilestones: Array<{ name: string; occurredAt: string }>;
+};
 
+function toIsoOrFallback(value: unknown, fallbackIso: string): string {
+    if (typeof value === "string") {
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+    return fallbackIso;
+}
+
+function normalizeMilestonesOutput(rawOutput: string, fallbackIso: string): DesignStudyEvent[] {
+    const parsedData = JSON.parse(rawOutput) as { milestones?: unknown };
+    const rawMilestones = Array.isArray(parsedData.milestones) ? parsedData.milestones : [];
+
+    const normalized: DesignStudyEvent[] = [];
+    for (const milestone of rawMilestones) {
+        if (!milestone || typeof milestone !== "object") continue;
+        const item = milestone as Record<string, unknown>;
+        const name = String(item.name ?? "").trim();
+        if (!name) continue;
+
+        normalized.push({
+            id: crypto.randomUUID(),
+            name,
+            occurredAt: toIsoOrFallback(item.occurredAt, fallbackIso),
+            generatedBy: "llm",
+        });
+    }
+
+    return normalized;
+}
+
+async function requestMilestonesByPrompt(prompt: string, payload: unknown, fallbackIso: string): Promise<DesignStudyEvent[]> {
     const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ input: contentMilestones, prompt: "Milestones" }),
+        body: JSON.stringify({
+            input: JSON.stringify(payload),
+            prompt,
+        }),
     });
 
     if (!response.ok) {
-        alert("Request failed");
-        return []
+        return [];
     }
 
     const data = await response.json();
-
     try {
-        const parsedData = JSON.parse(data.output);
-
-        let milestones: DesignStudyEvent[] = parsedData.milestones;
-
-        milestones = milestones.map((milestone) => {
-            return {
-                ...milestone,
-                id: crypto.randomUUID()
-            }
-        });
-
-        return milestones;
+        return normalizeMilestonesOutput(String(data.output ?? ""), fallbackIso);
     } catch {
-        alert("Request failed");
+        return [];
     }
+}
 
-    return [];
+export async function requestMilestonesLLM(milestones: DesignStudyEvent[]): Promise<DesignStudyEvent[]> {
+    const fallbackIso = milestones[0]?.occurredAt
+        ? toIsoOrFallback(milestones[0].occurredAt, new Date().toISOString())
+        : new Date().toISOString();
+
+    return requestMilestonesByPrompt("Milestones", milestones, fallbackIso);
+}
+
+export async function requestGoalMilestonesLLM(context: GoalMilestonesContext): Promise<DesignStudyEvent[]> {
+    const fallbackIso = toIsoOrFallback(context.expectedStart, new Date().toISOString());
+    return requestMilestonesByPrompt("GoalMilestones", context, fallbackIso);
 }

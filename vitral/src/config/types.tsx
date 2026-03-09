@@ -1,7 +1,7 @@
 export type cardType = 'technical' | 'social';
-export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight' | 'object' | 'task';
+export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight' | 'object';
 
-export type fileExtension = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'html' | 'css' | 'md' | 'pdf' | 'docx';
+export type fileExtension = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'tsx' | 'jsx' | 'html' | 'css' | 'md' | 'pdf' | 'docx';
 
 export type cardData = {
     label: string,
@@ -198,6 +198,7 @@ export type DesignStudyEvent = {
     id: string;
     name: string;
     occurredAt: string; // ISO timestamp
+    generatedBy?: "manual" | "llm";
 }
 
 export type CodebaseSubtrack = {

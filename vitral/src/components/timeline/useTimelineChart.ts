@@ -694,23 +694,28 @@ export function useTimelineChart({
             g: d3.Selection<SVGGElement, unknown, null, undefined>,
             eventData: any
         ) => {
+            const openMilestoneMenu = (event: any) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const [sx, sy] = d3.pointer(event, containerRef.current);
+                setMilestoneMenu({ x: sx, y: sy, date: "" });
+                setSelectedMilestone(eventData);
+                setBlueprintLinkMenu(null);
+                setBlueprintCodebaseLinkMenu(null);
+                setShowTooltip(false);
+            };
+
             g.append("path")
                 .attr("d", "M 0 -12 L 12 0 L 0 12 L -12 0 Z")
-                .style("fill", "#ff4545")
-                .style("stroke", "black")
-                .on("contextmenu", (event: any) => {
-                    event.preventDefault();
-
-                    const [sx, sy] = d3.pointer(event, containerRef.current);
-                    setMilestoneMenu({ x: sx, y: sy, date: "" });
-                    setSelectedMilestone(eventData);
-                });
+                .on("contextmenu", openMilestoneMenu)
+                .on("click", openMilestoneMenu);
 
             g.append("text")
                 .attr("class", classes.diamondText)
                 .attr("x", 0)
                 .attr("y", -15)
                 .text(eventData.name)
+                .on("contextmenu", openMilestoneMenu)
                 .on("click", (event: any) => {
                     event.stopPropagation();
                     const [sx, sy] = d3.pointer(event, containerRef.current);
@@ -821,6 +826,7 @@ export function useTimelineChart({
 
                             event.preventDefault();
                             const [sx, sy] = d3.pointer(event, containerRef.current);
+                            setSelectedMilestone(null);
                             setMilestoneMenu({ x: sx, y: sy, date: fromDate(x.invert(sx)) });
                         });
                 });
@@ -1147,6 +1153,9 @@ export function useTimelineChart({
                     .selectAll("rect, circle, path")
                     .attr("class", classes.eventShape)
                     .style("fill", (eventData: any) => {
+                        if (kind === "designStudy") {
+                            return eventData.generatedBy === "llm" ? "#2D7DD2" : "#FF4545";
+                        }
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
@@ -1158,6 +1167,9 @@ export function useTimelineChart({
                         return isHighlightedBlueprintEvent ? "#00A8DB" : null;
                     })
                     .style("stroke", (eventData: any) => {
+                        if (kind === "designStudy") {
+                            return eventData.generatedBy === "llm" ? "#174A8A" : "#8E1E1E";
+                        }
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
@@ -1175,6 +1187,7 @@ export function useTimelineChart({
                         return isHighlightedBlueprintEvent ? "#005E79" : null;
                     })
                     .style("stroke-width", (eventData: any) => {
+                        if (kind === "designStudy") return 1.4;
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
@@ -1246,6 +1259,18 @@ export function useTimelineChart({
                         setShowTooltip(true);
                     })
                     .on("contextmenu", (event: any, eventData: any) => {
+                        if (kind === "designStudy") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const [sx, sy] = d3.pointer(event, containerRef.current);
+                            setMilestoneMenu({ x: sx, y: sy, date: "" });
+                            setSelectedMilestone(eventData);
+                            setBlueprintCodebaseLinkMenu(null);
+                            setBlueprintLinkMenu(null);
+                            setShowTooltip(false);
+                            return;
+                        }
+
                         if (kind !== "blueprint") return;
 
                         event.preventDefault();

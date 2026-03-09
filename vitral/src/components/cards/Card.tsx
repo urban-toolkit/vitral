@@ -11,10 +11,10 @@ import { useSelector } from 'react-redux';
 import type { fileRecord, nodeType } from '@/config/types';
 import type { RootState } from '@/store';
 import { FileCarousel } from '@/components/files/FileCarousel';
-import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from '@/components/cards/cardVisuals';
+import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS, normalizeCardLabel } from '@/components/cards/cardVisuals';
 
 function LabelIcon({ label }: { label: string }) {
-    const icon = CARD_LABEL_ICONS[label as keyof typeof CARD_LABEL_ICONS];
+    const icon = CARD_LABEL_ICONS[normalizeCardLabel(label)];
     if (!icon) return null;
     return (
         <FontAwesomeIcon className={classes.flipIcon} icon={icon} />
@@ -86,7 +86,8 @@ function CardImpl(props: CardProps) {
 
     const [draftTitle, setDraftTitle] = useState(props.data.title);
     const [draftDescription, setDraftDescription] = useState(props.data.description ?? '');
-    const isTaskOrRequirement = props.data.label === "task" || props.data.label === "requirement";
+    const normalizedLabel = normalizeCardLabel(props.data.label);
+    const isTaskOrRequirement = normalizedLabel === "requirement";
     const participantOptions = Array.isArray(props.participantOptions) ? props.participantOptions : [];
     const assignedTo = typeof props.data.assignedTo === "string" ? props.data.assignedTo : "";
     const reference = typeof props.data.reference === "string" ? props.data.reference.trim() : "";
@@ -116,7 +117,7 @@ function CardImpl(props: CardProps) {
                         <div className={classes.headerLeft}>
                             {isEditingLabel ? (
                                 <select
-                                    value={props.data.label}
+                                    value={normalizedLabel}
                                     autoFocus
                                     onChange={(e) => {
                                         const newLabel = e.target.value;
@@ -136,7 +137,7 @@ function CardImpl(props: CardProps) {
                                     className={classes.label}
                                     onClick={() => setIsEditingLabel(true)}
                                 >
-                                    {props.data.label[0].toUpperCase() + props.data.label.slice(1)}
+                                    {normalizedLabel[0].toUpperCase() + normalizedLabel.slice(1)}
                                 </p>
                             )}
                         </div>
@@ -173,13 +174,13 @@ function CardImpl(props: CardProps) {
                         <div
                             className={classes.labelIcon}
                             style={{
-                                backgroundColor: CARD_LABEL_COLORS[props.data.label as keyof typeof CARD_LABEL_COLORS],
+                                backgroundColor: CARD_LABEL_COLORS[normalizedLabel],
                                 top: "-10px",
                                 left: "-3px",
                             }}
                         >
                             <LabelIcon
-                                label={props.data.label}
+                                label={normalizedLabel}
                             />
                         </div>
 
@@ -195,7 +196,7 @@ function CardImpl(props: CardProps) {
                                 onFileSelected={handleFileSelected}
                                 dropZoneCSS={dropZoneCSS}
                                 loading={false}
-                                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .html, .css, .md, .docx, .pdf'
+                                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .tsx, .jsx, .html, .css, .md, .docx, .pdf'
                             />
                         </FileCarousel>
                     </div>
@@ -243,20 +244,20 @@ function CardImpl(props: CardProps) {
 
                 <div className={`${classes.flipCardBack} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>
                     <div className={classes.header}>
-                        <p>{`${props.data.label[0].toUpperCase()}${props.data.label.slice(1)}`}</p>
+                        <p>{`${normalizedLabel[0].toUpperCase()}${normalizedLabel.slice(1)}`}</p>
                         <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => { setFlipped(false) }} />
                     </div>
                     <div className={classes.backBody}>
                         <div
                             className={classes.labelIcon}
                             style={{
-                                backgroundColor: CARD_LABEL_COLORS[props.data.label as keyof typeof CARD_LABEL_COLORS],
+                                backgroundColor: CARD_LABEL_COLORS[normalizedLabel],
                                 top: "-4px",
                                 left: "-5px",
                             }}
                         >
                             <LabelIcon
-                                label={props.data.label}
+                                label={normalizedLabel}
                             />
                         </div>
 
