@@ -41,6 +41,8 @@ export type AnyEvent =
 export type TimelineProps = {
   startMarker: Date | string;
   endMarker: Date | string;
+  projectName?: string;
+  projectGoal?: string;
   defaultStages: string[];
   onStageUpdate: (stage: Stage) => void;
   onStageCreation: (name: string) => void;

@@ -20,6 +20,7 @@ import {
   selectCodebaseSubtracks,
   selectHoveredCodebaseFilePath,
   selectAllSubStages,
+  selectParticipants,
   toggleCodebaseSubtrackInactive,
   toggleCodebaseSubtrackCollapsed,
   updateDesignStudyEvent,
@@ -47,6 +48,8 @@ export type {
 export const Timeline = ({
   startMarker,
   endMarker,
+  projectName,
+  projectGoal,
   stages = [],
   codebaseEvents = [],
   knowledgeBaseEvents = [],
@@ -119,8 +122,10 @@ export const Timeline = ({
   const syncCodebaseButtonRef = useRef<HTMLSpanElement | null>(null);
   const llmButtonRef = useRef<HTMLSpanElement | null>(null);
   const [isSyncingCodebase, setIsSyncingCodebase] = useState(false);
+  const [isGeneratingMilestones, setIsGeneratingMilestones] = useState(false);
 
   const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
+  const participants = useSelector(selectParticipants);
   const blueprintCodebaseLinks = useSelector(selectBlueprintCodebaseLinks);
   const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
   const hoveredBlueprintComponentNodeId = useSelector(selectHoveredBlueprintComponentNodeId);
@@ -288,22 +293,53 @@ export const Timeline = ({
   };
 
   const handleGenerateMilestones = async () => {
+    if (isGeneratingMilestones) return;
+    setIsGeneratingMilestones(true);
     document.body.style.cursor = "wait";
+    try {
+      const toIso = (value: unknown, fallbackIso: string): string => {
+        const parsed = new Date(String(value ?? ""));
+        if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+        return fallbackIso;
+      };
 
-    const milestones = await requestMilestonesLLM(
-      parsed.ds.map((designStudyEvent) => ({
-        id: designStudyEvent.id,
-        name: designStudyEvent.name,
-        occurredAt: fromDate(designStudyEvent.occurredAt),
-      }))
-    );
+      const fallbackStartIso = toIso(startMarker, new Date().toISOString());
+      const fallbackEndIso = toIso(endMarker, fallbackStartIso);
 
-    document.body.style.cursor = "default";
+      const milestones = await requestMilestonesLLM({
+        projectName: (projectName ?? "").trim() || "Untitled",
+        goal: (projectGoal ?? "").trim(),
+        expectedStart: fallbackStartIso,
+        expectedEnd: fallbackEndIso,
+        availableRoles: Array.from(new Set(
+          participants
+            .map((participant) => String(participant.role ?? "").trim())
+            .filter(Boolean)
+        )),
+        participants: participants.map((participant) => ({
+          name: String(participant.name ?? "").trim() || "Participant",
+          role: String(participant.role ?? "").trim() || "Researcher",
+        })),
+        stages: parsed.stages.map((stage, index) => ({
+          name: String(stage.name ?? "").trim() || `Stage ${index + 1}`,
+          start: toIso(stage.start, fallbackStartIso),
+          end: toIso(stage.end, fallbackEndIso),
+        })),
+        existingMilestones: parsed.ds.map((designStudyEvent) => ({
+          id: designStudyEvent.id,
+          name: designStudyEvent.name,
+          occurredAt: fromDate(designStudyEvent.occurredAt),
+        })),
+      });
 
-    console.log("milestones", milestones);
+      console.log("milestones", milestones);
 
-    for (const milestone of milestones) {
-      dispatch(addDesignStudyEvent({ ...milestone, generatedBy: "llm" }));
+      for (const milestone of milestones) {
+        dispatch(addDesignStudyEvent({ ...milestone, generatedBy: "llm" }));
+      }
+    } finally {
+      document.body.style.cursor = "default";
+      setIsGeneratingMilestones(false);
     }
   };
 
@@ -398,10 +434,12 @@ export const Timeline = ({
 
         <span
           ref={llmButtonRef}
-          style={{ left: 125, top: margin.top + 67, position: "absolute", cursor: "pointer" }}
+          className={classes.milestonesLlmButton}
+          style={{ left: 125, top: margin.top + 67 }}
           onClick={handleGenerateMilestones}
         >
           <FontAwesomeIcon icon={faWandSparkles} />
+          {isGeneratingMilestones ? <span className={classes.inlineSpinner} aria-hidden="true" /> : null}
         </span>
 
         {pendingBlueprintLinkEventId && (

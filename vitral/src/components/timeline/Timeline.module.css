@@ -53,6 +53,29 @@
     cursor: pointer;
 }
 
+.milestonesLlmButton {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+}
+
+.inlineSpinner {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid rgba(0, 0, 0, 0.2);
+    border-top-color: rgba(0, 0, 0, 0.8);
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 /* axis */
 .axis path {
     fill: none;

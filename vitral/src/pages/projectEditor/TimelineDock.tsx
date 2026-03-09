@@ -15,6 +15,8 @@ type TimelineDockProps = {
     onToggleOpen: () => void;
     startMarker: Date | string;
     endMarker: Date | string;
+    projectName?: string;
+    projectGoal?: string;
     codebaseEvents: GitHubEvent[];
     designStudyEvents: DesignStudyEvent[];
     blueprintEvents?: BlueprintEvent[];
@@ -34,6 +36,8 @@ export const TimelineDock = memo(function TimelineDock({
     onToggleOpen,
     startMarker,
     endMarker,
+    projectName,
+    projectGoal,
     codebaseEvents,
     designStudyEvents,
     blueprintEvents = [],
@@ -89,6 +93,8 @@ export const TimelineDock = memo(function TimelineDock({
                 <Timeline
                     startMarker={startMarker}
                     endMarker={endMarker}
+                    projectName={projectName}
+                    projectGoal={projectGoal}
                     codebaseEvents={codebaseEvents}
                     knowledgeBaseEvents={KNOWLEDGE_BASE_EVENTS}
                     designStudyEvents={designStudyEvents}

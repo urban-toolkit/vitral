@@ -20,7 +20,7 @@ import type {
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
 import { requestCardsLLMTextInput, llmCardsToNodes, llmConnectionsToEdges } from "@/func/LLMRequest";
-import { deleteFile, queryCanvasChat, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
+import { deleteFile, loadDocument, queryCanvasChat, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { getGitHubEvents } from "@/api/eventsApi";
 
@@ -522,6 +522,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
     const [hoveredAssetFileId, setHoveredAssetFileId] = useState<string | null>(null);
     const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
+    const [projectGoal, setProjectGoal] = useState("");
     const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
     const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
@@ -1488,6 +1489,25 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [dispatch, checkGitStatus]);
 
     useEffect(() => {
+        let active = true;
+
+        void (async () => {
+            try {
+                const document = await loadDocument(projectId);
+                if (!active) return;
+                setProjectGoal(typeof document.description === "string" ? document.description : "");
+            } catch {
+                if (!active) return;
+                setProjectGoal("");
+            }
+        })();
+
+        return () => {
+            active = false;
+        };
+    }, [projectId]);
+
+    useEffect(() => {
         const handlePointerMove = (event: PointerEvent) => {
             pointerPositionRef.current = { x: event.clientX, y: event.clientY };
         };
@@ -1930,6 +1950,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onToggleOpen={handleToggleTimeline}
                 startMarker={timelineStartEnd.start}
                 endMarker={timelineStartEnd.end}
+                projectName={title}
+                projectGoal={projectGoal}
                 codebaseEvents={gitEvents}
                 designStudyEvents={designStudyEvents}
                 blueprintEvents={blueprintEvents}

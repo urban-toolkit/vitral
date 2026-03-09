@@ -789,6 +789,17 @@ type GoalMilestonesContext = {
     existingMilestones: Array<{ name: string; occurredAt: string }>;
 };
 
+type MilestonesInterpolationContext = {
+    projectName: string;
+    goal: string;
+    expectedStart: string;
+    expectedEnd: string;
+    availableRoles: string[];
+    participants: Array<{ name: string; role: string }>;
+    stages: Array<{ name: string; start: string; end: string }>;
+    existingMilestones: Array<{ id: string; name: string; occurredAt: string }>;
+};
+
 function toIsoOrFallback(value: unknown, fallbackIso: string): string {
     if (typeof value === "string") {
         const parsed = new Date(value);
@@ -843,12 +854,12 @@ async function requestMilestonesByPrompt(prompt: string, payload: unknown, fallb
     }
 }
 
-export async function requestMilestonesLLM(milestones: DesignStudyEvent[]): Promise<DesignStudyEvent[]> {
-    const fallbackIso = milestones[0]?.occurredAt
-        ? toIsoOrFallback(milestones[0].occurredAt, new Date().toISOString())
+export async function requestMilestonesLLM(context: MilestonesInterpolationContext): Promise<DesignStudyEvent[]> {
+    const fallbackIso = context.existingMilestones[0]?.occurredAt
+        ? toIsoOrFallback(context.existingMilestones[0].occurredAt, new Date().toISOString())
         : new Date().toISOString();
 
-    return requestMilestonesByPrompt("Milestones", milestones, fallbackIso);
+    return requestMilestonesByPrompt("Milestones", context, fallbackIso);
 }
 
 export async function requestGoalMilestonesLLM(context: GoalMilestonesContext): Promise<DesignStudyEvent[]> {
