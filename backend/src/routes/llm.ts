@@ -46,6 +46,7 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                 "CardsFromCode",
                 "ArtifactFromImage",
                 "ArtifactFromCode",
+                "SystemScreenshotZones",
             ]);
 
             if (multimodalPrompts.has(body.prompt ?? "")) {

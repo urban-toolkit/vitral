@@ -8,11 +8,61 @@ import type {
     ProjectParticipant,
     Stage,
     SubStage,
+    SystemScreenshotMarker,
+    SystemScreenshotZone,
     TimelineState,
 } from "@/config/types";
 
 const toDate = (d: Date | string) => (d instanceof Date ? d : new Date(d));
 const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
+const normalizePath = (value: string) => value.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+
+function normalizeScreenshotZone(zone: unknown, index: number): SystemScreenshotZone | null {
+    if (!zone || typeof zone !== "object") return null;
+    const candidate = zone as Record<string, unknown>;
+    const id = typeof candidate.id === "string" && candidate.id.trim() !== ""
+        ? candidate.id
+        : `zone-${index + 1}`;
+    const name = typeof candidate.name === "string" && candidate.name.trim() !== ""
+        ? candidate.name
+        : `Zone ${index + 1}`;
+    const x = typeof candidate.x === "number" && Number.isFinite(candidate.x) ? candidate.x : 0;
+    const y = typeof candidate.y === "number" && Number.isFinite(candidate.y) ? candidate.y : 0;
+    const width = typeof candidate.width === "number" && Number.isFinite(candidate.width) ? candidate.width : 0;
+    const height = typeof candidate.height === "number" && Number.isFinite(candidate.height) ? candidate.height : 0;
+    const filePaths = Array.isArray(candidate.filePaths)
+        ? Array.from(new Set(
+            candidate.filePaths
+                .filter((path): path is string => typeof path === "string")
+                .map(normalizePath)
+                .filter(Boolean)
+        ))
+        : [];
+    const rationale = typeof candidate.rationale === "string" && candidate.rationale.trim() !== ""
+        ? candidate.rationale
+        : undefined;
+    return {
+        id,
+        name,
+        x,
+        y,
+        width,
+        height,
+        filePaths,
+        rationale,
+    };
+}
+
+function normalizeScreenshotZones(zones: unknown): SystemScreenshotZone[] {
+    if (!Array.isArray(zones)) return [];
+    const normalized: SystemScreenshotZone[] = [];
+    for (let index = 0; index < zones.length; index++) {
+        const zone = normalizeScreenshotZone(zones[index], index);
+        if (!zone) continue;
+        normalized.push(zone);
+    }
+    return normalized;
+}
 
 const initialState: TimelineState = {
     stages: {
@@ -33,8 +83,10 @@ const initialState: TimelineState = {
     },
     codebaseSubtracks: [],
     blueprintCodebaseLinks: [],
+    systemScreenshotMarkers: [],
     participants: [],
     hoveredCodebaseFilePath: null,
+    highlightedCodebaseFilePaths: [],
     hoveredBlueprintComponentNodeId: null,
     defaultStages: [],
     timelineStartEnd: {
@@ -404,6 +456,15 @@ export const timelineSlice = createSlice({
             state.hoveredCodebaseFilePath = action.payload;
         },
 
+        setHighlightedCodebaseFilePaths: (state, action: PayloadAction<string[]>) => {
+            state.highlightedCodebaseFilePaths = Array.from(new Set(
+                action.payload
+                    .filter((path) => typeof path === "string")
+                    .map(normalizePath)
+                    .filter(Boolean)
+            ));
+        },
+
         setHoveredBlueprintComponentNodeId: (state, action: PayloadAction<string | null>) => {
             state.hoveredBlueprintComponentNodeId = action.payload;
         },
@@ -424,6 +485,107 @@ export const timelineSlice = createSlice({
                     codebaseSubtrackId: link.codebaseSubtrackId,
                     origin: link.origin === "auto" ? "auto" : "manual",
                 }));
+        },
+
+        setSystemScreenshotMarkers: (
+            state,
+            action: PayloadAction<SystemScreenshotMarker[]>
+        ) => {
+            state.systemScreenshotMarkers = action.payload
+                .filter((marker) =>
+                    typeof marker?.id === "string" &&
+                    marker.id.trim() !== "" &&
+                    typeof marker?.occurredAt === "string" &&
+                    marker.occurredAt.trim() !== "" &&
+                    typeof marker?.imageDataUrl === "string"
+                )
+                .map((marker) => ({
+                    id: marker.id,
+                    occurredAt: fromDate(marker.occurredAt),
+                    imageDataUrl: marker.imageDataUrl,
+                    imageWidth: typeof marker.imageWidth === "number" && marker.imageWidth > 0
+                        ? marker.imageWidth
+                        : undefined,
+                    imageHeight: typeof marker.imageHeight === "number" && marker.imageHeight > 0
+                        ? marker.imageHeight
+                        : undefined,
+                    zones: normalizeScreenshotZones(marker.zones),
+                }))
+                .sort((a, b) => +new Date(a.occurredAt) - +new Date(b.occurredAt));
+        },
+
+        addSystemScreenshotMarker: (
+            state,
+            action: PayloadAction<SystemScreenshotMarker>
+        ) => {
+            const marker = action.payload;
+            if (
+                !marker ||
+                typeof marker.id !== "string" ||
+                marker.id.trim() === "" ||
+                typeof marker.occurredAt !== "string" ||
+                marker.occurredAt.trim() === "" ||
+                typeof marker.imageDataUrl !== "string"
+            ) {
+                return;
+            }
+
+            if (state.systemScreenshotMarkers.some((item) => item.id === marker.id)) {
+                return;
+            }
+
+            state.systemScreenshotMarkers.push({
+                id: marker.id,
+                occurredAt: fromDate(marker.occurredAt),
+                imageDataUrl: marker.imageDataUrl,
+                imageWidth: typeof marker.imageWidth === "number" && marker.imageWidth > 0
+                    ? marker.imageWidth
+                    : undefined,
+                imageHeight: typeof marker.imageHeight === "number" && marker.imageHeight > 0
+                    ? marker.imageHeight
+                    : undefined,
+                zones: normalizeScreenshotZones(marker.zones),
+            });
+            state.systemScreenshotMarkers.sort(
+                (a, b) => +new Date(a.occurredAt) - +new Date(b.occurredAt)
+            );
+        },
+
+        updateSystemScreenshotMarkerImage: (
+            state,
+            action: PayloadAction<{
+                markerId: string;
+                imageDataUrl?: string;
+                imageWidth?: number;
+                imageHeight?: number;
+                zones?: SystemScreenshotZone[];
+            }>
+        ) => {
+            const marker = state.systemScreenshotMarkers.find(
+                (item) => item.id === action.payload.markerId
+            );
+            if (!marker) return;
+            if (typeof action.payload.imageDataUrl === "string") {
+                marker.imageDataUrl = action.payload.imageDataUrl;
+            }
+            if (typeof action.payload.imageWidth === "number" && action.payload.imageWidth > 0) {
+                marker.imageWidth = action.payload.imageWidth;
+            }
+            if (typeof action.payload.imageHeight === "number" && action.payload.imageHeight > 0) {
+                marker.imageHeight = action.payload.imageHeight;
+            }
+            if (Array.isArray(action.payload.zones)) {
+                marker.zones = normalizeScreenshotZones(action.payload.zones);
+            }
+        },
+
+        deleteSystemScreenshotMarker: (
+            state,
+            action: PayloadAction<string>
+        ) => {
+            state.systemScreenshotMarkers = state.systemScreenshotMarkers.filter(
+                (marker) => marker.id !== action.payload
+            );
         },
 
         addBlueprintCodebaseLink: (
@@ -570,8 +732,13 @@ export const {
     toggleCodebaseSubtrackInactive,
     setParticipants,
     setHoveredCodebaseFilePath,
+    setHighlightedCodebaseFilePaths,
     setHoveredBlueprintComponentNodeId,
     setBlueprintCodebaseLinks,
+    setSystemScreenshotMarkers,
+    addSystemScreenshotMarker,
+    updateSystemScreenshotMarkerImage,
+    deleteSystemScreenshotMarker,
     addBlueprintCodebaseLink,
     reconcileBlueprintCodebaseAutoLinks,
     deleteBlueprintCodebaseLink,
@@ -628,6 +795,16 @@ export const selectBlueprintCodebaseLinks = createSelector(
 export const selectHoveredCodebaseFilePath = createSelector(
     selectTimelineState,
     s => s.hoveredCodebaseFilePath
+);
+
+export const selectHighlightedCodebaseFilePaths = createSelector(
+    selectTimelineState,
+    s => s.highlightedCodebaseFilePaths
+);
+
+export const selectSystemScreenshotMarkers = createSelector(
+    selectTimelineState,
+    s => s.systemScreenshotMarkers
 );
 
 export const selectParticipants = createSelector(

@@ -1,5 +1,5 @@
-import { memo, useEffect, useState, type DragEvent } from "react";
-import { useDispatch } from "react-redux";
+import { memo, useEffect, useMemo, useState, type DragEvent } from "react";
+import { useDispatch, useSelector } from "react-redux";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faFile, faFolder } from "@fortawesome/free-solid-svg-icons";
 
@@ -14,7 +14,10 @@ import {
     type GitHubRepo,
 } from "@/api/githubApi";
 import { GitRepoModal } from "@/components/github/GitRepoModal";
-import { setHoveredCodebaseFilePath } from "@/store/timelineSlice";
+import {
+    selectHighlightedCodebaseFilePaths,
+    setHoveredCodebaseFilePath,
+} from "@/store/timelineSlice";
 
 type GithubFilesProps = {
     projectId: string;
@@ -22,12 +25,15 @@ type GithubFilesProps = {
     className?: string;
 };
 
+const normalizePath = (value: string) => value.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+
 export const GitHubFiles = memo(function GitHubFiles({
     projectId,
     connectionStatus,
     className,
 }: GithubFilesProps) {
     const dispatch = useDispatch();
+    const highlightedCodebaseFilePaths = useSelector(selectHighlightedCodebaseFilePaths);
 
     const [githubDocumentLink, setGithubDocumentLink] = useState<GitHubDocumentResponse>({});
     const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
@@ -37,6 +43,15 @@ export const GitHubFiles = memo(function GitHubFiles({
     const [items, setItems] = useState<GitHubContentItem[]>([]);
     const [itemsLoading, setItemsLoading] = useState(false);
     const [itemsError, setItemsError] = useState<string | null>(null);
+
+    const highlightedPathSet = useMemo(
+        () => new Set(
+            highlightedCodebaseFilePaths
+                .map((path) => normalizePath(path))
+                .filter(Boolean)
+        ),
+        [highlightedCodebaseFilePaths]
+    );
 
     const retrieveGithubLinkInformation = async () => {
         const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
@@ -174,7 +189,11 @@ export const GitHubFiles = memo(function GitHubFiles({
                                             <span
                                                 title={item.path}
                                                 draggable
-                                                className={classes.fileItem}
+                                                className={`${classes.fileItem} ${
+                                                    highlightedPathSet.has(normalizePath(item.path))
+                                                        ? classes.fileItemHighlighted
+                                                        : ""
+                                                }`}
                                                 onDragStart={(event) => handleFileDragStart(event, item)}
                                                 onDragEnd={() => dispatch(setHoveredCodebaseFilePath(null))}
                                                 onMouseEnter={() => dispatch(setHoveredCodebaseFilePath(item.path))}

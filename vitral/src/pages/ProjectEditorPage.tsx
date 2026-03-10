@@ -19,7 +19,12 @@ import type {
 } from "@/config/types";
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
-import { requestCardsLLMTextInput, llmCardsToNodes, llmConnectionsToEdges } from "@/func/LLMRequest";
+import {
+    llmCardsToNodes,
+    llmConnectionsToEdges,
+    requestCardsLLMTextInput,
+    requestSystemScreenshotZonesLLM,
+} from "@/func/LLMRequest";
 import { deleteFile, loadDocument, queryCanvasChat, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { getGitHubEvents } from "@/api/eventsApi";
@@ -55,10 +60,12 @@ import {
 import { removeFile, selectAllFiles } from "@/store/filesSlice";
 import { selectAllGitHubEvents, setGithubEvents } from "@/store/gitEventsSlice";
 import {
+    addSystemScreenshotMarker,
     addBlueprintEvent,
     addDefaultStage,
     addStage,
     changeStageBoundary,
+    updateSystemScreenshotMarkerImage,
     deleteStage,
     selectAllBlueprintEvents,
     selectCodebaseSubtracks,
@@ -66,6 +73,7 @@ import {
     selectAllStages,
     selectDefaultStages,
     selectParticipants,
+    selectSystemScreenshotMarkers,
     selectHoveredCodebaseFilePath,
     reconcileBlueprintCodebaseAutoLinks,
     selectTimelineStartEnd,
@@ -87,10 +95,47 @@ import {
     TIMELINE_DOCK_TOGGLE_HEIGHT,
 } from "@/pages/projectEditor/TimelineDock";
 import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttachmentProcessing";
+import { SystemScreenshotPanel } from "@/pages/projectEditor/SystemScreenshotPanel";
 
 const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["requirement"]);
 const REFERENCED_BY_EDGE_LABEL = "referenced by";
 const ITERATION_OF_EDGE_LABEL = "iteration of";
+const RIGHT_SIDEBAR_WIDTH_PX = 250;
+
+function readImageFileAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const value = reader.result;
+            if (typeof value === "string") {
+                resolve(value);
+                return;
+            }
+            reject(new Error("Failed to read image"));
+        };
+        reader.onerror = () => {
+            reject(reader.error ?? new Error("Failed to read image"));
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function readImageDimensionsFromDataUrl(dataUrl: string): Promise<{ width: number; height: number }> {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+            const width = image.naturalWidth || image.width;
+            const height = image.naturalHeight || image.height;
+            if (width > 0 && height > 0) {
+                resolve({ width, height });
+                return;
+            }
+            reject(new Error("Failed to read image resolution"));
+        };
+        image.onerror = () => reject(new Error("Failed to read image resolution"));
+        image.src = dataUrl;
+    });
+}
 
 type PendingConnectionMenu = {
     sourceId: string;
@@ -542,8 +587,25 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
   const designStudyEvents = useSelector(selectAllDesignStudyEvents);
   const blueprintEvents = useSelector(selectAllBlueprintEvents);
+  const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
   const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
   const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
+
+    const mostRecentSystemScreenshotMarker = useMemo(() => {
+        if (systemScreenshotMarkers.length === 0) return null;
+
+        let latest = systemScreenshotMarkers[0];
+        for (let i = 1; i < systemScreenshotMarkers.length; i++) {
+            const candidate = systemScreenshotMarkers[i];
+            const latestTime = new Date(latest.occurredAt).getTime();
+            const candidateTime = new Date(candidate.occurredAt).getTime();
+            if (Number.isNaN(latestTime) || candidateTime >= latestTime) {
+                latest = candidate;
+            }
+        }
+
+        return latest;
+    }, [systemScreenshotMarkers]);
 
     const {
         onAttachFile,
@@ -1826,6 +1888,64 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         await checkGitStatus();
     }, [checkGitStatus]);
 
+    const handleAddSystemScreenshotMarker = useCallback(() => {
+        dispatch(addSystemScreenshotMarker({
+            id: crypto.randomUUID(),
+            occurredAt: new Date().toISOString(),
+            imageDataUrl: "",
+        }));
+    }, [dispatch]);
+
+    const handleUploadSystemScreenshotForLatestMarker = useCallback(async (file: File) => {
+        try {
+            const imageDataUrl = await readImageFileAsDataUrl(file);
+            const { width: imageWidth, height: imageHeight } = await readImageDimensionsFromDataUrl(imageDataUrl);
+
+            let markerId = mostRecentSystemScreenshotMarker?.id;
+            if (!markerId) {
+                markerId = crypto.randomUUID();
+                dispatch(addSystemScreenshotMarker({
+                    id: markerId,
+                    occurredAt: new Date().toISOString(),
+                    imageDataUrl,
+                    imageWidth,
+                    imageHeight,
+                    zones: [],
+                }));
+            } else {
+                dispatch(updateSystemScreenshotMarkerImage({
+                    markerId,
+                    imageDataUrl,
+                    imageWidth,
+                    imageHeight,
+                    zones: [],
+                }));
+            }
+
+            const zones = await requestSystemScreenshotZonesLLM({
+                projectId,
+                projectTitle: title?.trim() || "Untitled",
+                projectGoal: projectGoal?.trim() || "",
+                imageDataUrl,
+                imageWidth,
+                imageHeight,
+                codebaseSubtracks: codebaseSubtracks.map((subtrack) => ({
+                    id: subtrack.id,
+                    name: subtrack.name,
+                    filePaths: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
+                })),
+            });
+
+            dispatch(updateSystemScreenshotMarkerImage({
+                markerId,
+                zones,
+            }));
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to load screenshot.";
+            window.alert(message);
+        }
+    }, [codebaseSubtracks, dispatch, mostRecentSystemScreenshotMarker?.id, projectGoal, projectId, title]);
+
     const handleDeleteAsset = useCallback(async (file: { id: string; name: string }) => {
         setDeletingAssetId(file.id);
         try {
@@ -1908,6 +2028,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 shifted={timelineOpen}
             />
 
+            <SystemScreenshotPanel
+                rightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX + 12}
+                latestImageDataUrl={mostRecentSystemScreenshotMarker?.imageDataUrl ?? ""}
+                onAddMarker={handleAddSystemScreenshotMarker}
+                onUploadForLatestMarker={handleUploadSystemScreenshotForLatestMarker}
+            />
+
             <RightSidebar
                 projectId={projectId}
                 connectionStatus={gitConnectionStatus}
@@ -1946,6 +2073,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             />
 
             <TimelineDock
+                projectId={projectId}
                 open={timelineOpen}
                 onToggleOpen={handleToggleTimeline}
                 startMarker={timelineStartEnd.start}

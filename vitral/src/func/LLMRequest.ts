@@ -1,6 +1,18 @@
-import type { llmCardData, nodeType, cardType, llmConnectionData, edgeType, DesignStudyEvent, fileExtension, fileRecord } from '@/config/types';
+import type {
+    CodebaseSubtrack,
+    DesignStudyEvent,
+    SystemScreenshotZone,
+    cardType,
+    edgeType,
+    fileExtension,
+    fileRecord,
+    llmCardData,
+    llmConnectionData,
+    nodeType,
+} from '@/config/types';
 import type { filePendingUpload } from '@/config/types';
 import { readAsDataURL } from './FileParser';
+import { getGitHubContents, type GitHubContentItem } from '@/api/githubApi';
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
 
@@ -865,4 +877,450 @@ export async function requestMilestonesLLM(context: MilestonesInterpolationConte
 export async function requestGoalMilestonesLLM(context: GoalMilestonesContext): Promise<DesignStudyEvent[]> {
     const fallbackIso = toIsoOrFallback(context.expectedStart, new Date().toISOString());
     return requestMilestonesByPrompt("GoalMilestones", context, fallbackIso);
+}
+
+type RepoTreeNode = {
+    name: string;
+    type: "file" | "dir";
+    path: string;
+    children?: RepoTreeNode[];
+};
+
+type RepoTreePayload = {
+    tree: RepoTreeNode;
+    filePaths: string[];
+    nodeCount: number;
+    truncated: boolean;
+};
+
+type RepoTreeCacheEntry = RepoTreePayload & {
+    expiresAt: number;
+};
+
+const REPO_TREE_MAX_NODES = 1400;
+const REPO_TREE_MAX_DEPTH = 8;
+const REPO_TREE_CACHE_TTL_MS = 2 * 60 * 1000;
+
+const repoTreeCache = new Map<string, RepoTreeCacheEntry>();
+
+function normalizeRepoPath(value: string): string {
+    return value.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+}
+
+function fileNameFromPath(path: string): string {
+    const normalized = normalizeRepoPath(path);
+    const parts = normalized.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? normalized;
+}
+
+function sortGitHubItems(items: GitHubContentItem[]): GitHubContentItem[] {
+    return [...items].sort((a, b) => {
+        if (a.type === b.type) return a.name.localeCompare(b.name);
+        return a.type === "dir" ? -1 : 1;
+    });
+}
+
+async function buildRepoTree(projectId: string): Promise<RepoTreePayload> {
+    let nodeCount = 1;
+    let truncated = false;
+    const filePathSet = new Set<string>();
+
+    const walkDir = async (path: string, name: string, depth: number): Promise<RepoTreeNode> => {
+        const node: RepoTreeNode = {
+            name,
+            type: "dir",
+            path,
+            children: [],
+        };
+
+        if (depth > REPO_TREE_MAX_DEPTH || nodeCount >= REPO_TREE_MAX_NODES) {
+            truncated = true;
+            return node;
+        }
+
+        const items = sortGitHubItems(await getGitHubContents(projectId, path));
+
+        for (const item of items) {
+            if (nodeCount >= REPO_TREE_MAX_NODES) {
+                truncated = true;
+                break;
+            }
+
+            const normalizedPath = normalizeRepoPath(item.path);
+            if (!normalizedPath) continue;
+
+            if (item.type === "file") {
+                nodeCount += 1;
+                filePathSet.add(normalizedPath);
+                node.children?.push({
+                    name: item.name,
+                    type: "file",
+                    path: normalizedPath,
+                });
+                continue;
+            }
+
+            if (item.type === "dir") {
+                nodeCount += 1;
+
+                if (depth >= REPO_TREE_MAX_DEPTH) {
+                    truncated = true;
+                    node.children?.push({
+                        name: item.name,
+                        type: "dir",
+                        path: normalizedPath,
+                        children: [],
+                    });
+                    continue;
+                }
+
+                const childNode = await walkDir(normalizedPath, item.name, depth + 1);
+                node.children?.push(childNode);
+            }
+        }
+
+        return node;
+    };
+
+    const tree = await walkDir("", "root", 0);
+    return {
+        tree,
+        filePaths: Array.from(filePathSet),
+        nodeCount,
+        truncated,
+    };
+}
+
+async function getRepoTreeWithCache(projectId: string): Promise<RepoTreePayload> {
+    const cached = repoTreeCache.get(projectId);
+    const now = Date.now();
+    if (cached && cached.expiresAt > now) {
+        return cached;
+    }
+
+    const built = await buildRepoTree(projectId);
+    repoTreeCache.set(projectId, {
+        ...built,
+        expiresAt: now + REPO_TREE_CACHE_TTL_MS,
+    });
+    return built;
+}
+
+type CodebaseSubtrackSuggestionContext = {
+    projectId: string;
+    projectTitle: string;
+    projectGoal: string;
+    codebaseSubtrackTitle: string;
+    existingFilePaths: string[];
+};
+
+function extractSuggestedPaths(rawOutput: string): string[] {
+    const parsed = tryParseJson<{
+        filePaths?: unknown;
+        suggestedFilePaths?: unknown;
+        files?: unknown;
+    }>(rawOutput);
+
+    if (!parsed) return [];
+
+    const candidates: unknown[] = [];
+    if (Array.isArray(parsed.filePaths)) candidates.push(...parsed.filePaths);
+    if (Array.isArray(parsed.suggestedFilePaths)) candidates.push(...parsed.suggestedFilePaths);
+    if (Array.isArray(parsed.files)) candidates.push(...parsed.files);
+
+    const normalized: string[] = [];
+    for (const candidate of candidates) {
+        if (typeof candidate === "string") {
+            const path = normalizeRepoPath(candidate);
+            if (path) normalized.push(path);
+            continue;
+        }
+
+        if (candidate && typeof candidate === "object") {
+            const path = (candidate as { path?: unknown }).path;
+            if (typeof path === "string") {
+                const normalizedPath = normalizeRepoPath(path);
+                if (normalizedPath) normalized.push(normalizedPath);
+            }
+        }
+    }
+
+    return normalized;
+}
+
+export async function requestCodebaseSubtrackFilesLLM(
+    context: CodebaseSubtrackSuggestionContext
+): Promise<string[]> {
+    let repoTree: RepoTreePayload;
+    try {
+        repoTree = await getRepoTreeWithCache(context.projectId);
+    } catch (error) {
+        console.warn("Failed to fetch GitHub repository tree for LLM suggestion", error);
+        return [];
+    }
+
+    if (repoTree.filePaths.length === 0) {
+        return [];
+    }
+
+    const existingPathSet = new Set(
+        context.existingFilePaths
+            .map((path) => normalizeRepoPath(path))
+            .filter(Boolean)
+    );
+
+    const payload = {
+        projectTitle: context.projectTitle,
+        projectGoal: context.projectGoal,
+        codebaseSubtrackTitle: context.codebaseSubtrackTitle,
+        existingAttachedFilePaths: Array.from(existingPathSet),
+        existingAttachedFileNames: Array.from(existingPathSet).map(fileNameFromPath),
+        repositoryTree: repoTree.tree,
+        repositoryTreeNodeCount: repoTree.nodeCount,
+        repositoryTreeTruncated: repoTree.truncated,
+    };
+
+    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            input: JSON.stringify(payload),
+            prompt: "CodebaseSubtrackFiles",
+        }),
+    });
+
+    if (!response.ok) {
+        return [];
+    }
+
+    const data = await response.json();
+    const rawSuggestedPaths = extractSuggestedPaths(String(data.output ?? ""));
+
+    const availablePathSet = new Set(repoTree.filePaths);
+    const dedupedSuggestedPaths: string[] = [];
+    const seen = new Set<string>();
+
+    for (const path of rawSuggestedPaths) {
+        if (!availablePathSet.has(path)) continue;
+        if (existingPathSet.has(path)) continue;
+        if (seen.has(path)) continue;
+        seen.add(path);
+        dedupedSuggestedPaths.push(path);
+    }
+
+    return dedupedSuggestedPaths;
+}
+
+type SystemScreenshotZonesContext = {
+    projectId: string;
+    projectTitle: string;
+    projectGoal: string;
+    imageDataUrl: string;
+    imageWidth: number;
+    imageHeight: number;
+    codebaseSubtracks: Array<Pick<CodebaseSubtrack, "id" | "name" | "filePaths">>;
+};
+
+function parseCoordinate(value: unknown, axisSize: number): number | null {
+    if (!Number.isFinite(axisSize) || axisSize <= 0) return null;
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+        if (value > 0 && value < 1) return value * axisSize;
+        return value;
+    }
+
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    if (trimmed.endsWith("%")) {
+        const percent = Number.parseFloat(trimmed.slice(0, -1));
+        if (!Number.isFinite(percent)) return null;
+        return (percent / 100) * axisSize;
+    }
+
+    const parsed = Number.parseFloat(trimmed);
+    if (!Number.isFinite(parsed)) return null;
+    if (parsed > 0 && parsed < 1) return parsed * axisSize;
+    return parsed;
+}
+
+function collectFilePaths(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    const paths: string[] = [];
+    for (const item of value) {
+        if (typeof item === "string") {
+            const normalized = normalizeRepoPath(item);
+            if (normalized) paths.push(normalized);
+            continue;
+        }
+        if (!item || typeof item !== "object") continue;
+        const candidate = item as { path?: unknown; filePath?: unknown };
+        if (typeof candidate.path === "string") {
+            const normalized = normalizeRepoPath(candidate.path);
+            if (normalized) paths.push(normalized);
+        } else if (typeof candidate.filePath === "string") {
+            const normalized = normalizeRepoPath(candidate.filePath);
+            if (normalized) paths.push(normalized);
+        }
+    }
+    return paths;
+}
+
+function parseScreenshotZones(
+    rawOutput: string,
+    imageWidth: number,
+    imageHeight: number,
+    availablePaths: Set<string>
+): SystemScreenshotZone[] {
+    const parsed = tryParseJson<{
+        zones?: unknown;
+        components?: unknown;
+        rectangles?: unknown;
+    }>(rawOutput);
+    if (!parsed) return [];
+
+    const rawZones = Array.isArray(parsed.zones)
+        ? parsed.zones
+        : Array.isArray(parsed.components)
+            ? parsed.components
+            : Array.isArray(parsed.rectangles)
+                ? parsed.rectangles
+                : [];
+
+    const zones: SystemScreenshotZone[] = [];
+    const seenIds = new Set<string>();
+
+    for (let index = 0; index < rawZones.length; index++) {
+        const rawZone = rawZones[index];
+        if (!rawZone || typeof rawZone !== "object") continue;
+        const zone = rawZone as Record<string, unknown>;
+        const rect = zone.rect && typeof zone.rect === "object"
+            ? zone.rect as Record<string, unknown>
+            : {};
+
+        const x = parseCoordinate(rect.x ?? rect.left ?? zone.x ?? zone.left, imageWidth);
+        const y = parseCoordinate(rect.y ?? rect.top ?? zone.y ?? zone.top, imageHeight);
+        const width = parseCoordinate(rect.width ?? rect.w ?? zone.width ?? zone.w, imageWidth);
+        const height = parseCoordinate(rect.height ?? rect.h ?? zone.height ?? zone.h, imageHeight);
+        if (x == null || y == null || width == null || height == null) continue;
+
+        const clampedX = Math.max(0, Math.min(imageWidth - 1, x));
+        const clampedY = Math.max(0, Math.min(imageHeight - 1, y));
+        const clampedWidth = Math.max(8, Math.min(imageWidth - clampedX, width));
+        const clampedHeight = Math.max(8, Math.min(imageHeight - clampedY, height));
+        if (!Number.isFinite(clampedWidth) || !Number.isFinite(clampedHeight)) continue;
+
+        const name = typeof zone.name === "string" && zone.name.trim() !== ""
+            ? zone.name
+            : typeof zone.label === "string" && zone.label.trim() !== ""
+                ? zone.label
+                : typeof zone.component === "string" && zone.component.trim() !== ""
+                    ? zone.component
+                    : `Zone ${index + 1}`;
+
+        const candidateId = typeof zone.id === "string" && zone.id.trim() !== ""
+            ? zone.id.trim()
+            : `zone-${index + 1}`;
+        const uniqueId = seenIds.has(candidateId)
+            ? `${candidateId}-${index + 1}`
+            : candidateId;
+        seenIds.add(uniqueId);
+
+        const rawPaths = [
+            ...collectFilePaths(zone.filePaths),
+            ...collectFilePaths(zone.files),
+            ...collectFilePaths(zone.linkedFiles),
+            ...collectFilePaths(zone.implementationFilePaths),
+        ];
+        const filePaths = Array.from(new Set(
+            rawPaths.filter((path) => availablePaths.has(path))
+        ));
+
+        const rationale = typeof zone.rationale === "string" && zone.rationale.trim() !== ""
+            ? zone.rationale
+            : typeof zone.reason === "string" && zone.reason.trim() !== ""
+                ? zone.reason
+                : undefined;
+
+        zones.push({
+            id: uniqueId,
+            name: name.trim(),
+            x: Math.round(clampedX),
+            y: Math.round(clampedY),
+            width: Math.round(clampedWidth),
+            height: Math.round(clampedHeight),
+            filePaths,
+            rationale,
+        });
+    }
+
+    return zones;
+}
+
+export async function requestSystemScreenshotZonesLLM(
+    context: SystemScreenshotZonesContext
+): Promise<SystemScreenshotZone[]> {
+    if (!context.imageDataUrl || context.imageWidth <= 0 || context.imageHeight <= 0) {
+        return [];
+    }
+
+    let repoTree: RepoTreePayload;
+    try {
+        repoTree = await getRepoTreeWithCache(context.projectId);
+    } catch (error) {
+        console.warn("Failed to fetch GitHub repository tree for screenshot zoning", error);
+        return [];
+    }
+
+    const payload = {
+        projectTitle: context.projectTitle,
+        projectGoal: context.projectGoal,
+        imageResolution: {
+            width: context.imageWidth,
+            height: context.imageHeight,
+        },
+        codebaseSubtracks: context.codebaseSubtracks.map((subtrack) => ({
+            id: subtrack.id,
+            name: subtrack.name,
+            filePaths: Array.isArray(subtrack.filePaths)
+                ? subtrack.filePaths.map((path) => normalizeRepoPath(path)).filter(Boolean)
+                : [],
+        })),
+        repositoryTree: repoTree.tree,
+        repositoryTreeNodeCount: repoTree.nodeCount,
+        repositoryTreeTruncated: repoTree.truncated,
+    };
+
+    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            prompt: "SystemScreenshotZones",
+            input: JSON.stringify({
+                content: JSON.stringify(payload),
+                images: [
+                    {
+                        id: "SYSTEM_SCREENSHOT",
+                        dataUrl: context.imageDataUrl,
+                    },
+                ],
+            }),
+        }),
+    });
+    if (!response.ok) {
+        return [];
+    }
+
+    const data = await response.json();
+    return parseScreenshotZones(
+        String(data.output ?? ""),
+        context.imageWidth,
+        context.imageHeight,
+        new Set(repoTree.filePaths)
+    );
 }

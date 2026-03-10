@@ -216,6 +216,26 @@ export type BlueprintCodebaseLink = {
     origin?: "manual" | "auto";
 };
 
+export type SystemScreenshotMarker = {
+    id: string;
+    occurredAt: string;
+    imageDataUrl: string;
+    imageWidth?: number;
+    imageHeight?: number;
+    zones?: SystemScreenshotZone[];
+};
+
+export type SystemScreenshotZone = {
+    id: string;
+    name: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    filePaths: string[];
+    rationale?: string;
+};
+
 export type BlueprintEvent = {
     id: string;
     name: string;
@@ -246,8 +266,10 @@ export type TimelineState = {
     };
     codebaseSubtracks: CodebaseSubtrack[];
     blueprintCodebaseLinks: BlueprintCodebaseLink[];
+    systemScreenshotMarkers: SystemScreenshotMarker[];
     participants: ProjectParticipant[];
     hoveredCodebaseFilePath: string | null;
+    highlightedCodebaseFilePaths: string[];
     hoveredBlueprintComponentNodeId: string | null;
     defaultStages: string[];
     timelineStartEnd: {
@@ -263,6 +285,7 @@ export type TimelineStatePayload = {
     blueprintEvents: BlueprintEvent[];
     codebaseSubtracks: CodebaseSubtrack[];
     blueprintCodebaseLinks: BlueprintCodebaseLink[];
+    systemScreenshotMarkers?: SystemScreenshotMarker[];
     participants: ProjectParticipant[];
     defaultStages: string[];
     timelineStartEnd: {

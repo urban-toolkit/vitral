@@ -7,6 +7,7 @@ import type {
   LaneType,
   Stage,
   SubStage,
+  SystemScreenshotMarker,
 } from "@/config/types";
 
 export type {
@@ -18,6 +19,7 @@ export type {
   LaneType,
   Stage,
   SubStage,
+  SystemScreenshotMarker,
 } from "@/config/types";
 
 export type TimelineEventBase = {
@@ -39,6 +41,7 @@ export type AnyEvent =
   | BlueprintEvent;
 
 export type TimelineProps = {
+  projectId: string;
   startMarker: Date | string;
   endMarker: Date | string;
   projectName?: string;

@@ -86,4 +86,12 @@
     cursor: grab;
     font-size: 12px;
     color: #2d2d2d;
+    border-radius: 4px;
+    padding: 1px 3px;
+}
+
+.fileItemHighlighted {
+    background: rgba(0, 168, 219, 0.2);
+    color: #0a4f63;
+    font-weight: 600;
 }

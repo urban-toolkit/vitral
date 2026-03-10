@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import * as d3 from "d3";
-import { faCheck, faCircle } from "@fortawesome/free-solid-svg-icons";
+import { faCheck, faCircle, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
 import type {
     Dispatch,
     MutableRefObject,
@@ -11,7 +11,8 @@ import type {
     BlueprintCodebaseLink,
     DesignStudyEvent,
     LaneType,
-    Stage
+    Stage,
+    SystemScreenshotMarker,
 } from "@/config/types";
 import {
     addSubStage,
@@ -24,7 +25,7 @@ import type {
     ParsedTimelineData,
     SelectedTimelineEvent,
 } from "./timelineTypes";
-import { fromDate, setRefPos, toDate } from "./timelineUtils";
+import { formatDate, fromDate, setRefPos, toDate } from "./timelineUtils";
 
 type MilestoneMenuState = { x: number; y: number; date: string } | null;
 
@@ -61,11 +62,22 @@ type TooltipPosition = {
     y: number;
 };
 
+type SystemScreenshotTooltipState = {
+    markerId: string;
+    x: number;
+    y: number;
+} | null;
+
 const normalizePath = (path: string) =>
     path.replace(/\\/g, "/").replace(/^\/+/, "");
 
 const faCirclePath = Array.isArray(faCircle.icon[4]) ? faCircle.icon[4][0] : faCircle.icon[4];
 const faCheckPath = Array.isArray(faCheck.icon[4]) ? faCheck.icon[4][0] : faCheck.icon[4];
+const faWandSparklesPath = Array.isArray(faWandSparkles.icon[4])
+    ? faWandSparkles.icon[4][0]
+    : faWandSparkles.icon[4];
+const faWandSparklesWidth = faWandSparkles.icon[0];
+const faWandSparklesHeight = faWandSparkles.icon[1];
 
 function getDroppedGitHubFilePath(event: DragEvent): string | null {
     const payload = event.dataTransfer?.getData("application/x-vitral-github-file");
@@ -105,11 +117,13 @@ type UseTimelineChartParams = {
     parsed: ParsedTimelineData;
     codebaseSubtracks: CodebaseSubtrack[];
     blueprintCodebaseLinks: BlueprintCodebaseLink[];
+    systemScreenshotMarkers: SystemScreenshotMarker[];
     pendingBlueprintLinkEventId: string | null;
     hoveredCodebaseFilePath: string | null;
+    highlightedCodebaseFilePaths: string[];
     hoveredBlueprintComponentNodeId: string | null;
     connectedBlueprintComponentNodeIds: string[];
-    dispatch: (action: unknown) => void;
+    dispatch: (action: any) => void;
     onStageBoundaryChange: (prevId: string, nextId: string, date: Date) => void;
     onStageLaneDeletion: (id: string) => void;
     onAttachFileToCodebaseSubtrack: (subtrackId: string, filePath: string) => void;
@@ -117,6 +131,10 @@ type UseTimelineChartParams = {
     onToggleCodebaseSubtrackInactive: (subtrackId: string) => void;
     onDeleteCodebaseSubtrack: (subtrackId: string) => void;
     onCreateBlueprintCodebaseLink: (blueprintEventId: string, codebaseSubtrackId: string) => void;
+    onDeleteSystemScreenshotMarker: (markerId: string) => void;
+    onSuggestCodebaseSubtrackFiles: (subtrackId: string) => void;
+    suggestingCodebaseSubtrackIds: string[];
+    setSystemScreenshotTooltip: Dispatch<SetStateAction<SystemScreenshotTooltipState>>;
     setMilestoneMenu: Dispatch<SetStateAction<MilestoneMenuState>>;
     setSelectedMilestone: Dispatch<SetStateAction<DesignStudyEvent | null>>;
     setBlueprintLinkMenu: Dispatch<SetStateAction<BlueprintLinkMenuState>>;
@@ -146,8 +164,10 @@ export function useTimelineChart({
     parsed,
     codebaseSubtracks,
     blueprintCodebaseLinks,
+    systemScreenshotMarkers,
     pendingBlueprintLinkEventId,
     hoveredCodebaseFilePath,
+    highlightedCodebaseFilePaths,
     hoveredBlueprintComponentNodeId,
     connectedBlueprintComponentNodeIds,
     dispatch,
@@ -158,6 +178,10 @@ export function useTimelineChart({
     onToggleCodebaseSubtrackInactive,
     onDeleteCodebaseSubtrack,
     onCreateBlueprintCodebaseLink,
+    onDeleteSystemScreenshotMarker,
+    onSuggestCodebaseSubtrackFiles,
+    suggestingCodebaseSubtrackIds,
+    setSystemScreenshotTooltip,
     setMilestoneMenu,
     setSelectedMilestone,
     setBlueprintLinkMenu,
@@ -206,15 +230,35 @@ export function useTimelineChart({
         const normalizedHoveredPath = hoveredCodebaseFilePath
             ? normalizePath(hoveredCodebaseFilePath)
             : null;
+        const highlightedCodebasePathSet = new Set(
+            highlightedCodebaseFilePaths
+                .map((path) => normalizePath(path))
+                .filter(Boolean)
+        );
+        if (normalizedHoveredPath) {
+            highlightedCodebasePathSet.add(normalizedHoveredPath);
+        }
         const highlightedSubtrackIdsFromBlueprintHover = new Set<string>();
         const highlightedBlueprintEventIdsFromFileHover = new Set<string>();
         const connectedBlueprintComponentNodeIdSet = new Set(connectedBlueprintComponentNodeIds);
+        const suggestingSubtrackIdSet = new Set(suggestingCodebaseSubtrackIds);
+        const parsedSystemScreenshotMarkers = systemScreenshotMarkers
+            .map((marker) => {
+                const parsedDate = toDate(marker.occurredAt);
+                if (Number.isNaN(parsedDate.getTime())) return null;
+                return {
+                    ...marker,
+                    date: parsedDate,
+                };
+            })
+            .filter((marker): marker is SystemScreenshotMarker & { date: Date } => marker !== null)
+            .sort((a, b) => +a.date - +b.date);
 
-        if (normalizedHoveredPath) {
+        if (highlightedCodebasePathSet.size > 0) {
             const highlightedSubtrackIdsFromFileHover = new Set(
                 codebaseSubtracks
                     .filter((subtrack) =>
-                        subtrack.filePaths.some((path) => normalizePath(path) === normalizedHoveredPath)
+                        subtrack.filePaths.some((path) => highlightedCodebasePathSet.has(normalizePath(path)))
                     )
                     .map((subtrack) => subtrack.id)
             );
@@ -258,9 +302,8 @@ export function useTimelineChart({
                 height: heightForRow,
                 center: top + heightForRow / 2,
                 isHighlighted:
-                    (normalizedHoveredPath
-                        ? subtrack.filePaths.some((path) => normalizePath(path) === normalizedHoveredPath)
-                        : false) || highlightedSubtrackIdsFromBlueprintHover.has(subtrack.id),
+                    subtrack.filePaths.some((path) => highlightedCodebasePathSet.has(normalizePath(path))) ||
+                    highlightedSubtrackIdsFromBlueprintHover.has(subtrack.id),
             };
         });
 
@@ -553,6 +596,35 @@ export function useTimelineChart({
                     key: "codebaseSubtrack",
                 });
             });
+
+        const codebaseSubtrackSuggestionIcon = codebaseSubtrackGroups
+            .append("g")
+            .attr("data-timeline-interactive", "true")
+            .attr("transform", (row: any) => `translate(${timelineLeft - 30}, ${row.top + 12})`)
+            .style("cursor", (row: any) => (suggestingSubtrackIdSet.has(row.id) ? "wait" : "pointer"))
+            .style("opacity", (row: any) => (suggestingSubtrackIdSet.has(row.id) ? 0.5 : 1))
+            .on("click", (event: any, row: any) => {
+                event.stopPropagation();
+                if (suggestingSubtrackIdSet.has(row.id)) return;
+                onSuggestCodebaseSubtrackFiles(row.id);
+            });
+
+        codebaseSubtrackSuggestionIcon
+            .append("circle")
+            .attr("r", 8)
+            .attr("fill", "transparent");
+
+        codebaseSubtrackSuggestionIcon
+            .append("path")
+            .attr("d", faWandSparklesPath)
+            .attr("fill", (row: any) => (suggestingSubtrackIdSet.has(row.id) ? "#9b9b9b" : "#2d7dd2"))
+            .attr("transform", `scale(0.018) translate(${-faWandSparklesWidth / 2} ${-faWandSparklesHeight / 2})`);
+
+        codebaseSubtrackSuggestionIcon
+            .append("title")
+            .text((row: any) =>
+                suggestingSubtrackIdSet.has(row.id) ? "Suggesting files..." : "Suggest files with LLM"
+            );
 
         codebaseSubtrackGroups
             .append("text")
@@ -1047,6 +1119,94 @@ export function useTimelineChart({
                 todayCaretRef.current.style.display = "none";
             }
 
+            const screenshotMarkerTopY = margin.top + 18;
+            const screenshotLineBottomY = codebaseSubtracksBottom;
+            const clampTimelineX = (value: number) =>
+                Math.max(timelineLeft, Math.min(timelineLeft + innerW, value));
+
+            const screenshotMarkerGroups = markerG
+                .selectAll("g.systemScreenshotMarker")
+                .data(parsedSystemScreenshotMarkers, (markerData: any) => markerData.id)
+                .join((enter) =>
+                    enter
+                        .append("g")
+                        .attr("class", "systemScreenshotMarker")
+                );
+
+            screenshotMarkerGroups
+                .selectAll("line")
+                .data((markerData: any) => [markerData])
+                .join("line")
+                .attr("data-timeline-interactive", "true")
+                .attr("x1", (markerData: any) => clampTimelineX(x(markerData.date)))
+                .attr("x2", (markerData: any) => clampTimelineX(x(markerData.date)))
+                .attr("y1", screenshotMarkerTopY)
+                .attr("y2", screenshotLineBottomY)
+                .attr("stroke", "#E5962D")
+                .attr("stroke-width", 2)
+                .attr("stroke-dasharray", "4 3")
+                .style("cursor", "context-menu")
+                .on("contextmenu", (event: any, markerData: any) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSystemScreenshotTooltip(null);
+                    onDeleteSystemScreenshotMarker(markerData.id);
+                });
+
+            screenshotMarkerGroups
+                .selectAll("circle")
+                .data((markerData: any) => [markerData])
+                .join("circle")
+                .attr("data-timeline-interactive", "true")
+                .attr("cx", (markerData: any) => clampTimelineX(x(markerData.date)))
+                .attr("cy", screenshotMarkerTopY)
+                .attr("r", 6)
+                .attr("fill", "#E5962D")
+                .attr("stroke", "rgba(255,255,255,0.95)")
+                .attr("stroke-width", 1.5)
+                .style("cursor", "pointer")
+                .on("click", (event: MouseEvent, markerData: any) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const markerX = clampTimelineX(x(markerData.date));
+                    const svgRect = currentSvg.getBoundingClientRect();
+                    const tooltipHalfWidth = 160;
+                    const anchorX = Math.max(
+                        tooltipHalfWidth + 8,
+                        Math.min(window.innerWidth - tooltipHalfWidth - 8, svgRect.left + markerX)
+                    );
+                    const anchorY = svgRect.top + screenshotMarkerTopY;
+                    setSystemScreenshotTooltip((previous) => {
+                        if (previous?.markerId === markerData.id) {
+                            return null;
+                        }
+                        return {
+                            markerId: markerData.id,
+                            x: anchorX,
+                            y: anchorY,
+                        };
+                    });
+                })
+                .on("contextmenu", (event: any, markerData: any) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSystemScreenshotTooltip(null);
+                    onDeleteSystemScreenshotMarker(markerData.id);
+                });
+
+            screenshotMarkerGroups
+                .selectAll("text.systemScreenshotTimestamp")
+                .data((markerData: any) => [markerData])
+                .join("text")
+                .attr("class", "systemScreenshotTimestamp")
+                .attr("x", (markerData: any) => clampTimelineX(x(markerData.date)))
+                .attr("y", screenshotMarkerTopY - 10)
+                .attr("text-anchor", "middle")
+                .attr("fill", "#C87710")
+                .attr("font-size", 10)
+                .style("pointer-events", "none")
+                .text((markerData: any) => formatDate(markerData.occurredAt));
+
             blueprintCodebaseLinksG.selectAll("*").remove();
             eventsG.selectAll("*").remove();
 
@@ -1381,8 +1541,10 @@ export function useTimelineChart({
         syncCodebaseButtonRef,
         codebaseSubtracks,
         blueprintCodebaseLinks,
+        systemScreenshotMarkers,
         pendingBlueprintLinkEventId,
         hoveredCodebaseFilePath,
+        highlightedCodebaseFilePaths,
         hoveredBlueprintComponentNodeId,
         connectedBlueprintComponentNodeIds,
         dispatch,
@@ -1393,6 +1555,10 @@ export function useTimelineChart({
         onToggleCodebaseSubtrackInactive,
         onDeleteCodebaseSubtrack,
         onCreateBlueprintCodebaseLink,
+        onDeleteSystemScreenshotMarker,
+        onSuggestCodebaseSubtrackFiles,
+        suggestingCodebaseSubtrackIds,
+        setSystemScreenshotTooltip,
         setMilestoneMenu,
         setSelectedMilestone,
         setBlueprintLinkMenu,

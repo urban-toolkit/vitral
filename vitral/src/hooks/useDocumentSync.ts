@@ -11,6 +11,7 @@ import {
     selectAllBlueprintEvents,
     selectBlueprintCodebaseLinks,
     selectAllDesignStudyEvents,
+    selectSystemScreenshotMarkers,
     selectParticipants,
     selectAllStages,
     selectAllSubStages,
@@ -19,6 +20,7 @@ import {
     selectTimelineStartEnd,
     setCodebaseSubtracks,
     setBlueprintCodebaseLinks,
+    setSystemScreenshotMarkers,
     setBlueprintEvents,
     setParticipants,
     setDefaultStages,
@@ -33,7 +35,8 @@ import type {
     CodebaseSubtrack,
     DesignStudyEvent,
     Stage,
-    SubStage
+    SubStage,
+    SystemScreenshotMarker,
 } from "@/config/types";
 
 type SyncStatus = "idle" | "loading" | "saving" | "error" | "ready";
@@ -46,6 +49,7 @@ export function useDocumentSync(projectId: string) {
     const designStudyEvents = useSelector(selectAllDesignStudyEvents);
     const blueprintEvents = useSelector(selectAllBlueprintEvents);
     const blueprintCodebaseLinks = useSelector(selectBlueprintCodebaseLinks);
+    const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
     const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
     const participants = useSelector(selectParticipants);
     const defaultStages = useSelector(selectDefaultStages);
@@ -69,12 +73,13 @@ export function useDocumentSync(projectId: string) {
             designStudyEvents: designStudyEvents,
             blueprintEvents: blueprintEvents,
             blueprintCodebaseLinks: blueprintCodebaseLinks,
+            systemScreenshotMarkers: systemScreenshotMarkers,
             codebaseSubtracks: codebaseSubtracks,
             participants: participants,
             defaultStages: defaultStages,
             timelineStartEnd: timelineStartEnd
         });
-    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, codebaseSubtracks, participants]);
+    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, codebaseSubtracks, participants]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
@@ -88,6 +93,7 @@ export function useDocumentSync(projectId: string) {
                 designStudyEvents: DesignStudyEvent[],
                 blueprintEvents: BlueprintEvent[],
                 blueprintCodebaseLinks: BlueprintCodebaseLink[],
+                systemScreenshotMarkers: SystemScreenshotMarker[],
                 subStages: SubStage[],
                 codebaseSubtracks: CodebaseSubtrack[],
                 participants: Array<{ id: string; name: string; role: string }>,
@@ -109,6 +115,7 @@ export function useDocumentSync(projectId: string) {
                         designStudyEvents,
                         blueprintEvents,
                         blueprintCodebaseLinks,
+                        systemScreenshotMarkers,
                         subStages,
                         codebaseSubtracks,
                         participants,
@@ -161,6 +168,7 @@ export function useDocumentSync(projectId: string) {
                 const designStudyEvents = timeline?.designStudyEvents ?? [];
                 const blueprintEvents = timeline?.blueprintEvents ?? [];
                 const blueprintCodebaseLinks = timeline?.blueprintCodebaseLinks ?? [];
+                const systemScreenshotMarkers = timeline?.systemScreenshotMarkers ?? [];
                 const subStages = timeline?.subStages ?? [];
                 const codebaseSubtracks = timeline?.codebaseSubtracks ?? [];
                 const participants = timeline?.participants ?? [];
@@ -171,6 +179,7 @@ export function useDocumentSync(projectId: string) {
                 dispatch(setDesignStudyEvents(designStudyEvents));
                 dispatch(setBlueprintEvents(blueprintEvents));
                 dispatch(setBlueprintCodebaseLinks(blueprintCodebaseLinks));
+                dispatch(setSystemScreenshotMarkers(systemScreenshotMarkers));
                 dispatch(setSubStages(subStages));
                 dispatch(setCodebaseSubtracks(codebaseSubtracks));
                 dispatch(setParticipants(participants));
@@ -185,6 +194,7 @@ export function useDocumentSync(projectId: string) {
                     designStudyEvents,
                     blueprintEvents,
                     blueprintCodebaseLinks,
+                    systemScreenshotMarkers,
                     subStages,
                     codebaseSubtracks,
                     participants,
@@ -214,8 +224,8 @@ export function useDocumentSync(projectId: string) {
 
         if (currentHash === lastSavedHashRef.current) return;
 
-        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, subStages, codebaseSubtracks, participants, defaultStages, timelineStartEnd, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, subStages, codebaseSubtracks, defaultStages, timelineStartEnd, participants]);
+        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, participants, defaultStages, timelineStartEnd, flow.title);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, defaultStages, timelineStartEnd, participants]);
 
     return { status, error };
 }

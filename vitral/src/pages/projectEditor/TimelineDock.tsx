@@ -11,6 +11,7 @@ export const TIMELINE_DOCK_TOGGLE_HEIGHT = 35;
 const KNOWLEDGE_BASE_EVENTS: KnowledgeBaseEvent[] = [];
 
 type TimelineDockProps = {
+    projectId: string;
     open: boolean;
     onToggleOpen: () => void;
     startMarker: Date | string;
@@ -32,6 +33,7 @@ type TimelineDockProps = {
 };
 
 export const TimelineDock = memo(function TimelineDock({
+    projectId,
     open,
     onToggleOpen,
     startMarker,
@@ -91,6 +93,7 @@ export const TimelineDock = memo(function TimelineDock({
                 }}
             >
                 <Timeline
+                    projectId={projectId}
                     startMarker={startMarker}
                     endMarker={endMarker}
                     projectName={projectName}

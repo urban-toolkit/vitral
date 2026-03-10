@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import classes from "./Timeline.module.css";
-import type { BlueprintEvent, DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
+import type {
+  BlueprintEvent,
+  DesignStudyEvent,
+  GitHubEvent,
+  Stage,
+} from "@/config/types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowsRotate, faCaretDown, faPlus, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
 import { StagePicker } from "@/components/timeline/StagePicker";
@@ -11,6 +17,7 @@ import {
   addCodebaseSubtrack,
   deleteBlueprintCodebaseLink,
   selectBlueprintCodebaseLinks,
+  selectHighlightedCodebaseFilePaths,
   selectHoveredBlueprintComponentNodeId,
   addDesignStudyEvent,
   attachFileToCodebaseSubtrack,
@@ -21,13 +28,16 @@ import {
   selectHoveredCodebaseFilePath,
   selectAllSubStages,
   selectParticipants,
+  selectSystemScreenshotMarkers,
+  setHighlightedCodebaseFilePaths,
   toggleCodebaseSubtrackInactive,
   toggleCodebaseSubtrackCollapsed,
   updateDesignStudyEvent,
   updateSubStage,
+  deleteSystemScreenshotMarker,
 } from "@/store/timelineSlice";
 import { MilestoneMenu } from "./MilestoneMenu";
-import { requestMilestonesLLM } from "@/func/LLMRequest";
+import { requestCodebaseSubtrackFilesLLM, requestMilestonesLLM } from "@/func/LLMRequest";
 import { CodebaseTooltip } from "./CodebaseTooltip";
 import { BlueprintTooltip } from "./BlueprintTooltip";
 import type {
@@ -46,6 +56,7 @@ export type {
 } from "./timelineTypes";
 
 export const Timeline = ({
+  projectId,
   startMarker,
   endMarker,
   projectName,
@@ -77,6 +88,12 @@ export const Timeline = ({
   const [selectedEvent, setSelectedEvent] = useState<SelectedTimelineEvent | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [showTooltip, setShowTooltip] = useState(false);
+  const [systemScreenshotTooltip, setSystemScreenshotTooltip] = useState<{
+    markerId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [hoveredScreenshotZoneId, setHoveredScreenshotZoneId] = useState<string | null>(null);
   const [blueprintLinkMenu, setBlueprintLinkMenu] = useState<{
     x: number;
     y: number;
@@ -123,12 +140,27 @@ export const Timeline = ({
   const llmButtonRef = useRef<HTMLSpanElement | null>(null);
   const [isSyncingCodebase, setIsSyncingCodebase] = useState(false);
   const [isGeneratingMilestones, setIsGeneratingMilestones] = useState(false);
+  const [suggestingCodebaseSubtrackIds, setSuggestingCodebaseSubtrackIds] = useState<string[]>([]);
 
   const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
   const participants = useSelector(selectParticipants);
+  const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
+  const highlightedCodebaseFilePaths = useSelector(selectHighlightedCodebaseFilePaths);
   const blueprintCodebaseLinks = useSelector(selectBlueprintCodebaseLinks);
   const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
   const hoveredBlueprintComponentNodeId = useSelector(selectHoveredBlueprintComponentNodeId);
+
+  const systemScreenshotTooltipMarker = useMemo(
+    () => systemScreenshotTooltip
+      ? (systemScreenshotMarkers.find((marker) => marker.id === systemScreenshotTooltip.markerId) ?? null)
+      : null,
+    [systemScreenshotMarkers, systemScreenshotTooltip]
+  );
+
+  const hoveredScreenshotZone = useMemo(
+    () => systemScreenshotTooltipMarker?.zones?.find((zone) => zone.id === hoveredScreenshotZoneId) ?? null,
+    [hoveredScreenshotZoneId, systemScreenshotTooltipMarker]
+  );
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -152,13 +184,47 @@ export const Timeline = ({
       setBlueprintLinkMenu(null);
       setBlueprintCodebaseLinkMenu(null);
       setPendingBlueprintLinkEventId(null);
+      setSystemScreenshotTooltip(null);
+      setHoveredScreenshotZoneId(null);
+      dispatch(setHighlightedCodebaseFilePaths([]));
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (!systemScreenshotTooltipMarker) {
+      if (hoveredScreenshotZoneId !== null) {
+        setHoveredScreenshotZoneId(null);
+      }
+      return;
+    }
+
+    if (
+      hoveredScreenshotZoneId &&
+      !systemScreenshotTooltipMarker.zones?.some((zone) => zone.id === hoveredScreenshotZoneId)
+    ) {
+      setHoveredScreenshotZoneId(null);
+    }
+  }, [hoveredScreenshotZoneId, systemScreenshotTooltipMarker]);
+
+  useEffect(() => {
+    const nextPaths = hoveredScreenshotZone?.filePaths ?? [];
+    const same =
+      nextPaths.length === highlightedCodebaseFilePaths.length &&
+      nextPaths.every((path, index) => path === highlightedCodebaseFilePaths[index]);
+    if (same) return;
+    dispatch(setHighlightedCodebaseFilePaths(nextPaths));
+  }, [dispatch, highlightedCodebaseFilePaths, hoveredScreenshotZone]);
+
+  useEffect(() => {
+    return () => {
+      dispatch(setHighlightedCodebaseFilePaths([]));
+    };
+  }, [dispatch]);
 
   const parsed = useParsedTimelineData({
     startMarker,
@@ -188,8 +254,10 @@ export const Timeline = ({
     parsed,
     codebaseSubtracks,
     blueprintCodebaseLinks,
+    systemScreenshotMarkers,
     pendingBlueprintLinkEventId,
     hoveredCodebaseFilePath,
+    highlightedCodebaseFilePaths,
     hoveredBlueprintComponentNodeId,
     connectedBlueprintComponentNodeIds,
     dispatch,
@@ -211,6 +279,19 @@ export const Timeline = ({
       dispatch(addBlueprintCodebaseLink({ blueprintEventId, codebaseSubtrackId, origin: "manual" }));
       setPendingBlueprintLinkEventId(null);
     },
+    onDeleteSystemScreenshotMarker: (markerId) => {
+      dispatch(deleteSystemScreenshotMarker(markerId));
+      setSystemScreenshotTooltip((previous) =>
+        previous?.markerId === markerId ? null : previous
+      );
+      setHoveredScreenshotZoneId(null);
+      dispatch(setHighlightedCodebaseFilePaths([]));
+    },
+    onSuggestCodebaseSubtrackFiles: (subtrackId) => {
+      void handleSuggestCodebaseSubtrackFiles(subtrackId);
+    },
+    suggestingCodebaseSubtrackIds,
+    setSystemScreenshotTooltip,
     setMilestoneMenu,
     setSelectedMilestone,
     setBlueprintLinkMenu,
@@ -343,6 +424,34 @@ export const Timeline = ({
     }
   };
 
+  const handleSuggestCodebaseSubtrackFiles = async (subtrackId: string) => {
+    if (suggestingCodebaseSubtrackIds.includes(subtrackId)) return;
+
+    const subtrack = codebaseSubtracks.find((entry) => entry.id === subtrackId);
+    if (!subtrack) return;
+
+    setSuggestingCodebaseSubtrackIds((prev) => {
+      if (prev.includes(subtrackId)) return prev;
+      return [...prev, subtrackId];
+    });
+
+    try {
+      const suggestedFilePaths = await requestCodebaseSubtrackFilesLLM({
+        projectId,
+        projectTitle: (projectName ?? "").trim() || "Untitled",
+        projectGoal: (projectGoal ?? "").trim(),
+        codebaseSubtrackTitle: (subtrack.name ?? "").trim() || "Codebase subtrack",
+        existingFilePaths: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
+      });
+
+      for (const filePath of suggestedFilePaths) {
+        dispatch(attachFileToCodebaseSubtrack({ subtrackId, filePath }));
+      }
+    } finally {
+      setSuggestingCodebaseSubtrackIds((prev) => prev.filter((id) => id !== subtrackId));
+    }
+  };
+
   const tooltipInner = useMemo(() => {
     if (selectedEvent?.kind === "codebase") {
       return <CodebaseTooltip event={selectedEvent.event as GitHubEvent} />;
@@ -365,6 +474,9 @@ export const Timeline = ({
           setMilestoneMenu(null);
           setBlueprintLinkMenu(null);
           setBlueprintCodebaseLinkMenu(null);
+          setSystemScreenshotTooltip(null);
+          setHoveredScreenshotZoneId(null);
+          dispatch(setHighlightedCodebaseFilePaths([]));
         }}
       >
         <svg ref={svgRef} className={classes.svg} />
@@ -435,11 +547,16 @@ export const Timeline = ({
         <span
           ref={llmButtonRef}
           className={classes.milestonesLlmButton}
-          style={{ left: 125, top: margin.top + 67 }}
+          style={{
+            left: 125,
+            top: margin.top + 67,
+            color: isGeneratingMilestones ? "#9b9b9b" : undefined,
+            opacity: isGeneratingMilestones ? 0.5 : 1,
+            cursor: isGeneratingMilestones ? "wait" : "pointer",
+          }}
           onClick={handleGenerateMilestones}
         >
           <FontAwesomeIcon icon={faWandSparkles} />
-          {isGeneratingMilestones ? <span className={classes.inlineSpinner} aria-hidden="true" /> : null}
         </span>
 
         {pendingBlueprintLinkEventId && (
@@ -509,6 +626,96 @@ export const Timeline = ({
       >
         {tooltipInner}
       </div>
+
+      {systemScreenshotTooltip && systemScreenshotTooltipMarker && typeof document !== "undefined"
+        ? createPortal((
+        <div
+          className={classes.screenshotTooltip}
+          style={{ left: systemScreenshotTooltip.x, top: systemScreenshotTooltip.y }}
+          onClick={(event) => event.stopPropagation()}
+          onMouseLeave={() => setHoveredScreenshotZoneId(null)}
+        >
+          {systemScreenshotTooltipMarker.imageDataUrl ? (
+            <div
+              className={classes.screenshotTooltipMedia}
+              style={
+                systemScreenshotTooltipMarker.imageWidth && systemScreenshotTooltipMarker.imageHeight
+                  ? { aspectRatio: `${systemScreenshotTooltipMarker.imageWidth} / ${systemScreenshotTooltipMarker.imageHeight}` }
+                  : undefined
+              }
+            >
+              <img
+                src={systemScreenshotTooltipMarker.imageDataUrl}
+                alt="System screenshot"
+                className={classes.screenshotTooltipImage}
+              />
+              {Array.isArray(systemScreenshotTooltipMarker.zones) &&
+                systemScreenshotTooltipMarker.zones.length > 0 &&
+                systemScreenshotTooltipMarker.imageWidth &&
+                systemScreenshotTooltipMarker.imageHeight ? (
+                <div className={classes.screenshotZonesLayer}>
+                  {systemScreenshotTooltipMarker.zones.map((zone) => {
+                    const left = Math.max(
+                      0,
+                      Math.min(100, (zone.x / systemScreenshotTooltipMarker.imageWidth!) * 100)
+                    );
+                    const top = Math.max(
+                      0,
+                      Math.min(100, (zone.y / systemScreenshotTooltipMarker.imageHeight!) * 100)
+                    );
+                    const widthPercent = Math.max(
+                      0.8,
+                      Math.min(100 - left, (zone.width / systemScreenshotTooltipMarker.imageWidth!) * 100)
+                    );
+                    const heightPercent = Math.max(
+                      0.8,
+                      Math.min(100 - top, (zone.height / systemScreenshotTooltipMarker.imageHeight!) * 100)
+                    );
+                    const filesTooltip = zone.filePaths.length > 0
+                      ? zone.filePaths.join("\n")
+                      : "No linked files";
+                    return (
+                      <button
+                        key={zone.id}
+                        type="button"
+                        className={`${classes.screenshotZoneRect} ${
+                          hoveredScreenshotZoneId === zone.id ? classes.screenshotZoneRectActive : ""
+                        }`}
+                        style={{
+                          left: `${left}%`,
+                          top: `${top}%`,
+                          width: `${widthPercent}%`,
+                          height: `${heightPercent}%`,
+                        }}
+                        title={filesTooltip}
+                        onMouseEnter={() => setHoveredScreenshotZoneId(zone.id)}
+                        onMouseLeave={() =>
+                          setHoveredScreenshotZoneId((current) =>
+                            current === zone.id ? null : current
+                          )
+                        }
+                        onClick={(event) => event.stopPropagation()}
+                      />
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className={classes.screenshotTooltipEmpty}>No screenshot uploaded</p>
+          )}
+          {hoveredScreenshotZone ? (
+            <p className={classes.screenshotTooltipHint}>
+              {hoveredScreenshotZone.name}
+            </p>
+          ) : (
+            <p className={classes.screenshotTooltipHint}>
+              Hover a zone to highlight matching files and subtracks.
+            </p>
+          )}
+        </div>
+        ), document.body)
+        : null}
 
       {stageMenu && (
         <div
