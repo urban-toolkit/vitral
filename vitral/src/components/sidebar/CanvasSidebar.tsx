@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronLeft, faChevronRight, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
+import { faChevronLeft, faChevronRight, faDownload, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
 import type { cardLabel } from "@/config/types";
 import type { QuerySystemPapersResult, SystemPaper } from "@/api/stateApi";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
@@ -129,6 +129,10 @@ type CanvasSidebarProps = {
     onSetTitle: (newTitle: string) => void;
     onGoHome?: () => void;
     onOpenSettings?: () => void;
+    onExportProject?: () => void;
+    exportingProject?: boolean;
+    onExportMarkdown?: () => void;
+    exportingMarkdown?: boolean;
     bottomOffsetPx?: number;
     collapsed: boolean;
     onToggleCollapsed: () => void;
@@ -276,6 +280,10 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     onSetTitle,
     onGoHome,
     onOpenSettings,
+    onExportProject,
+    exportingProject = false,
+    onExportMarkdown,
+    exportingMarkdown = false,
     bottomOffsetPx = 0,
     collapsed,
     onToggleCollapsed,
@@ -367,6 +375,30 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                 aria-label="Project settings"
                             >
                                 <FontAwesomeIcon icon={faGear} />
+                            </button>
+                        ) : null}
+                        {onExportProject ? (
+                            <button
+                                type="button"
+                                className={styles.exportHeaderButton}
+                                onClick={onExportProject}
+                                title="Export project (.vi)"
+                                aria-label="Export project (.vi)"
+                                disabled={exportingProject}
+                            >
+                                {exportingProject ? "..." : <FontAwesomeIcon icon={faDownload} />}
+                            </button>
+                        ) : null}
+                        {onExportMarkdown ? (
+                            <button
+                                type="button"
+                                className={styles.exportHeaderButton}
+                                onClick={onExportMarkdown}
+                                title="Export markdown report"
+                                aria-label="Export markdown report"
+                                disabled={exportingMarkdown}
+                            >
+                                {exportingMarkdown ? "..." : "MD"}
                             </button>
                         ) : null}
                         <button

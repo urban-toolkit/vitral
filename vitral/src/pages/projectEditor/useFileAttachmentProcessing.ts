@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { parseFile } from "@/func/FileParser";
 import { llmCardsToNodes, requestArtifactLLM, requestCardsLLM } from "@/func/LLMRequest";
 import type { llmArtifactData } from "@/func/LLMRequest";
+import type { LlmProjectSettingsContext } from "@/func/LLMRequest";
 import { compareCardsSimilarity, createFile } from "@/api/stateApi";
 import { addNode, attachFileIdToNode, addNodes, connectEdges, updateNode } from "@/store/flowSlice";
 import { upsertFile } from "@/store/filesSlice";
@@ -19,14 +20,16 @@ type Args = {
     nodes: nodeType[];
     edges: edgeType[];
     allFiles: fileRecord[];
+    projectSettings: LlmProjectSettingsContext;
     setLoading: (value: boolean) => void;
 };
 
 const KNOWN_CARD_LABELS = new Set(["person", "activity", "requirement", "concept", "insight", "object"]);
-const DUPLICATE_SIMILARITY_THRESHOLD = 0.85;
-const ITERATION_SIMILARITY_THRESHOLD = 0.5;
+const ITERATION_OF_SIMILARITY_THRESHOLD = 0.85;
+const REFERENCED_BY_SIMILARITY_THRESHOLD = 0.7;
 const REFERENCED_BY_LABEL = "referenced by";
 const ITERATION_OF_LABEL = "iteration of";
+const DEBUG_SIMILARITY_SCORES = String(import.meta.env.VITE_DEBUG_SIMILARITY_SCORES ?? "").toLowerCase() === "true";
 
 function normalizeArtifactEntity(entity: string | undefined): string {
     const normalized = String(entity ?? "").trim().toLowerCase();
@@ -50,6 +53,7 @@ export function useFileAttachmentProcessing({
     nodes,
     edges,
     allFiles,
+    projectSettings,
     setLoading,
 }: Args) {
     const nodesRef = useRef(nodes);
@@ -124,7 +128,7 @@ export function useFileAttachmentProcessing({
 
             let response: { cards: llmCardData[]; connections: llmConnectionData[] } | null = null;
             try {
-                response = await requestCardsLLM(data, allFilesRef.current);
+                response = await requestCardsLLM(data, allFilesRef.current, projectSettings);
             } catch (error) {
                 console.error("LLM processing failed for attached file.", error);
             }
@@ -206,29 +210,17 @@ export function useFileAttachmentProcessing({
                     const similarityMatch = nodeIdToSimilarity.get(targetNodeId);
                     const matchedCardId = similarityMatch?.existingCardId ?? null;
                     const similarityScore = similarityMatch?.similarity ?? 0;
-                    const isDuplicate = !!matchedCardId && similarityScore > DUPLICATE_SIMILARITY_THRESHOLD;
-                    const isIteration = !!matchedCardId &&
-                        similarityScore >= ITERATION_SIMILARITY_THRESHOLD &&
-                        similarityScore <= DUPLICATE_SIMILARITY_THRESHOLD;
-
-                    if (!isDuplicate) {
-                        const generatedNode = generatedNodeById.get(targetNodeId);
-                        if (generatedNode) nodesToAdd.push(generatedNode);
-                    }
-
-                    if (isDuplicate && matchedCardId) {
-                        const existingNode = existingNodeById.get(matchedCardId);
-                        const existingLabel = normalizeArtifactEntity(String(existingNode?.data?.label ?? normalizedEntity));
-                        queueEdge({
-                            id: crypto.randomUUID(),
-                            source: rootActivityNodeId,
-                            target: matchedCardId,
-                            type: "relation",
-                            label: REFERENCED_BY_LABEL,
-                            data: { label: REFERENCED_BY_LABEL, from: "activity", to: existingLabel, kind: "referenced_by" },
+                    if (DEBUG_SIMILARITY_SCORES) {
+                        console.log("[similarity]", {
+                            newCardId: targetNodeId,
+                            matchedCardId,
+                            similarityScore,
+                            iterationThreshold: ITERATION_OF_SIMILARITY_THRESHOLD,
+                            referencedByThreshold: REFERENCED_BY_SIMILARITY_THRESHOLD,
                         });
-                        continue;
                     }
+                    const generatedNode = generatedNodeById.get(targetNodeId);
+                    if (generatedNode) nodesToAdd.push(generatedNode);
 
                     const label = relationLabelFor("activity", normalizedEntity);
                     if (label) {
@@ -242,7 +234,11 @@ export function useFileAttachmentProcessing({
                         });
                     }
 
-                    if (isIteration && matchedCardId && matchedCardId !== targetNodeId) {
+                    if (
+                        matchedCardId &&
+                        matchedCardId !== targetNodeId &&
+                        similarityScore > ITERATION_OF_SIMILARITY_THRESHOLD
+                    ) {
                         const existingNode = existingNodeById.get(matchedCardId);
                         const existingLabel = normalizeArtifactEntity(String(existingNode?.data?.label ?? normalizedEntity));
                         queueEdge({
@@ -252,6 +248,21 @@ export function useFileAttachmentProcessing({
                             type: "relation",
                             label: ITERATION_OF_LABEL,
                             data: { label: ITERATION_OF_LABEL, from: normalizedEntity, to: existingLabel, kind: "iteration_of" },
+                        });
+                    } else if (
+                        matchedCardId &&
+                        matchedCardId !== targetNodeId &&
+                        similarityScore >= REFERENCED_BY_SIMILARITY_THRESHOLD
+                    ) {
+                        const existingNode = existingNodeById.get(matchedCardId);
+                        const existingLabel = normalizeArtifactEntity(String(existingNode?.data?.label ?? normalizedEntity));
+                        queueEdge({
+                            id: crypto.randomUUID(),
+                            source: targetNodeId,
+                            target: matchedCardId,
+                            type: "relation",
+                            label: REFERENCED_BY_LABEL,
+                            data: { label: REFERENCED_BY_LABEL, from: normalizedEntity, to: existingLabel, kind: "referenced_by" },
                         });
                     }
                 }
@@ -267,7 +278,7 @@ export function useFileAttachmentProcessing({
         } finally {
             setLoading(false);
         }
-    }, [dispatch, projectId, setLoading]);
+    }, [dispatch, projectId, projectSettings, setLoading]);
 
     const onAttachFile = useCallback(async (nodeId: string, file: File) => {
         const targetNode = nodesRef.current.find((node) => node.id === nodeId);
@@ -323,7 +334,7 @@ export function useFileAttachmentProcessing({
 
             let artifact: llmArtifactData | null = null;
             try {
-                artifact = await requestArtifactLLM(parsedFile, allFilesRef.current);
+                artifact = await requestArtifactLLM(parsedFile, allFilesRef.current, projectSettings);
                 console.log("artifact", artifact);
             } catch (error) {
                 console.error("LLM processing failed for canvas-dropped file.", error);
@@ -357,7 +368,7 @@ export function useFileAttachmentProcessing({
         } finally {
             setLoading(false);
         }
-    }, [dispatch, projectId, setLoading]);
+    }, [dispatch, projectId, projectSettings, setLoading]);
 
     const processPendingDrop = useCallback(async () => {
         if (!pendingDrop?.rootActivityNodeId) return;

@@ -8,6 +8,16 @@
     padding: 40px;
 }
 
+.headerRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 40px;
+    padding-bottom: 20px;
+    border-bottom: var(--border-style);
+}
+
 .projectsGrid {
     display: grid;
     grid-template-columns: repeat(auto-fill, 300px);
@@ -37,9 +47,25 @@
 .title {
     font-size: var(--font-size-2xl);
     margin-top: 0;
-    margin-bottom: 40px;
-    padding-bottom: 20px;
-    border-bottom: var(--border-style);
+    margin-bottom: 0;
+}
+
+.importButton {
+    border: 1px solid #c9c9c9;
+    border-radius: 8px;
+    background: #fff;
+    color: #2f2f2f;
+    padding: 8px 12px;
+    cursor: pointer;
+}
+
+.importButton:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.hiddenInput {
+    display: none;
 }
 
 .removeIcon {
@@ -54,4 +80,15 @@
     padding: 10px;
     border: 2px dashed rgb(141, 141, 141);
     border-radius: 15px;
+}
+
+.reviewBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #ffe8cc;
+    color: #8f4f0f;
+    font-size: 11px;
+    font-weight: 700;
 }

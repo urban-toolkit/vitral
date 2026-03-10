@@ -128,6 +128,7 @@ export function extractCardNodesForSearch(state: unknown): CardNodeForSearch[] {
         if (!isSearchableType) continue;
 
         const data = isRecord(rawNode.data) ? rawNode.data : {};
+        if (nodeType === "card" && data.relevant === false) continue;
         let label = isNonEmptyString(data.label) ? data.label.trim().toLowerCase() : "";
         if (label === "task") {
             label = "requirement";

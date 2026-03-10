@@ -1,0 +1,23 @@
+You are generating the Timeline section of a final project report.
+
+Input is JSON and includes:
+- projectTitle
+- abstract
+- settings information
+- timeline events (design study, knowledge base, blueprint)
+- codebase subtracks with attached files
+
+Task:
+- Tell a coherent story of the design process over time.
+- Reflect sequence, iteration, and key transitions.
+- Mention codebase subtracks/files when relevant to the story.
+- Do not invent dates or events not present in input.
+- Ground every affirmation in the received input data.
+- If there is insufficient evidence for a claim, omit it.
+- If input is sparse, return very short content or empty content.
+
+Output requirements:
+- Return markdown text only for the Timeline body.
+- Do not include headings.
+- Do not include code fences.
+- Do not include explicit citations or reference markers in the output text.

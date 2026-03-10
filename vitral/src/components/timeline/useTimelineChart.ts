@@ -123,6 +123,7 @@ type UseTimelineChartParams = {
     highlightedCodebaseFilePaths: string[];
     hoveredBlueprintComponentNodeId: string | null;
     connectedBlueprintComponentNodeIds: string[];
+    readOnly: boolean;
     dispatch: (action: any) => void;
     onStageBoundaryChange: (prevId: string, nextId: string, date: Date) => void;
     onStageLaneDeletion: (id: string) => void;
@@ -170,6 +171,7 @@ export function useTimelineChart({
     highlightedCodebaseFilePaths,
     hoveredBlueprintComponentNodeId,
     connectedBlueprintComponentNodeIds,
+    readOnly,
     dispatch,
     onStageBoundaryChange,
     onStageLaneDeletion,
@@ -476,9 +478,10 @@ export function useTimelineChart({
             .style("fill", pendingBlueprintLinkEventId ? "rgba(45, 125, 210, 0.10)" : "transparent")
             .style("stroke", pendingBlueprintLinkEventId ? "rgba(45, 125, 210, 0.45)" : "none")
             .style("stroke-dasharray", pendingBlueprintLinkEventId ? "4 3" : null)
-            .style("pointer-events", pendingBlueprintLinkEventId ? "all" : "none")
-            .style("cursor", pendingBlueprintLinkEventId ? "crosshair" : "default")
+            .style("pointer-events", readOnly ? "none" : (pendingBlueprintLinkEventId ? "all" : "none"))
+            .style("cursor", readOnly ? "default" : (pendingBlueprintLinkEventId ? "crosshair" : "default"))
             .on("click", (event: any, row: any) => {
+                if (readOnly) return;
                 if (!pendingBlueprintLinkEventId) return;
                 event.preventDefault();
                 event.stopPropagation();
@@ -496,19 +499,22 @@ export function useTimelineChart({
             .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "none"))
             .style("stroke-width", (row: any) => (row.isHighlighted ? 2 : 0))
             .attr("data-timeline-interactive", "true")
-            .style("pointer-events", "all")
-            .style("cursor", pendingBlueprintLinkEventId ? "crosshair" : "copy")
+            .style("pointer-events", readOnly ? "none" : "all")
+            .style("cursor", readOnly ? "default" : (pendingBlueprintLinkEventId ? "crosshair" : "copy"))
             .on("click", (event: any, row: any) => {
+                if (readOnly) return;
                 if (!pendingBlueprintLinkEventId) return;
                 event.preventDefault();
                 event.stopPropagation();
                 onCreateBlueprintCodebaseLink(pendingBlueprintLinkEventId, row.id);
             })
             .on("dragenter", (event: any) => {
+                if (readOnly) return;
                 event.preventDefault();
                 event.stopPropagation();
             })
             .on("dragover", (event: any) => {
+                if (readOnly) return;
                 event.preventDefault();
                 event.stopPropagation();
                 if (event.dataTransfer) {
@@ -516,6 +522,7 @@ export function useTimelineChart({
                 }
             })
             .on("drop", (event: any, row: any) => {
+                if (readOnly) return;
                 event.preventDefault();
                 event.stopPropagation();
 
@@ -539,8 +546,9 @@ export function useTimelineChart({
             .append("g")
             .attr("data-timeline-interactive", "true")
             .attr("transform", (row: any) => `translate(${timelineLeft - 12}, ${row.top + 12})`)
-            .style("cursor", "pointer")
+            .style("cursor", readOnly ? "default" : "pointer")
             .on("click", (event: any, row: any) => {
+                if (readOnly) return;
                 event.stopPropagation();
                 onToggleCodebaseSubtrackInactive(row.id);
             });
@@ -567,9 +575,10 @@ export function useTimelineChart({
             .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
             .attr("fill", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
-            .style("cursor", "pointer")
+            .style("cursor", readOnly ? "default" : "pointer")
             .text((row: any) => (row.collapsed ? ">" : "v"))
             .on("click", (event: any, row: any) => {
+                if (readOnly) return;
                 event.stopPropagation();
                 onToggleCodebaseSubtrackCollapsed(row.id);
             });
@@ -581,11 +590,12 @@ export function useTimelineChart({
             .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
             .attr("fill", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
-            .style("cursor", "text")
+            .style("cursor", readOnly ? "default" : "text")
             .text((row: any) => {
                 return row.name;
             })
             .on("click", (event: any, row: any) => {
+                if (readOnly) return;
                 event.stopPropagation();
                 const [sx, sy] = d3.pointer(event, containerRef.current);
                 setNameEdit({
@@ -601,9 +611,13 @@ export function useTimelineChart({
             .append("g")
             .attr("data-timeline-interactive", "true")
             .attr("transform", (row: any) => `translate(${timelineLeft - 30}, ${row.top + 12})`)
-            .style("cursor", (row: any) => (suggestingSubtrackIdSet.has(row.id) ? "wait" : "pointer"))
+            .style("cursor", (row: any) => {
+                if (readOnly) return "default";
+                return suggestingSubtrackIdSet.has(row.id) ? "wait" : "pointer";
+            })
             .style("opacity", (row: any) => (suggestingSubtrackIdSet.has(row.id) ? 0.5 : 1))
             .on("click", (event: any, row: any) => {
+                if (readOnly) return;
                 event.stopPropagation();
                 if (suggestingSubtrackIdSet.has(row.id)) return;
                 onSuggestCodebaseSubtrackFiles(row.id);
@@ -632,9 +646,10 @@ export function useTimelineChart({
             .attr("x", timelineLeft + innerW - 14)
             .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
-            .style("cursor", "pointer")
+            .style("cursor", readOnly ? "default" : "pointer")
             .text("X")
             .on("click", (event: any, row: any) => {
+                if (readOnly) return;
                 event.stopPropagation();
                 onDeleteCodebaseSubtrack(row.id);
             });
@@ -789,6 +804,7 @@ export function useTimelineChart({
                 .text(eventData.name)
                 .on("contextmenu", openMilestoneMenu)
                 .on("click", (event: any) => {
+                    if (readOnly) return;
                     event.stopPropagation();
                     const [sx, sy] = d3.pointer(event, containerRef.current);
                     setNameEdit({
@@ -819,6 +835,7 @@ export function useTimelineChart({
             const dividerDrag = d3
                 .drag<SVGLineElement, any>()
                 .on("drag", (event: any, divider: any) => {
+                    if (readOnly) return;
                     const px = event.x;
                     const newDate = x.invert(px);
 
@@ -854,6 +871,7 @@ export function useTimelineChart({
                         .attr("width", x(stageData.end) - x(stageData.start))
                         .attr("height", 20)
                         .on("click", (event: any, stage: any) => {
+                            if (readOnly) return;
                             event.stopPropagation();
                             const [sx, sy] = d3.pointer(event, containerRef.current);
                             setTagPicker({ ...stage, x: sx, y: sy });
@@ -875,8 +893,9 @@ export function useTimelineChart({
                         .attr("x", x(stageData.end) - 20)
                         .attr("y", margin.top + 58)
                         .text("X")
-                        .style("cursor", "pointer")
+                        .style("cursor", readOnly ? "default" : "pointer")
                         .on("click", (event: any, stage: any) => {
+                            if (readOnly) return;
                             event.stopPropagation();
                             onStageLaneDeletion(stage.id);
                         });
@@ -894,6 +913,7 @@ export function useTimelineChart({
                         .attr("fill", stageColor(stageData.name))
                         .attr("opacity", 0.5)
                         .on("contextmenu", function (event: any, fillRow: { lane: LaneType | "codebaseSubtrack" }) {
+                            if (readOnly) return;
                             if (fillRow.lane !== "designStudy") return;
 
                             event.preventDefault();
@@ -917,8 +937,8 @@ export function useTimelineChart({
                 .attr("y2", lanesBottom)
                 .attr("stroke", "transparent")
                 .attr("stroke-width", 10)
-                .attr("cursor", "ew-resize")
-                .call(dividerDrag as any);
+                .attr("cursor", readOnly ? "default" : "ew-resize")
+                .call(readOnly ? (() => undefined) as any : dividerDrag as any);
 
             const augmentedStages = [...parsed.stages];
 
@@ -992,8 +1012,9 @@ export function useTimelineChart({
                 .attr("x", (d: any) => x(d.end) - 35)
                 .attr("y", (d: any) => laneY[d.lane as LaneType] + 20)
                 .text("v")
-                .style("cursor", "pointer")
+                .style("cursor", readOnly ? "default" : "pointer")
                 .on("click", (event: any, subStageData: any) => {
+                    if (readOnly) return;
                     event.stopPropagation();
                     const [sx, sy] = d3.pointer(event, containerRef.current);
                     setStageMenu({ subStageId: subStageData.id, x: sx, y: sy });
@@ -1005,8 +1026,9 @@ export function useTimelineChart({
                 .attr("x", (d: any) => x(d.end) - 16)
                 .attr("y", (d: any) => laneY[d.lane as LaneType] + 18)
                 .text("X")
-                .style("cursor", "pointer")
+                .style("cursor", readOnly ? "default" : "pointer")
                 .on("click", (event: any, subStageData: any) => {
+                    if (readOnly) return;
                     event.stopPropagation();
                     dispatch(deleteSubStage(subStageData.id));
                 });
@@ -1017,8 +1039,9 @@ export function useTimelineChart({
                 .attr("x", (d: any) => x(d.start) + 5)
                 .attr("y", (d: any) => laneY[d.lane as LaneType] + 20)
                 .text((d: any) => d.name)
-                .style("cursor", "text")
+                .style("cursor", readOnly ? "default" : "text")
                 .on("click", (event: any, subStageData: any) => {
+                    if (readOnly) return;
                     event.stopPropagation();
                     const [sx, sy] = d3.pointer(event, containerRef.current);
                     setNameEdit({
@@ -1059,6 +1082,7 @@ export function useTimelineChart({
                     ])
                     .filter((event: any) => !isOverArea(event, x, lane))
                     .on("end", (event: any) => {
+                        if (readOnly) return;
                         if (!event.selection) return;
 
                         const [px0, px1] = event.selection as [number, number];
@@ -1085,6 +1109,7 @@ export function useTimelineChart({
                 .enter()
                 .append("g")
                 .each(function attachBrush(laneDef: any) {
+                    if (readOnly) return;
                     d3.select(this).call(brush(laneDef.lane, laneDef.top) as any);
                 });
 
@@ -1147,6 +1172,7 @@ export function useTimelineChart({
                 .attr("stroke-dasharray", "4 3")
                 .style("cursor", "context-menu")
                 .on("contextmenu", (event: any, markerData: any) => {
+                    if (readOnly) return;
                     event.preventDefault();
                     event.stopPropagation();
                     setSystemScreenshotTooltip(null);
@@ -1188,6 +1214,7 @@ export function useTimelineChart({
                     });
                 })
                 .on("contextmenu", (event: any, markerData: any) => {
+                    if (readOnly) return;
                     event.preventDefault();
                     event.stopPropagation();
                     setSystemScreenshotTooltip(null);
@@ -1260,6 +1287,7 @@ export function useTimelineChart({
                 })
                 .attr("marker-end", "url(#blueprint-link-arrow-head)")
                 .on("contextmenu", (event: any, entry: any) => {
+                    if (readOnly) return;
                     event.preventDefault();
                     event.stopPropagation();
                     const [sx, sy] = d3.pointer(event, containerRef.current);
@@ -1420,6 +1448,7 @@ export function useTimelineChart({
                     })
                     .on("contextmenu", (event: any, eventData: any) => {
                         if (kind === "designStudy") {
+                            if (readOnly) return;
                             event.preventDefault();
                             event.stopPropagation();
                             const [sx, sy] = d3.pointer(event, containerRef.current);
@@ -1432,6 +1461,7 @@ export function useTimelineChart({
                         }
 
                         if (kind !== "blueprint") return;
+                        if (readOnly) return;
 
                         event.preventDefault();
                         event.stopPropagation();
@@ -1547,6 +1577,7 @@ export function useTimelineChart({
         highlightedCodebaseFilePaths,
         hoveredBlueprintComponentNodeId,
         connectedBlueprintComponentNodeIds,
+        readOnly,
         dispatch,
         onStageBoundaryChange,
         onStageLaneDeletion,

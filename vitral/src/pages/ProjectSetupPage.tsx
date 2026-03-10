@@ -1,5 +1,5 @@
 ﻿
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -59,6 +59,7 @@ type TemplateSelection = {
     kind: "literature" | "previous";
     id: string;
 } | null;
+type JsonExportMode = "everything" | "configs";
 
 type LiteratureTemplate = LiteratureSetupTemplate;
 
@@ -330,6 +331,7 @@ export function ProjectSetupPage() {
     const [templateLoading, setTemplateLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [loadedGoal, setLoadedGoal] = useState("");
+    const importInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         let active = true;
@@ -505,6 +507,111 @@ export function ProjectSetupPage() {
         }
     };
 
+    const buildExportPayload = (mode: JsonExportMode): unknown => {
+        const source = activeTab === "json" ? JSON.parse(jsonDraft) : setup;
+        const normalized = normalizeSetup(source);
+
+        if (mode === "configs") {
+            return {
+                participants: normalized.participants,
+                timeline: normalized.timeline,
+            };
+        }
+
+        return normalized;
+    };
+
+    const triggerJsonImport = () => {
+        importInputRef.current?.click();
+    };
+
+    const exportJson = (mode: JsonExportMode) => {
+        try {
+            const payload = buildExportPayload(mode);
+            const content = JSON.stringify(payload, null, 2);
+            const blob = new Blob([content], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+
+            const fileLabel = mode === "everything" ? "everything" : "configs";
+            const safeProject = (setup.projectName.trim() || "project")
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "");
+
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = `${safeProject || "project"}-${fileLabel}.json`;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+            setError(null);
+        } catch {
+            setError("Invalid JSON. Please fix syntax before exporting.");
+        }
+    };
+
+    const onImportJsonFile = async (file: File | null) => {
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const imported = JSON.parse(text) as unknown;
+            if (!imported || typeof imported !== "object") {
+                throw new Error("Invalid JSON");
+            }
+
+            let currentBase: SetupState;
+            try {
+                currentBase = normalizeSetup(JSON.parse(jsonDraft));
+            } catch {
+                currentBase = normalizeSetup(setup);
+            }
+
+            const source = imported as Partial<SetupState>;
+            const next: SetupState = {
+                ...currentBase,
+                ...(Object.prototype.hasOwnProperty.call(source, "projectName")
+                    ? { projectName: source.projectName as string }
+                    : {}),
+                ...(Object.prototype.hasOwnProperty.call(source, "goal")
+                    ? { goal: source.goal as string }
+                    : {}),
+                ...(Object.prototype.hasOwnProperty.call(source, "availableRoles")
+                    ? { availableRoles: source.availableRoles as string[] }
+                    : {}),
+                ...(Object.prototype.hasOwnProperty.call(source, "participants")
+                    ? { participants: source.participants as Participant[] }
+                    : {}),
+            };
+
+            if (Object.prototype.hasOwnProperty.call(source, "timeline") && source.timeline && typeof source.timeline === "object") {
+                const timelineSource = source.timeline as Partial<SetupState["timeline"]>;
+                next.timeline = {
+                    ...currentBase.timeline,
+                    ...(Object.prototype.hasOwnProperty.call(timelineSource, "expectedStart")
+                        ? { expectedStart: timelineSource.expectedStart as string }
+                        : {}),
+                    ...(Object.prototype.hasOwnProperty.call(timelineSource, "expectedEnd")
+                        ? { expectedEnd: timelineSource.expectedEnd as string }
+                        : {}),
+                    ...(Object.prototype.hasOwnProperty.call(timelineSource, "milestones")
+                        ? { milestones: timelineSource.milestones as MilestoneInput[] }
+                        : {}),
+                    ...(Object.prototype.hasOwnProperty.call(timelineSource, "stages")
+                        ? { stages: timelineSource.stages as StageInput[] }
+                        : {}),
+                };
+            }
+
+            const normalized = normalizeSetup(next);
+            setSetup(normalized);
+            setJsonDraft(JSON.stringify(normalized, null, 2));
+            setError(null);
+        } catch {
+            setError("Invalid JSON file. Please select a valid JSON.");
+        }
+    };
+
     const onSubmitProjectSetup = async () => {
         setSubmitting(true);
         setError(null);
@@ -616,6 +723,28 @@ export function ProjectSetupPage() {
 
             {activeTab === "json" ? (
                 <div className={classes.jsonPanel}>
+                    <div className={classes.jsonActions}>
+                        <button type="button" onClick={triggerJsonImport}>
+                            Import JSON
+                        </button>
+                        <button type="button" onClick={() => exportJson("everything")}>
+                            Export JSON (Everything)
+                        </button>
+                        <button type="button" onClick={() => exportJson("configs")}>
+                            Export JSON (Configs only)
+                        </button>
+                    </div>
+                    <input
+                        ref={importInputRef}
+                        type="file"
+                        accept="application/json,.json"
+                        hidden
+                        onChange={(event) => {
+                            const file = event.target.files?.[0] ?? null;
+                            void onImportJsonFile(file);
+                            event.target.value = "";
+                        }}
+                    />
                     <textarea
                         className={classes.jsonArea}
                         value={jsonDraft}

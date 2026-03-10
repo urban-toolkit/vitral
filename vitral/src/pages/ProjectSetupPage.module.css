@@ -59,6 +59,13 @@
     margin: 0 0 10px;
 }
 
+.jsonActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
 .jsonArea {
     width: 100%;
     min-height: 540px;

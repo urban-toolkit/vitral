@@ -19,9 +19,9 @@
 
 .title {
     margin: 0;
-    font-size: 12px;
     font-weight: 600;
     flex: 1;
+    font-size: var(--font-size-sm);
 }
 
 .iconButton {
@@ -62,7 +62,7 @@
 .placeholder {
     margin: 0;
     color: #555;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     text-align: center;
 }
 

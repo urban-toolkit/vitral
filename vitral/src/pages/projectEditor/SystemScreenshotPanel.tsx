@@ -38,7 +38,7 @@ export function SystemScreenshotPanel({
                 >
                     <FontAwesomeIcon icon={collapsed ? faChevronDown : faChevronUp} />
                 </button>
-                <p className={styles.title}>Drop a screenshot of the system</p>
+                <p className={styles.title}>System screenshot</p>
                 <button
                     type="button"
                     className={styles.iconButton}
@@ -89,7 +89,7 @@ export function SystemScreenshotPanel({
                         />
                     ) : (
                         <p className={styles.placeholder}>
-                            Drop an image here or click to upload.
+                            Drop image here.
                         </p>
                     )}
                 </div>

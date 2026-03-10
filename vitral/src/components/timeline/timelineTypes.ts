@@ -42,6 +42,7 @@ export type AnyEvent =
 
 export type TimelineProps = {
   projectId: string;
+  readOnly?: boolean;
   startMarker: Date | string;
   endMarker: Date | string;
   projectName?: string;

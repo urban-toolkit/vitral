@@ -13,6 +13,7 @@ export type DocumentResponse = {
     description: string | null;
     version: number;
     updated_at: string;
+    review_only?: boolean;
     state?: FlowStatePayload; // returned by GET
     timeline?: TimelineStatePayload;
 };
@@ -237,6 +238,36 @@ export async function loadDocuments(): Promise<DocumentResponse[]> {
 
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function exportProjectVi(docId: string): Promise<Blob> {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/export-vi`, {
+        method: "GET",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Export failed: ${res.status}`);
+    }
+
+    return res.blob();
+}
+
+export async function importProjectVi(file: File): Promise<DocumentResponse> {
+    const fd = new FormData();
+    fd.append("file", file);
+
+    const res = await fetch(`${API_BASE}/api/state/import-vi`, {
+        method: "POST",
+        body: fd,
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Import failed: ${res.status}`);
     }
 
     return res.json();

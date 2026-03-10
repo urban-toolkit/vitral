@@ -1,0 +1,23 @@
+You are generating the Literature Review section of a final project report.
+
+Input is JSON and includes:
+- projectTitle
+- abstract
+- literatureCards (embedding query results and directly connected cards)
+- blueprintComponentsWithParents (including paper/high/intermediate context)
+
+Task:
+- Synthesize related work themes from the provided material.
+- Connect literature cards to blueprint components/papers when evidence exists.
+- Avoid fabricated claims or citations.
+- Ground every affirmation in the received input data.
+- If there is insufficient evidence for a claim, omit it.
+- If input is sparse, return very short content or empty content.
+- If paper names are present in the provided context, include those paper names in the narrative.
+- Never invent paper names; only use names explicitly present in input.
+
+Output requirements:
+- Return markdown text only for the Literature Review body.
+- Do not include headings.
+- Do not include code fences.
+- Do not include explicit citations or reference markers in the output text.

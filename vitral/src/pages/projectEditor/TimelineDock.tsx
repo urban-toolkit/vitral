@@ -14,6 +14,7 @@ type TimelineDockProps = {
     projectId: string;
     open: boolean;
     onToggleOpen: () => void;
+    readOnly?: boolean;
     startMarker: Date | string;
     endMarker: Date | string;
     projectName?: string;
@@ -36,6 +37,7 @@ export const TimelineDock = memo(function TimelineDock({
     projectId,
     open,
     onToggleOpen,
+    readOnly = false,
     startMarker,
     endMarker,
     projectName,
@@ -94,6 +96,7 @@ export const TimelineDock = memo(function TimelineDock({
             >
                 <Timeline
                     projectId={projectId}
+                    readOnly={readOnly}
                     startMarker={startMarker}
                     endMarker={endMarker}
                     projectName={projectName}

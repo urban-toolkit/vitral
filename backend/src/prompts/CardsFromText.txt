@@ -16,7 +16,21 @@ You will recieve a JSON describing the text file as:
 
 {
     name: string,
-    content: string
+    ext: string,
+    content: string,
+    projectSettings?: {
+        projectTitle: string,
+        projectGoal: string,
+        participants: [{ name: string, role: string }],
+        availableRoles: string[],
+        timeline: {
+            start: string,
+            end: string,
+            defaultStages: string[],
+            stages: [{ name: string, start: string, end: string }],
+            milestones: [{ name: string, occurredAt: string, generatedBy: "manual" | "llm" }]
+        }
+    }
 }
 
 You should follow these steps:
@@ -33,6 +47,8 @@ You should follow these steps:
     - System Documentation: generate only concepts, requirements, and tasks.
     - Study Documentation: generate only concepts, requirements, persons, and tasks.
     - Literature: generate only requirements, insights, concepts, and tasks.
+
+- Use `projectSettings` as context for file content.
 
 You should also include a reference to the portion of the content that generated the card, verbatim.
 

@@ -23,9 +23,11 @@ import {
     llmCardsToNodes,
     llmConnectionsToEdges,
     requestCardsLLMTextInput,
+    requestMarkdownReportSectionLLM,
     requestSystemScreenshotZonesLLM,
 } from "@/func/LLMRequest";
-import { deleteFile, loadDocument, queryCanvasChat, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
+import type { LlmProjectSettingsContext } from "@/func/LLMRequest";
+import { deleteFile, exportProjectVi, loadDocument, queryCanvasChat, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { getGitHubEvents } from "@/api/eventsApi";
 
@@ -147,8 +149,43 @@ type PendingConnectionMenu = {
     y: number;
 };
 
+type ReportCardSnapshot = {
+    id: string;
+    label: string;
+    title: string;
+    description: string;
+    createdAt: string;
+    reference: string;
+};
+
+type ReportBlueprintComponentSnapshot = {
+    id: string;
+    title: string;
+    paperTitle: string;
+    blueprintFileName: string;
+    highBlockName: string;
+    intermediateBlockName: string;
+    parentBoxes: Array<{
+        title: string;
+        level: string;
+        paperTitle: string;
+    }>;
+};
+
 function normalizePath(path: string): string {
     return path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+}
+
+function toIsoDateString(value: unknown): string {
+    if (typeof value === "string") {
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+        return value;
+    }
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.toISOString();
+    }
+    return "";
 }
 
 function normalizeNodeLabel(label: string): string {
@@ -165,6 +202,96 @@ function edgeLabelFrom(edge: edgeType): string {
         return edge.data.label.trim().toLowerCase();
     }
     return "";
+}
+
+function readNodeString(node: nodeType, key: string): string {
+    const data = node.data as Record<string, unknown>;
+    const value = data[key];
+    return typeof value === "string" ? value : "";
+}
+
+function getCardSnapshots(nodes: nodeType[]): ReportCardSnapshot[] {
+    const snapshots: ReportCardSnapshot[] = [];
+    for (const node of nodes) {
+        if (node.type === "card") {
+            const nodeData = node.data as Record<string, unknown>;
+            if (nodeData.relevant === false) continue;
+        }
+
+        const label = normalizeNodeLabel(readNodeString(node, "label"));
+        if (!label) continue;
+        if (
+            label !== "person" &&
+            label !== "activity" &&
+            label !== "requirement" &&
+            label !== "concept" &&
+            label !== "insight" &&
+            label !== "object"
+        ) {
+            continue;
+        }
+
+        const title = readNodeString(node, "title").trim();
+        const description = readNodeString(node, "description").trim();
+        snapshots.push({
+            id: node.id,
+            label,
+            title: title || "Untitled",
+            description,
+            createdAt: readNodeString(node, "createdAt"),
+            reference: readNodeString(node, "reference"),
+        });
+    }
+    return snapshots;
+}
+
+function getBlueprintComponentSnapshots(nodes: nodeType[]): ReportBlueprintComponentSnapshot[] {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const snapshots: ReportBlueprintComponentSnapshot[] = [];
+
+    for (const node of nodes) {
+        const label = normalizeNodeLabel(readNodeString(node, "label"));
+        if (label !== "blueprint_component") continue;
+
+        const data = node.data as Record<string, unknown>;
+        const blueprintComponent = (
+            data.blueprintComponent &&
+            typeof data.blueprintComponent === "object"
+        )
+            ? data.blueprintComponent as Record<string, unknown>
+            : {};
+
+        const parentBoxes: Array<{ title: string; level: string; paperTitle: string }> = [];
+        let currentParentId = node.parentId;
+        while (typeof currentParentId === "string" && currentParentId.trim() !== "") {
+            const parent = byId.get(currentParentId);
+            if (!parent) break;
+            const parentLabel = normalizeNodeLabel(readNodeString(parent, "label"));
+            if (parentLabel !== "blueprint_group") break;
+            parentBoxes.push({
+                title: readNodeString(parent, "title") || "Blueprint group",
+                level: readNodeString(parent, "blueprintGroupLevel") || "",
+                paperTitle: readNodeString(parent, "blueprintPaperTitle") || "",
+            });
+            currentParentId = parent.parentId;
+        }
+
+        snapshots.push({
+            id: node.id,
+            title: readNodeString(node, "title") || "Blueprint component",
+            paperTitle: readNodeString(node, "blueprintPaperTitle"),
+            blueprintFileName: readNodeString(node, "blueprintFileName"),
+            highBlockName: typeof blueprintComponent.highBlockName === "string"
+                ? blueprintComponent.highBlockName
+                : "",
+            intermediateBlockName: typeof blueprintComponent.intermediateBlockName === "string"
+                ? blueprintComponent.intermediateBlockName
+                : "",
+            parentBoxes,
+        });
+    }
+
+    return snapshots;
 }
 
 function resolveAbsoluteNodePositions(allNodes: nodeType[]): Map<string, { x: number; y: number }> {
@@ -542,7 +669,7 @@ function buildBlueprintComponentGraph(
 }
 
 const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
-    const { status, error } = useDocumentSync(projectId);
+    const { status, error, reviewOnly } = useDocumentSync(projectId);
 
     const dispatch = useDispatch<AppDispatch>();
     const navigate = useNavigate();
@@ -564,6 +691,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [systemPaperResults, setSystemPaperResults] = useState<QuerySystemPapersResult[]>([]);
     const [systemPapersLoading, setSystemPapersLoading] = useState(false);
     const [systemPapersError, setSystemPapersError] = useState<string | null>(null);
+    const [exportingProject, setExportingProject] = useState(false);
+    const [exportingMarkdown, setExportingMarkdown] = useState(false);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
     const [hoveredAssetFileId, setHoveredAssetFileId] = useState<string | null>(null);
     const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
@@ -585,11 +714,41 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const defaultStages = useSelector(selectDefaultStages);
     const participants = useSelector(selectParticipants);
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
-  const designStudyEvents = useSelector(selectAllDesignStudyEvents);
-  const blueprintEvents = useSelector(selectAllBlueprintEvents);
-  const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
-  const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
-  const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
+    const designStudyEvents = useSelector(selectAllDesignStudyEvents);
+    const blueprintEvents = useSelector(selectAllBlueprintEvents);
+    const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
+    const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
+    const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
+
+    const llmProjectSettings = useMemo<LlmProjectSettingsContext>(() => {
+        const participantRecords = participants.map((participant) => ({
+            name: String(participant.name ?? "").trim() || "Participant",
+            role: String(participant.role ?? "").trim() || "Researcher",
+        }));
+        const availableRoles = Array.from(new Set(participantRecords.map((participant) => participant.role)));
+
+        return {
+            projectTitle: title?.trim() || "Untitled",
+            projectGoal: projectGoal?.trim() || "",
+            participants: participantRecords,
+            availableRoles,
+            timeline: {
+                start: toIsoDateString(timelineStartEnd.start),
+                end: toIsoDateString(timelineStartEnd.end),
+                defaultStages: [...defaultStages],
+                stages: timelineStages.map((stage) => ({
+                    name: stage.name,
+                    start: toIsoDateString(stage.start),
+                    end: toIsoDateString(stage.end),
+                })),
+                milestones: designStudyEvents.map((eventData) => ({
+                    name: eventData.name,
+                    occurredAt: toIsoDateString(eventData.occurredAt),
+                    generatedBy: eventData.generatedBy === "llm" ? "llm" : "manual",
+                })),
+            },
+        };
+    }, [defaultStages, designStudyEvents, participants, projectGoal, timelineStages, timelineStartEnd.end, timelineStartEnd.start, title]);
 
     const mostRecentSystemScreenshotMarker = useMemo(() => {
         if (systemScreenshotMarkers.length === 0) return null;
@@ -621,11 +780,26 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         nodes,
         edges,
         allFiles,
+        projectSettings: llmProjectSettings,
         setLoading,
     });
 
+    const onAttachFileForNode = useCallback((nodeId: string, file: File) => {
+        if (reviewOnly) return;
+        void onAttachFile(nodeId, file);
+    }, [onAttachFile, reviewOnly]);
+
+    const onAttachFileForCanvas = useCallback(async (file: File, dropPosition: { x: number; y: number }) => {
+        if (reviewOnly) return;
+        await onAttachFileToCanvas(file, dropPosition);
+    }, [onAttachFileToCanvas, reviewOnly]);
+
     const flushQueuedPositionChanges = useCallback(() => {
         nodeChangeRafRef.current = null;
+        if (reviewOnly) {
+            queuedPositionChangesRef.current = [];
+            return;
+        }
         if (viewMode !== "explore") {
             queuedPositionChangesRef.current = [];
             return;
@@ -635,9 +809,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const queuedChanges = queuedPositionChangesRef.current;
         queuedPositionChangesRef.current = [];
         dispatch(onNodesChange(queuedChanges));
-    }, [dispatch, viewMode]);
+    }, [dispatch, reviewOnly, viewMode]);
 
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
+        if (reviewOnly) return;
         if (viewMode !== "explore") return;
 
         const immediateChanges = changes.filter((change) => change.type !== "position");
@@ -653,11 +828,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 nodeChangeRafRef.current = window.requestAnimationFrame(flushQueuedPositionChanges);
             }
         }
-    }, [dispatch, viewMode, flushQueuedPositionChanges]);
+    }, [dispatch, reviewOnly, viewMode, flushQueuedPositionChanges]);
 
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
+        if (reviewOnly) return;
         dispatch(onEdgesChange(changes));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const resetFiltersForCanvasCreation = useCallback(() => {
         setViewMode("explore");
@@ -671,6 +847,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         sourceLabel: string,
         targetLabel: string,
     ) => {
+        if (reviewOnly) return;
         const sourceIsTaskOrRequirement = sourceLabel === "requirement";
         const targetIsTaskOrRequirement = targetLabel === "requirement";
         const sourceIsBlueprintComponent = sourceLabel === "blueprint_component";
@@ -721,9 +898,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 ? componentData.blueprintFileName
                 : undefined,
         }));
-    }, [dispatch, blueprintEvents]);
+    }, [dispatch, blueprintEvents, reviewOnly]);
 
     const handleConnectSelection = useCallback((option: EdgeConnectOption) => {
+        if (reviewOnly) return;
         setPendingConnectionMenu((pending) => {
             if (!pending) return null;
 
@@ -766,9 +944,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
             return null;
         });
-    }, [dispatch, edges, nodes, maybeCreateBlueprintEventFromConnection]);
+    }, [dispatch, reviewOnly, edges, nodes, maybeCreateBlueprintEventFromConnection]);
 
     const handleConnect = useCallback((connection: Connection) => {
+        if (reviewOnly) return;
         if (!connection.source || !connection.target) return;
         if (viewMode !== "explore") return;
 
@@ -797,9 +976,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             x,
             y,
         });
-    }, [nodes, viewMode]);
+    }, [nodes, reviewOnly, viewMode]);
 
     const onDataPropertyChange = useCallback((nodeProps: nodeType, value: unknown, propertyName: string) => {
+        if (reviewOnly) return;
         const data = { ...nodeProps.data } as Record<string, unknown> & nodeType["data"];
         if (propertyName === "label" && typeof value === "string") {
             let resolvedType: cardType = "social";
@@ -815,15 +995,17 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             ...nodeProps,
             data: data as nodeType["data"],
         }));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const onDeleteNode = useCallback((nodeId: string) => {
+        if (reviewOnly) return;
         dispatch(removeNode(nodeId));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const onDetachFile = useCallback((nodeId: string, fileId: string) => {
+        if (reviewOnly) return;
         dispatch(detachFileIdFromNode({ nodeId, fileId }));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const participantNames = useMemo(() => {
         const seen = new Set<string>();
@@ -844,7 +1026,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         card: (nodeProps: NodeProps) => {
             const cardProps = {
                 ...(nodeProps as unknown as CardProps),
-                onAttachFile,
+                onAttachFile: onAttachFileForNode,
                 onDetachFile,
                 onDataPropertyChange,
                 onDeleteNode,
@@ -856,7 +1038,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         blueprint: BlueprintNode,
         blueprintGroup: BlueprintGroupNode,
         blueprintComponent: BlueprintComponentNode,
-    }), [onAttachFile, onDetachFile, onDataPropertyChange, onDeleteNode, participantNames]);
+    }), [onAttachFileForNode, onDetachFile, onDataPropertyChange, onDeleteNode, participantNames]);
 
     const edgeTypes = useMemo(() => ({
         relation: RelationEdge,
@@ -1249,6 +1431,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [nodes]);
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
+        if (reviewOnly) return;
         if (viewMode !== "explore") return;
         if (cursorMode !== "node" && cursorMode !== "blueprint_component") return;
 
@@ -1298,9 +1481,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 relevant: true,
             },
         }));
-    }, [dispatch, viewMode, cursorMode, screenToFlowPosition, isInsideSystemBlueprintParentBox, resetFiltersForCanvasCreation]);
+    }, [dispatch, reviewOnly, viewMode, cursorMode, screenToFlowPosition, isInsideSystemBlueprintParentBox, resetFiltersForCanvasCreation]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
+        if (reviewOnly) return;
         const dragTypes = Array.from(e.dataTransfer?.types ?? []);
         const hasFiles = dragTypes.includes("Files");
         const hasBlueprint = dragTypes.includes(BLUEPRINT_DRAG_MIME);
@@ -1311,9 +1495,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         e.dataTransfer.dropEffect = viewMode === "explore" ? "copy" : "none";
 
         if (viewMode !== "explore") return;
-    }, [viewMode]);
+    }, [reviewOnly, viewMode]);
 
     const handleCanvasDrop = useCallback((e: React.DragEvent) => {
+        if (reviewOnly) return;
         const blueprintRaw = e.dataTransfer?.getData(BLUEPRINT_DRAG_MIME);
         if (blueprintRaw) {
             e.preventDefault();
@@ -1348,15 +1533,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const basePosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
         void (async () => {
             for (let index = 0; index < droppedFiles.length; index++) {
-                await onAttachFileToCanvas(droppedFiles[index], {
+                await onAttachFileForCanvas(droppedFiles[index], {
                     x: basePosition.x + (index * 300),
                     y: basePosition.y,
                 });
             }
         })();
-    }, [dispatch, onAttachFileToCanvas, screenToFlowPosition, viewMode]);
+    }, [dispatch, onAttachFileForCanvas, reviewOnly, screenToFlowPosition, viewMode]);
 
     const onFreeInputSubmit = useCallback(async (x: number, y: number, userText: string) => {
+        if (reviewOnly) return;
         setCursorMode("");
         setLoading(true);
 
@@ -1382,18 +1568,27 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setLoading(false);
         }
-    }, [dispatch, screenToFlowPosition]);
+    }, [dispatch, reviewOnly, screenToFlowPosition]);
 
     const fetchGithubEvents = useCallback(async (connected: boolean) => {
-        if (!connected) return;
+        if (!reviewOnly && !connected) return;
 
-        const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
-        if (!info.github_repo) return;
+        if (!reviewOnly) {
+            const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
+            if (!info.github_repo) return;
+        }
 
-        const events = await getGitHubEvents(projectId, { limit: 5000 });
-
-        dispatch(setGithubEvents(events));
-    }, [dispatch, projectId]);
+        try {
+            const events = await getGitHubEvents(projectId, { limit: 5000 });
+            dispatch(setGithubEvents(events));
+        } catch (error) {
+            if (reviewOnly) {
+                dispatch(setGithubEvents([]));
+                return;
+            }
+            throw error;
+        }
+    }, [dispatch, projectId, reviewOnly]);
 
     const checkGitStatus = useCallback(async () => {
         const status = await githubStatus();
@@ -1402,6 +1597,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [fetchGithubEvents]);
 
     useEffect(() => {
+        if (reviewOnly) return;
         const normalizePath = (path: string) => path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
         const pairKey = (blueprintEventId: string, codebaseSubtrackId: string) =>
             `${blueprintEventId}::${codebaseSubtrackId}`;
@@ -1543,7 +1739,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         dispatch(reconcileBlueprintCodebaseAutoLinks(requiredAutoLinks));
-    }, [dispatch, nodes, blueprintEvents, codebaseSubtracks]);
+    }, [dispatch, reviewOnly, nodes, blueprintEvents, codebaseSubtracks]);
 
     useEffect(() => {
         dispatch(setGithubEvents([]));
@@ -1597,6 +1793,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             window.removeEventListener("keydown", handleWindowKeyDown);
         };
     }, [pendingConnectionMenu]);
+
+    useEffect(() => {
+        if (!reviewOnly) return;
+        if (cursorMode !== "") {
+            setCursorMode("");
+        }
+    }, [cursorMode, reviewOnly]);
 
     useEffect(() => {
         switch (cursorMode) {
@@ -1809,6 +2012,296 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         })();
     }, [nodes]);
 
+    const handleExportMarkdown = useCallback(() => {
+        if (exportingMarkdown) return;
+        setExportingMarkdown(true);
+
+        void (async () => {
+            try {
+                const projectTitle = title?.trim() || "Untitled";
+                const allCards = getCardSnapshots(nodes);
+                const cardById = new Map(allCards.map((card) => [card.id, card]));
+                const cardsByLabel = (label: string) => allCards.filter((card) => card.label === label);
+                const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
+                    const seen = new Set<string>();
+                    const result: T[] = [];
+                    for (const item of items) {
+                        if (seen.has(item.id)) continue;
+                        seen.add(item.id);
+                        result.push(item);
+                    }
+                    return result;
+                };
+                const toIsoDate = (value: unknown): string => {
+                    if (typeof value === "string") {
+                        const parsed = new Date(value);
+                        if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+                        return value;
+                    }
+                    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+                        return value.toISOString();
+                    }
+                    return "";
+                };
+
+                const authors = Array.from(new Set(
+                    cardsByLabel("person")
+                        .map((card) => card.title.trim())
+                        .filter(Boolean)
+                ));
+
+                const blueprintComponentsWithParents = getBlueprintComponentSnapshots(nodes);
+                const latestScreenshotDataUrl = mostRecentSystemScreenshotMarker?.imageDataUrl?.trim() || "";
+
+                const settingsInfo = {
+                    projectTitle,
+                    projectGoal: projectGoal?.trim() || "",
+                    participants: participants.map((participant) => ({
+                        name: String(participant.name ?? "").trim() || "Participant",
+                        role: String(participant.role ?? "").trim() || "Researcher",
+                    })),
+                    timeline: {
+                        start: toIsoDate(timelineStartEnd.start),
+                        end: toIsoDate(timelineStartEnd.end),
+                        stages: timelineStages.map((stage) => ({
+                            name: stage.name,
+                            start: toIsoDate(stage.start),
+                            end: toIsoDate(stage.end),
+                        })),
+                        defaultStages: [...defaultStages],
+                    },
+                };
+
+                const assetsMetadata = allFiles.map((file) => ({
+                    id: file.id,
+                    name: file.name,
+                    ext: file.ext,
+                    mimeType: file.mimeType,
+                    sizeBytes: file.sizeBytes,
+                    createdAt: file.createdAt,
+                }));
+
+                const matchedLiteratureCardIds = new Set<string>();
+                const queryResults = await Promise.allSettled([
+                    queryDocumentNodes(projectId, { query: "literature review", limit: 40, minScore: 0.2 }),
+                    queryDocumentNodes(projectId, { query: "paper", limit: 40, minScore: 0.2 }),
+                ]);
+                for (const result of queryResults) {
+                    if (result.status !== "fulfilled") continue;
+                    for (const nodeId of result.value.matchedNodeIds) {
+                        matchedLiteratureCardIds.add(nodeId);
+                    }
+                }
+
+                const activityIds = new Set<string>();
+                for (const nodeId of matchedLiteratureCardIds) {
+                    const card = cardById.get(nodeId);
+                    if (card?.label === "activity") {
+                        activityIds.add(nodeId);
+                    }
+                }
+
+                const activityConnectedCardIds = new Set<string>();
+                for (const edge of edges) {
+                    if (activityIds.has(edge.source) && cardById.has(edge.target)) {
+                        activityConnectedCardIds.add(edge.target);
+                    }
+                    if (activityIds.has(edge.target) && cardById.has(edge.source)) {
+                        activityConnectedCardIds.add(edge.source);
+                    }
+                }
+
+                const literatureCards = dedupeById([
+                    ...Array.from(matchedLiteratureCardIds).map((id) => cardById.get(id)).filter((card): card is ReportCardSnapshot => Boolean(card)),
+                    ...Array.from(activityConnectedCardIds).map((id) => cardById.get(id)).filter((card): card is ReportCardSnapshot => Boolean(card)),
+                ]);
+
+                const abstract = await requestMarkdownReportSectionLLM("MarkdownReportAbstract", {
+                    projectTitle,
+                    settings: settingsInfo,
+                    cards: {
+                        insights: cardsByLabel("insight"),
+                        concepts: cardsByLabel("concept"),
+                        requirements: cardsByLabel("requirement"),
+                    },
+                    blueprintComponents: blueprintComponentsWithParents,
+                    assets: assetsMetadata,
+                });
+
+                const abstractFallback = abstract || "This project explores the problem space, design constraints, and implementation strategy using the available artifacts and timeline context.";
+
+                const [introduction, literatureReview, designGoals, timelineNarrative, methods, conclusion] = await Promise.all([
+                    requestMarkdownReportSectionLLM("MarkdownReportIntroduction", {
+                        projectTitle,
+                        settings: settingsInfo,
+                        abstract: abstractFallback,
+                    }),
+                    requestMarkdownReportSectionLLM("MarkdownReportLiteratureReview", {
+                        projectTitle,
+                        abstract: abstractFallback,
+                        literatureCards,
+                        blueprintComponentsWithParents,
+                    }),
+                    requestMarkdownReportSectionLLM("MarkdownReportDesignGoals", {
+                        projectTitle,
+                        abstract: abstractFallback,
+                        requirementCards: cardsByLabel("requirement"),
+                    }),
+                    requestMarkdownReportSectionLLM("MarkdownReportTimeline", {
+                        projectTitle,
+                        abstract: abstractFallback,
+                        settings: settingsInfo,
+                        timelineEvents: {
+                            designStudy: designStudyEvents.map((eventData) => ({
+                                name: eventData.name,
+                                occurredAt: toIsoDate(eventData.occurredAt),
+                                generatedBy: eventData.generatedBy === "llm" ? "llm" : "manual",
+                            })),
+                            knowledgeBase: [],
+                            blueprint: blueprintEvents.map((eventData) => ({
+                                name: eventData.name,
+                                occurredAt: toIsoDate(eventData.occurredAt),
+                                componentNodeId: eventData.componentNodeId ?? "",
+                                paperTitle: eventData.paperTitle ?? "",
+                            })),
+                        },
+                        codebaseSubtracks: codebaseSubtracks.map((subtrack) => ({
+                            title: subtrack.name,
+                            attachedFiles: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
+                        })),
+                    }),
+                    requestMarkdownReportSectionLLM("MarkdownReportMethods", {
+                        projectTitle,
+                        abstract: abstractFallback,
+                        blueprintComponents: blueprintComponentsWithParents,
+                        cards: {
+                            objects: cardsByLabel("object"),
+                            concepts: cardsByLabel("concept"),
+                            insights: cardsByLabel("insight"),
+                            requirements: cardsByLabel("requirement"),
+                        },
+                    }),
+                    requestMarkdownReportSectionLLM("MarkdownReportConclusion", {
+                        projectTitle,
+                        abstract: abstractFallback,
+                        insightCards: cardsByLabel("insight"),
+                    }),
+                ]);
+
+                const markdownParts: string[] = [];
+                markdownParts.push(`# ${projectTitle}`);
+                markdownParts.push("");
+                markdownParts.push("## Suggested authors");
+                if (authors.length > 0) {
+                    for (const author of authors) {
+                        markdownParts.push(`- ${author}`);
+                    }
+                } else {
+                    markdownParts.push("- _No person cards available_");
+                }
+                markdownParts.push("");
+                markdownParts.push("## Teaser");
+                if (latestScreenshotDataUrl) {
+                    markdownParts.push(`![Teaser system screenshot](${latestScreenshotDataUrl})`);
+                } else {
+                    markdownParts.push("_No system screenshot uploaded._");
+                }
+                markdownParts.push("");
+                markdownParts.push("## Abstract");
+                markdownParts.push(abstractFallback);
+                markdownParts.push("");
+                markdownParts.push("## Introduction");
+                markdownParts.push(introduction || "_No introduction generated._");
+                markdownParts.push("");
+                markdownParts.push("## Literature review");
+                markdownParts.push(literatureReview || "_No literature review generated._");
+                markdownParts.push("");
+                markdownParts.push("## Design goals");
+                markdownParts.push(designGoals || "_No design goals generated._");
+                markdownParts.push("");
+                markdownParts.push("## Timeline");
+                markdownParts.push(timelineNarrative || "_No timeline narrative generated._");
+                markdownParts.push("");
+                markdownParts.push("## Methods");
+                markdownParts.push(methods || "_No methods generated._");
+                markdownParts.push("");
+                markdownParts.push("## Conclusion");
+                markdownParts.push(conclusion || "_No conclusion generated._");
+                markdownParts.push("");
+
+                const markdown = markdownParts.join("\n");
+                const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const safeName = projectTitle
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, "-")
+                    .replace(/^-+|-+$/g, "") || "project-report";
+                const anchor = document.createElement("a");
+                anchor.href = url;
+                anchor.download = `${safeName}.md`;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                const message = error instanceof Error
+                    ? error.message
+                    : "Failed to export markdown report.";
+                window.alert(message);
+            } finally {
+                setExportingMarkdown(false);
+            }
+        })();
+    }, [
+        allFiles,
+        blueprintEvents,
+        codebaseSubtracks,
+        defaultStages,
+        designStudyEvents,
+        edges,
+        exportingMarkdown,
+        mostRecentSystemScreenshotMarker?.imageDataUrl,
+        nodes,
+        participants,
+        projectGoal,
+        projectId,
+        timelineStages,
+        timelineStartEnd.end,
+        timelineStartEnd.start,
+        title,
+    ]);
+
+    const handleExportProject = useCallback(() => {
+        if (exportingProject) return;
+        setExportingProject(true);
+
+        void (async () => {
+            try {
+                const blob = await exportProjectVi(projectId);
+                const projectTitle = title?.trim() || "project";
+                const safeName = projectTitle
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, "-")
+                    .replace(/^-+|-+$/g, "") || "project";
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement("a");
+                anchor.href = url;
+                anchor.download = `${safeName}.vi`;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                const message = error instanceof Error
+                    ? error.message
+                    : "Failed to export project.";
+                window.alert(message);
+            } finally {
+                setExportingProject(false);
+            }
+        })();
+    }, [exportingProject, projectId, title]);
+
     const handleToggleLabelWithQueryRefresh = useCallback((label: cardLabel) => {
         setSelectedLabels((prev) => {
             const next = prev.includes(label)
@@ -1829,8 +2322,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, []);
 
     const handleSetTitle = useCallback((newTitle: string) => {
+        if (reviewOnly) return;
         void updateDocumentMeta(projectId, { title: newTitle });
-    }, [projectId]);
+    }, [projectId, reviewOnly]);
 
     const handleOpenSettings = useCallback(() => {
         navigate(`/project/${projectId}/setup`);
@@ -1841,62 +2335,73 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [navigate]);
 
     const handleFreeInputClicked = useCallback(() => {
+        if (reviewOnly) return;
         setCursorMode("text");
-    }, []);
+    }, [reviewOnly]);
 
     const handleNodeInputClicked = useCallback(() => {
+        if (reviewOnly) return;
         setCursorMode("node");
-    }, []);
+    }, [reviewOnly]);
 
     const handleBlueprintComponentInputClicked = useCallback(() => {
+        if (reviewOnly) return;
         setCursorMode("blueprint_component");
-    }, []);
+    }, [reviewOnly]);
 
     const handlePointerClicked = useCallback(() => {
         setCursorMode("");
     }, []);
 
     const handleStageUpdate = useCallback((stage: Stage) => {
+        if (reviewOnly) return;
         dispatch(updateStage({
             ...stage,
             start: fromDate(stage.start),
             end: fromDate(stage.end),
         }));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const handleStageCreation = useCallback((name: string) => {
+        if (reviewOnly) return;
         dispatch(addDefaultStage(name));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const handleStageLaneCreation = useCallback((name: string) => {
+        if (reviewOnly) return;
         dispatch(addStage(name));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const handleStageLaneDeletion = useCallback((id: string) => {
+        if (reviewOnly) return;
         dispatch(deleteStage(id));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const handleStageBoundaryChange = useCallback((prevId: string, nextId: string, date: Date) => {
+        if (reviewOnly) return;
         dispatch(changeStageBoundary({
             prevId,
             nextId,
             date: fromDate(date),
         }));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const handleSyncCodebaseEvents = useCallback(async () => {
+        if (reviewOnly) return;
         await checkGitStatus();
-    }, [checkGitStatus]);
+    }, [checkGitStatus, reviewOnly]);
 
     const handleAddSystemScreenshotMarker = useCallback(() => {
+        if (reviewOnly) return;
         dispatch(addSystemScreenshotMarker({
             id: crypto.randomUUID(),
             occurredAt: new Date().toISOString(),
             imageDataUrl: "",
         }));
-    }, [dispatch]);
+    }, [dispatch, reviewOnly]);
 
     const handleUploadSystemScreenshotForLatestMarker = useCallback(async (file: File) => {
+        if (reviewOnly) return;
         try {
             const imageDataUrl = await readImageFileAsDataUrl(file);
             const { width: imageWidth, height: imageHeight } = await readImageDimensionsFromDataUrl(imageDataUrl);
@@ -1944,9 +2449,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const message = error instanceof Error ? error.message : "Failed to load screenshot.";
             window.alert(message);
         }
-    }, [codebaseSubtracks, dispatch, mostRecentSystemScreenshotMarker?.id, projectGoal, projectId, title]);
+    }, [codebaseSubtracks, dispatch, mostRecentSystemScreenshotMarker?.id, projectGoal, projectId, reviewOnly, title]);
 
     const handleDeleteAsset = useCallback(async (file: { id: string; name: string }) => {
+        if (reviewOnly) return;
         setDeletingAssetId(file.id);
         try {
             await deleteFile(projectId, file.id);
@@ -1961,7 +2467,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setDeletingAssetId((current) => (current === file.id ? null : current));
         }
-    }, [dispatch, hoveredAssetFileId, projectId]);
+    }, [dispatch, hoveredAssetFileId, projectId, reviewOnly]);
 
     if (status === "loading") return <div>Loading...</div>;
     if (status === "error") return <div>Error: {error}</div>;
@@ -1978,7 +2484,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 edges={displayedEdges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
-                nodesDraggable={viewMode === "explore"}
+                nodesDraggable={viewMode === "explore" && !reviewOnly}
                 cursorMode={cursorMode}
                 onNodesChange={handleNodesChange}
                 onEdgesChange={handleEdgesChange}
@@ -1992,7 +2498,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 x={pendingConnectionMenu?.x ?? 0}
                 y={pendingConnectionMenu?.y ?? 0}
                 defaultLabel={pendingConnectionMenu?.defaultLabel ?? "related to"}
-                open={pendingConnectionMenu !== null}
+                open={!reviewOnly && pendingConnectionMenu !== null}
                 onClose={() => setPendingConnectionMenu(null)}
                 onSelect={handleConnectSelection}
             />
@@ -2002,6 +2508,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onSetTitle={handleSetTitle}
                 onGoHome={handleGoHome}
                 onOpenSettings={handleOpenSettings}
+                onExportProject={handleExportProject}
+                exportingProject={exportingProject}
+                onExportMarkdown={handleExportMarkdown}
+                exportingMarkdown={exportingMarkdown}
                 bottomOffsetPx={canvasSidebarBottomOffset}
                 collapsed={sidebarCollapsed}
                 onToggleCollapsed={handleToggleSidebar}
@@ -2015,34 +2525,62 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onSystemPapersRefresh={handleSystemPapersRefresh}
             />
 
+            {reviewOnly ? (
+                <div
+                    style={{
+                        position: "fixed",
+                        top: 12,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        zIndex: 40,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: "1px solid #dedede",
+                        background: "#fff8ef",
+                        color: "#7a4a14",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        pointerEvents: "none",
+                        boxShadow: "0 8px 20px rgba(0, 0, 0, 0.12)",
+                    }}
+                >
+                    You are in review mode. No editting allowed.
+                </div>
+            ) : null}
+
             {/* <div style={{ position: "fixed", right: "350px", top: "30px", opacity: 0.5 }}>
                 <img src="/vitral/cta_drag_and_drop.png" alt="Drag and Drop file to instantiate cards." />
             </div> */}
 
-            <Toolbar
-                onFreeInputClicked={handleFreeInputClicked}
-                onNodeInputClicked={handleNodeInputClicked}
-                onBlueprintComponentClicked={handleBlueprintComponentInputClicked}
-                onPointerClicked={handlePointerClicked}
-                activeMode={cursorMode}
-                shifted={timelineOpen}
-            />
+            {!reviewOnly ? (
+                <Toolbar
+                    onFreeInputClicked={handleFreeInputClicked}
+                    onNodeInputClicked={handleNodeInputClicked}
+                    onBlueprintComponentClicked={handleBlueprintComponentInputClicked}
+                    onPointerClicked={handlePointerClicked}
+                    activeMode={cursorMode}
+                    shifted={timelineOpen}
+                />
+            ) : null}
 
-            <SystemScreenshotPanel
-                rightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX + 12}
-                latestImageDataUrl={mostRecentSystemScreenshotMarker?.imageDataUrl ?? ""}
-                onAddMarker={handleAddSystemScreenshotMarker}
-                onUploadForLatestMarker={handleUploadSystemScreenshotForLatestMarker}
-            />
+            {!reviewOnly ? (
+                <SystemScreenshotPanel
+                    rightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX + 12}
+                    latestImageDataUrl={mostRecentSystemScreenshotMarker?.imageDataUrl ?? ""}
+                    onAddMarker={handleAddSystemScreenshotMarker}
+                    onUploadForLatestMarker={handleUploadSystemScreenshotForLatestMarker}
+                />
+            ) : null}
 
             <RightSidebar
                 projectId={projectId}
                 connectionStatus={gitConnectionStatus}
                 assetsRecords={allFiles}
+                reviewOnly={reviewOnly}
                 bottomOffsetPx={canvasSidebarBottomOffset}
                 onAssetHover={setHoveredAssetFileId}
                 deletingAssetId={deletingAssetId}
-                onDeleteAsset={handleDeleteAsset}
+                onDeleteAsset={reviewOnly ? undefined : handleDeleteAsset}
             />
 
             <CanvasChatOverlay
@@ -2058,24 +2596,27 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onClearFilter={clearCanvasFilter}
             />
 
-            {cursorMode === "text" ? (
+            {cursorMode === "text" && !reviewOnly ? (
                 <FreeInputZone onInputSubmit={onFreeInputSubmit} />
             ) : null}
 
             <LoadSpinner loading={loading} />
 
-            <PendingFileModal
-                pendingDrop={pendingDrop}
-                generatedAtInput={generatedAtInput}
-                onGeneratedAtInputChange={setGeneratedAtInput}
-                onCancel={cancelPendingDrop}
-                onProcess={processPendingDrop}
-            />
+            {!reviewOnly ? (
+                <PendingFileModal
+                    pendingDrop={pendingDrop}
+                    generatedAtInput={generatedAtInput}
+                    onGeneratedAtInputChange={setGeneratedAtInput}
+                    onCancel={cancelPendingDrop}
+                    onProcess={processPendingDrop}
+                />
+            ) : null}
 
             <TimelineDock
                 projectId={projectId}
                 open={timelineOpen}
                 onToggleOpen={handleToggleTimeline}
+                readOnly={reviewOnly}
                 startMarker={timelineStartEnd.start}
                 endMarker={timelineStartEnd.end}
                 projectName={title}

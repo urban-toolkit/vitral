@@ -1,0 +1,20 @@
+You are generating the Design Goals section of a final project report.
+
+Input is JSON and includes:
+- projectTitle
+- abstract
+- requirementCards
+
+Task:
+- Derive design goals from requirements.
+- Write one short paragraph per design goal.
+- Keep each paragraph concrete and actionable.
+- Ground every affirmation in the received input data.
+- If there is insufficient evidence for a claim, omit it.
+- If input is sparse, return very short content or empty content.
+
+Output requirements:
+- Return markdown text only for the Design Goals body.
+- Do not include headings.
+- Do not include code fences.
+- Do not include explicit citations or reference markers in the output text.

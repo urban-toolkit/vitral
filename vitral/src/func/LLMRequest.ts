@@ -307,6 +307,31 @@ type PreparedLlmPayload = {
     userText: string;
 };
 
+export type LlmProjectSettingsContext = {
+    projectTitle: string;
+    projectGoal: string;
+    participants: Array<{
+        name: string;
+        role: string;
+    }>;
+    availableRoles: string[];
+    timeline: {
+        start: string;
+        end: string;
+        defaultStages: string[];
+        stages: Array<{
+            name: string;
+            start: string;
+            end: string;
+        }>;
+        milestones: Array<{
+            name: string;
+            occurredAt: string;
+            generatedBy: "manual" | "llm";
+        }>;
+    };
+};
+
 export type llmArtifactData = {
     role: string;
     entity: string;
@@ -344,7 +369,8 @@ function tryParseJson<T>(raw: string): T | null {
 async function buildFilePromptRequest(
     file: filePendingUpload,
     assetsMetadata: fileRecord[],
-    promptSet: PromptSet
+    promptSet: PromptSet,
+    projectSettings?: LlmProjectSettingsContext
 ): Promise<PreparedLlmPayload> {
     let { name, ext, previewText } = file;
 
@@ -418,8 +444,8 @@ async function buildFilePromptRequest(
     }));
 
     const userPayload = imagesPayload
-        ? { name, ext, content, images: imagesPayload, assets: serializedAssets }
-        : { name, ext, content, assets: serializedAssets };
+        ? { name, ext, content, images: imagesPayload, assets: serializedAssets, projectSettings }
+        : { name, ext, content, assets: serializedAssets, projectSettings };
 
     return {
         prompt,
@@ -462,14 +488,15 @@ function normalizeLlmCardsResponse(payload: {
 
 export async function requestCardsLLM(
     file: filePendingUpload,
-    assetsMetadata: fileRecord[] = []
+    assetsMetadata: fileRecord[] = [],
+    projectSettings?: LlmProjectSettingsContext
 ): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
     const { prompt, userText } = await buildFilePromptRequest(file, assetsMetadata, {
         text: "CardsFromText",
         image: "CardsFromImage",
         data: "CardsFromData",
         code: "CardsFromCode",
-    });
+    }, projectSettings);
 
     const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",
@@ -502,14 +529,15 @@ export async function requestCardsLLM(
 
 export async function requestArtifactLLM(
     file: filePendingUpload,
-    assetsMetadata: fileRecord[] = []
+    assetsMetadata: fileRecord[] = [],
+    projectSettings?: LlmProjectSettingsContext
 ): Promise<llmArtifactData | null> {
     const { prompt, userText } = await buildFilePromptRequest(file, assetsMetadata, {
         text: "ArtifactFromText",
         image: "ArtifactFromImage",
         data: "ArtifactFromData",
         code: "ArtifactFromCode",
-    });
+    }, projectSettings);
 
     const response = await fetch(API_BASE_URL + "/api/llm/chat", {
         method: "POST",
@@ -877,6 +905,38 @@ export async function requestMilestonesLLM(context: MilestonesInterpolationConte
 export async function requestGoalMilestonesLLM(context: GoalMilestonesContext): Promise<DesignStudyEvent[]> {
     const fallbackIso = toIsoOrFallback(context.expectedStart, new Date().toISOString());
     return requestMilestonesByPrompt("GoalMilestones", context, fallbackIso);
+}
+
+function normalizeMarkdownSection(rawOutput: string): string {
+    const trimmed = String(rawOutput ?? "").trim();
+    if (!trimmed) return "";
+
+    const fenced = trimmed.match(/^```(?:markdown|md)?\s*([\s\S]*?)\s*```$/i);
+    if (fenced?.[1]) return fenced[1].trim();
+    return trimmed;
+}
+
+export async function requestMarkdownReportSectionLLM(
+    prompt: string,
+    payload: unknown
+): Promise<string> {
+    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            input: JSON.stringify(payload),
+            prompt,
+        }),
+    });
+
+    if (!response.ok) {
+        return "";
+    }
+
+    const data = await response.json();
+    return normalizeMarkdownSection(String(data.output ?? ""));
 }
 
 type RepoTreeNode = {

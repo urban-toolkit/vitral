@@ -7,6 +7,7 @@ type RightSidebarProps = {
     projectId: string;
     connectionStatus: { connected: boolean; user?: { id: number; login: string } };
     assetsRecords: fileRecord[];
+    reviewOnly?: boolean;
     bottomOffsetPx?: number;
     onAssetHover?: (fileId: string | null) => void;
     deletingAssetId?: string | null;
@@ -17,6 +18,7 @@ export function RightSidebar({
     projectId,
     connectionStatus,
     assetsRecords,
+    reviewOnly = false,
     bottomOffsetPx = 0,
     onAssetHover,
     deletingAssetId,
@@ -28,11 +30,18 @@ export function RightSidebar({
         <aside className={styles.root} style={{ height: sidebarHeight }}>
             <div className={styles.panel}>
                 <div className={styles.section}>
-                    <GitHubFiles
-                        projectId={projectId}
-                        connectionStatus={connectionStatus}
-                        className={styles.sectionCard}
-                    />
+                    {reviewOnly ? (
+                        <div className={`${styles.sectionCard} ${styles.reviewNotice}`}>
+                            <p className={styles.reviewTitle}>GitHub</p>
+                            <p className={styles.reviewMessage}>This is a review project</p>
+                        </div>
+                    ) : (
+                        <GitHubFiles
+                            projectId={projectId}
+                            connectionStatus={connectionStatus}
+                            className={styles.sectionCard}
+                        />
+                    )}
                 </div>
 
                 <div className={`${styles.section} ${styles.assetsSection}`}>

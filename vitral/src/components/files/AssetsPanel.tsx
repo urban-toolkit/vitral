@@ -81,9 +81,9 @@ export default function AssetsPanel({
                             onMouseLeave={() => onAssetHover?.(null)}
                         >
                             <div className={styles.cardTop}>
-                                <span className={styles.name}>{r.name}</span>
+                                <span className={styles.name} title={r.name}>{r.name}</span>
                                 <div className={styles.cardActions}>
-                                    <span className={styles.size}>{formatBytes(r.sizeBytes)}</span>
+                                    
                                     {onDeleteAsset ? (
                                         <button
                                             type="button"
@@ -103,6 +103,11 @@ export default function AssetsPanel({
                             </div>
 
                             <div className={styles.metaGrid}>
+                                <div className={styles.metaRow}>
+                                    <span className={styles.metaKey}>Size</span>
+                                    <span className={styles.metaVal}>{formatBytes(r.sizeBytes)}</span>
+                                </div>
+
                                 <div className={styles.metaRow}>
                                     <span className={styles.metaKey}>MIME</span>
                                     <span className={styles.metaVal} title={r.mimeType}>

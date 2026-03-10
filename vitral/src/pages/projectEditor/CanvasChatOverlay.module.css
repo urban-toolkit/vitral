@@ -31,7 +31,7 @@
 
 .title {
     margin: 0;
-    font-size: 16px;
+    font-size: var(--font-size-lg);
     font-weight: 700;
     color: #14213d;
 }
@@ -79,7 +79,7 @@
     overflow-y: auto;
     border: 1px solid #dbe2ef;
     border-radius: 12px;
-    background: #f9fbff;
+    background: rgba(250, 250, 250, 0.9);
     padding: 12px;
     display: flex;
     flex-direction: column;
@@ -135,21 +135,24 @@
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 10px;
-    align-items: end;
+    height: 45px;
 }
 
 .input {
-    width: 100%;
-    border: 1px solid #cbd5e1;
+    border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 10px;
     padding: 10px;
     font-size: 13px;
     resize: none;
 }
 
+.input:focus {
+  outline: none; 
+}
+
 .sendButton {
     border: 1px solid #0f172a;
-    background: #0f172a;
+    background: #14213d;
     color: #fff;
     border-radius: 10px;
     padding: 10px 14px;

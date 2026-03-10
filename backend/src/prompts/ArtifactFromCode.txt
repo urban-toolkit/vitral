@@ -6,7 +6,21 @@ You will receive a JSON describing the code file as:
 
 {
     name: string,
-    content: string
+    ext: string,
+    content: string,
+    projectSettings?: {
+        projectTitle: string,
+        projectGoal: string,
+        participants: [{ name: string, role: string }],
+        availableRoles: string[],
+        timeline: {
+            start: string,
+            end: string,
+            defaultStages: string[],
+            stages: [{ name: string, start: string, end: string }],
+            milestones: [{ name: string, occurredAt: string, generatedBy: "manual" | "llm" }]
+        }
+    }
 }
 
 You should follow these steps:
@@ -20,6 +34,8 @@ You should follow these steps:
     - script: choose 'object'.
     - query: choose 'object'.
     - notebook: choose 'object'.
+
+- Use `projectSettings` as context for file content.
 
 Output the following JSON format:
 

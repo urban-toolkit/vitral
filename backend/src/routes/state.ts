@@ -6,10 +6,11 @@ import path from "node:path";
 import OpenAI from "openai";
 import { fileURLToPath } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
-import { streamToString } from "../utils/streams.ts";
+import { streamToBuffer, streamToString } from "../utils/streams.ts";
 import { safeFilename } from "../utils/files.ts";
 import { computeNodeEmbeddingDelta, createNodeEmbeddingQueue } from "../services/nodeEmbeddings.ts";
 import { applyStructuredFilters, extractCardNodesForSearch, parseNaturalLanguageNodeQuery, type CardNodeForSearch } from "../services/nodeSearch.ts";
+import { decodeProjectVi, encodeProjectVi, type ProjectViBundleV1 } from "../utils/projectVi.ts";
 
 type SaveBody = {
     title?: string;
@@ -166,6 +167,102 @@ function normalizeTemplateDefinition(raw: SetupTemplateDefinition): SetupTemplat
     };
 }
 
+function parseVectorValue(raw: unknown): number[] {
+    if (Array.isArray(raw)) {
+        return raw
+            .map((value) => (typeof value === "number" ? value : Number(value)))
+            .filter((value) => Number.isFinite(value));
+    }
+
+    if (typeof raw === "string") {
+        const trimmed = raw.trim();
+        const unwrapped = trimmed.startsWith("[") && trimmed.endsWith("]")
+            ? trimmed.slice(1, -1)
+            : trimmed;
+        if (!unwrapped) return [];
+        return unwrapped
+            .split(",")
+            .map((part) => Number(part.trim()))
+            .filter((value) => Number.isFinite(value));
+    }
+
+    return [];
+}
+
+function vectorToLiteral(values: number[]): string {
+    return `[${values.join(",")}]`;
+}
+
+function sanitizeProjectFilename(title: string): string {
+    const base = title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    return base || "project";
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let index = 0; index < a.length; index++) {
+        if (a[index] !== b[index]) return false;
+    }
+    return true;
+}
+
+function remapStateFileReferences(state: unknown, fileIdMap: Map<string, string>): unknown {
+    if (!isRecord(state)) return state;
+    const flow = state.flow;
+    if (!isRecord(flow)) return state;
+    if (!Array.isArray(flow.nodes)) return state;
+
+    const remappedNodes = flow.nodes.map((rawNode) => {
+        if (!isRecord(rawNode)) return rawNode;
+        if (!isRecord(rawNode.data)) return rawNode;
+
+        const nodeData = rawNode.data;
+        let changed = false;
+        const nextData: Record<string, unknown> = { ...nodeData };
+
+        if (Array.isArray(nodeData.attachmentIds)) {
+            const nextAttachmentIds = nodeData.attachmentIds
+                .map((value) => {
+                    if (typeof value !== "string") return null;
+                    return fileIdMap.get(value) ?? value;
+                })
+                .filter((value): value is string => typeof value === "string");
+            const currentAttachmentIds = nodeData.attachmentIds.filter(
+                (value): value is string => typeof value === "string",
+            );
+            if (!arraysEqual(currentAttachmentIds, nextAttachmentIds)) {
+                nextData.attachmentIds = nextAttachmentIds;
+                changed = true;
+            }
+        }
+
+        if (typeof nodeData.origin === "string") {
+            const remappedOrigin = fileIdMap.get(nodeData.origin);
+            if (remappedOrigin && remappedOrigin !== nodeData.origin) {
+                nextData.origin = remappedOrigin;
+                changed = true;
+            }
+        }
+
+        if (!changed) return rawNode;
+        return {
+            ...rawNode,
+            data: nextData,
+        };
+    });
+
+    return {
+        ...state,
+        flow: {
+            ...flow,
+            nodes: remappedNodes,
+        },
+    };
+}
+
 async function loadLiteratureTemplatesFromDisk(): Promise<SetupTemplateResponse[]> {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const defaultTemplatesDir = path.resolve(here, "../../setupTemplates/literature");
@@ -215,6 +312,32 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         : null;
     const embeddingModel = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
 
+    const getDocumentReviewOnly = async (docId: string): Promise<boolean | null> => {
+        const result = await app.pg.query<{ review_only: boolean }>(
+            `
+            SELECT review_only
+            FROM documents
+            WHERE id = $1
+            `,
+            [docId],
+        );
+        if (result.rows.length === 0) return null;
+        return Boolean(result.rows[0]?.review_only);
+    };
+
+    const ensureDocumentWritable = async (docId: string, reply: any): Promise<boolean> => {
+        const reviewOnly = await getDocumentReviewOnly(docId);
+        if (reviewOnly === null) {
+            reply.status(404).send({ error: "Document not found" });
+            return false;
+        }
+        if (reviewOnly) {
+            reply.status(403).send({ error: "This is a review project and cannot be modified." });
+            return false;
+        }
+        return true;
+    };
+
     app.get("/setup-templates/literature", async (request, reply) => {
         try {
             const templates = await loadLiteratureTemplatesFromDisk();
@@ -243,7 +366,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             `
             INSERT INTO documents (title, description, state)
             VALUES ($1, $2, $3::jsonb)
-            RETURNING id, title, description, version, updated_at
+            RETURNING id, title, description, version, updated_at, review_only
             `,
             [title, description, JSON.stringify(body.state)]
         );
@@ -272,7 +395,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.pg.query(
             `
-            SELECT id, title, description, state, timeline, version, updated_at
+            SELECT id, title, description, state, timeline, version, updated_at, review_only
             FROM documents
             WHERE id = $1
             `,
@@ -520,7 +643,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                             [id, structuredNodeIds, vectorLiteral, limit, minScore],
                         );
 
-                        matchedNodeIds = vectorRows.rows.map((row) => row.node_id);
+                        matchedNodeIds = vectorRows.rows.map((row: { node_id: string }) => row.node_id);
                         usedVectorSearch = true;
                     }
                 }
@@ -730,12 +853,505 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.get("/state", async (request, reply) => {
         const { rows } = await app.pg.query(
             `
-            SELECT id, title, description, version, updated_at
+            SELECT id, title, description, version, updated_at, review_only
             FROM documents
             `
         );
 
         return rows;
+    });
+
+    /**
+     * Export a project as a portable .vi binary bundle.
+     * GET /api/state/:id/export-vi
+     */
+    app.get("/state/:id/export-vi", async (request, reply) => {
+        const { id } = request.params as { id: string };
+
+        const documentResult = await app.pg.query<{
+            id: string;
+            title: string;
+            description: string | null;
+            state: unknown;
+            timeline: unknown;
+            version: number;
+            created_at: string;
+            updated_at: string;
+        }>(
+            `
+            SELECT id, title, description, state, timeline, version, created_at, updated_at
+            FROM documents
+            WHERE id = $1
+            `,
+            [id],
+        );
+
+        const documentRow = documentResult.rows[0];
+        if (!documentRow) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        const fileRows = await app.pg.query<{
+            id: string;
+            name: string;
+            mime_type: string | null;
+            ext: string | null;
+            size_bytes: number | null;
+            sha256: string | null;
+            created_at: string;
+            storage_bucket: string | null;
+            storage_key: string | null;
+        }>(
+            `
+            SELECT
+                id,
+                name,
+                mime_type,
+                ext,
+                size_bytes,
+                sha256,
+                created_at,
+                storage_bucket,
+                storage_key
+            FROM document_files
+            WHERE document_id = $1
+            ORDER BY created_at ASC
+            `,
+            [id],
+        );
+
+        const files: ProjectViBundleV1["files"] = [];
+        for (const row of fileRows.rows) {
+            if (!row.storage_bucket || !row.storage_key) {
+                return reply.status(500).send({
+                    error: `File "${row.name}" is missing storage metadata and cannot be exported.`,
+                });
+            }
+
+            const object = await app.s3.send(
+                new GetObjectCommand({
+                    Bucket: row.storage_bucket,
+                    Key: row.storage_key,
+                }),
+            );
+
+            const body = object.Body as Readable | undefined;
+            if (!body) {
+                return reply.status(500).send({
+                    error: `File "${row.name}" could not be loaded from object storage.`,
+                });
+            }
+
+            const bytes = await streamToBuffer(body);
+            files.push({
+                oldId: row.id,
+                name: row.name,
+                mimeType: row.mime_type,
+                ext: row.ext,
+                sizeBytes: row.size_bytes,
+                sha256: row.sha256,
+                createdAt: new Date(row.created_at).toISOString(),
+                bytesBase64: bytes.toString("base64"),
+            });
+        }
+
+        const embeddingTable = await app.pg.query<{ table_name: string | null }>(
+            `
+            SELECT to_regclass('public.document_node_embeddings') AS table_name
+            `,
+        );
+
+        let embeddings: ProjectViBundleV1["embeddings"] = [];
+        if (embeddingTable.rows[0]?.table_name) {
+            const embeddingRows = await app.pg.query<{
+                node_id: string;
+                node_text: string;
+                embedding: unknown;
+            }>(
+                `
+                SELECT node_id, node_text, embedding
+                FROM document_node_embeddings
+                WHERE doc_id = $1
+                ORDER BY node_id ASC
+                `,
+                [id],
+            );
+
+            embeddings = embeddingRows.rows.map((row: { node_id: string; node_text: string; embedding: unknown }) => ({
+                nodeId: row.node_id,
+                nodeText: row.node_text,
+                embedding: parseVectorValue(row.embedding),
+            }));
+        }
+
+        const githubEventRows = await app.pg.query<{
+            repo_owner: string;
+            repo_name: string;
+            event_type: string;
+            event_key: string;
+            actor_login: string | null;
+            title: string | null;
+            url: string | null;
+            occurred_at: string;
+            issue_number: number | null;
+            pr_number: number | null;
+            commit_sha: string | null;
+            branch_name: string | null;
+            payload: unknown;
+            inserted_at: string;
+        }>(
+            `
+            SELECT
+                repo_owner,
+                repo_name,
+                event_type,
+                event_key,
+                actor_login,
+                title,
+                url,
+                occurred_at,
+                issue_number,
+                pr_number,
+                commit_sha,
+                branch_name,
+                payload,
+                inserted_at
+            FROM document_github_events
+            WHERE document_id = $1
+            ORDER BY occurred_at ASC, event_key ASC
+            `,
+            [id],
+        );
+
+        const githubEvents: ProjectViBundleV1["githubEvents"] = githubEventRows.rows.map((row) => ({
+            repoOwner: row.repo_owner,
+            repoName: row.repo_name,
+            eventType: row.event_type,
+            eventKey: row.event_key,
+            actorLogin: row.actor_login,
+            title: row.title,
+            url: row.url,
+            occurredAt: new Date(row.occurred_at).toISOString(),
+            issueNumber: row.issue_number,
+            prNumber: row.pr_number,
+            commitSha: row.commit_sha,
+            branchName: row.branch_name,
+            payload: row.payload,
+            insertedAt: new Date(row.inserted_at).toISOString(),
+        }));
+
+        const bundle: ProjectViBundleV1 = {
+            format: "vitral-project",
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            source: {
+                documentId: documentRow.id,
+                title: documentRow.title,
+            },
+            document: {
+                title: documentRow.title,
+                description: documentRow.description,
+                state: documentRow.state,
+                timeline: documentRow.timeline,
+                version: documentRow.version,
+                createdAt: new Date(documentRow.created_at).toISOString(),
+                updatedAt: new Date(documentRow.updated_at).toISOString(),
+            },
+            files,
+            embeddings,
+            githubEvents,
+        };
+
+        const encoded = encodeProjectVi(bundle);
+        const fileName = `${sanitizeProjectFilename(documentRow.title)}.vi`;
+        reply.header("Content-Type", "application/octet-stream");
+        reply.header("Content-Disposition", `attachment; filename="${safeFilename(fileName)}"`);
+        return reply.send(encoded);
+    });
+
+    /**
+     * Import a portable .vi bundle as a review-only document.
+     * POST /api/state/import-vi
+     */
+    app.post("/state/import-vi", async (request, reply) => {
+        const parts = request.parts();
+        let uploadedBytes: Buffer | null = null;
+
+        for await (const part of parts) {
+            if (part.type !== "file") continue;
+            if (part.fieldname !== "file") continue;
+            uploadedBytes = await streamToBuffer(part.file);
+            break;
+        }
+
+        if (!uploadedBytes) {
+            return reply.status(400).send({ error: 'Missing multipart file field "file"' });
+        }
+
+        let bundle: ProjectViBundleV1;
+        try {
+            bundle = decodeProjectVi(uploadedBytes);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Invalid .vi payload.";
+            return reply.status(400).send({ error: message });
+        }
+
+        const bucket = process.env.S3_BUCKET;
+        if (!bucket) {
+            return reply.status(500).send({ error: "S3_BUCKET is not configured." });
+        }
+
+        const fileIdMap = new Map<string, string>();
+        for (const file of bundle.files) {
+            if (!fileIdMap.has(file.oldId)) {
+                fileIdMap.set(file.oldId, crypto.randomUUID());
+            }
+        }
+
+        const remappedState = remapStateFileReferences(bundle.document.state, fileIdMap);
+        const timelinePayload = bundle.document.timeline ?? {};
+        const nowIso = new Date().toISOString();
+
+        const client = await app.pg.connect();
+        try {
+            await client.query("BEGIN");
+
+            const createdDocument = await client.query<{
+                id: string;
+                title: string;
+                description: string | null;
+                version: number;
+                updated_at: string;
+                review_only: boolean;
+            }>(
+                `
+                INSERT INTO documents (
+                    title,
+                    description,
+                    state,
+                    timeline,
+                    version,
+                    review_only,
+                    github_owner,
+                    github_repo,
+                    github_default_branch,
+                    github_linked_at,
+                    github_last_synced_at
+                )
+                VALUES ($1, $2, $3::jsonb, $4::jsonb, 1, TRUE, NULL, NULL, NULL, NULL, NULL)
+                RETURNING id, title, description, version, updated_at, review_only
+                `,
+                [
+                    (bundle.document.title || "Untitled").trim() || "Untitled",
+                    bundle.document.description ?? null,
+                    JSON.stringify(remappedState),
+                    JSON.stringify(timelinePayload),
+                ],
+            );
+
+            const newDoc = createdDocument.rows[0];
+            if (!newDoc) {
+                throw new Error("Failed to create imported document.");
+            }
+
+            for (const file of bundle.files) {
+                const newFileId = fileIdMap.get(file.oldId);
+                if (!newFileId) continue;
+
+                const bytes = Buffer.from(file.bytesBase64, "base64");
+                const hash = crypto.createHash("sha256").update(bytes).digest("hex");
+                const objectKey = `sha256/${hash}`;
+
+                try {
+                    await app.s3.send(new HeadObjectCommand({ Bucket: bucket, Key: objectKey }));
+                } catch {
+                    await app.s3.send(
+                        new PutObjectCommand({
+                            Bucket: bucket,
+                            Key: objectKey,
+                            Body: bytes,
+                            ContentType: file.mimeType ?? "application/octet-stream",
+                            Metadata: {
+                                originalname: file.name,
+                                sha256: hash,
+                            },
+                        }),
+                    );
+                }
+
+                const parsedCreatedAt = new Date(file.createdAt);
+                const createdAt = Number.isNaN(parsedCreatedAt.getTime())
+                    ? nowIso
+                    : parsedCreatedAt.toISOString();
+
+                await client.query(
+                    `
+                    INSERT INTO document_files (
+                        id,
+                        document_id,
+                        name,
+                        mime_type,
+                        ext,
+                        size_bytes,
+                        sha256,
+                        storage_bucket,
+                        storage_key,
+                        created_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz)
+                    `,
+                    [
+                        newFileId,
+                        newDoc.id,
+                        file.name,
+                        file.mimeType ?? null,
+                        file.ext ?? (file.name.includes(".") ? file.name.split(".").pop()?.toLowerCase() ?? null : null),
+                        file.sizeBytes ?? bytes.length,
+                        hash,
+                        bucket,
+                        objectKey,
+                        createdAt,
+                    ],
+                );
+            }
+
+            for (const githubEvent of bundle.githubEvents) {
+                const occurredAtDate = new Date(githubEvent.occurredAt);
+                const occurredAt = Number.isNaN(occurredAtDate.getTime())
+                    ? nowIso
+                    : occurredAtDate.toISOString();
+                const insertedAtDate = new Date(githubEvent.insertedAt);
+                const insertedAt = Number.isNaN(insertedAtDate.getTime())
+                    ? nowIso
+                    : insertedAtDate.toISOString();
+
+                await client.query(
+                    `
+                    INSERT INTO document_github_events (
+                        document_id,
+                        repo_owner,
+                        repo_name,
+                        event_type,
+                        event_key,
+                        actor_login,
+                        title,
+                        url,
+                        occurred_at,
+                        issue_number,
+                        pr_number,
+                        commit_sha,
+                        branch_name,
+                        payload,
+                        inserted_at
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        $3,
+                        $4,
+                        $5,
+                        $6,
+                        $7,
+                        $8,
+                        $9::timestamptz,
+                        $10,
+                        $11,
+                        $12,
+                        $13,
+                        $14::jsonb,
+                        $15::timestamptz
+                    )
+                    ON CONFLICT (document_id, event_type, event_key)
+                    DO UPDATE SET
+                        repo_owner = EXCLUDED.repo_owner,
+                        repo_name = EXCLUDED.repo_name,
+                        actor_login = EXCLUDED.actor_login,
+                        title = EXCLUDED.title,
+                        url = EXCLUDED.url,
+                        occurred_at = EXCLUDED.occurred_at,
+                        issue_number = EXCLUDED.issue_number,
+                        pr_number = EXCLUDED.pr_number,
+                        commit_sha = EXCLUDED.commit_sha,
+                        branch_name = EXCLUDED.branch_name,
+                        payload = EXCLUDED.payload,
+                        inserted_at = EXCLUDED.inserted_at
+                    `,
+                    [
+                        newDoc.id,
+                        githubEvent.repoOwner,
+                        githubEvent.repoName,
+                        githubEvent.eventType,
+                        githubEvent.eventKey,
+                        githubEvent.actorLogin,
+                        githubEvent.title,
+                        githubEvent.url,
+                        occurredAt,
+                        githubEvent.issueNumber,
+                        githubEvent.prNumber,
+                        githubEvent.commitSha,
+                        githubEvent.branchName,
+                        JSON.stringify(githubEvent.payload ?? {}),
+                        insertedAt,
+                    ],
+                );
+            }
+
+            const embeddingTable = await client.query<{ table_name: string | null }>(
+                `
+                SELECT to_regclass('public.document_node_embeddings') AS table_name
+                `,
+            );
+
+            if (embeddingTable.rows[0]?.table_name && bundle.embeddings.length > 0) {
+                const CHUNK_SIZE = 30;
+                for (let offset = 0; offset < bundle.embeddings.length; offset += CHUNK_SIZE) {
+                    const chunk = bundle.embeddings.slice(offset, offset + CHUNK_SIZE);
+                    const valueSql: string[] = [];
+                    const values: unknown[] = [];
+
+                    for (const embeddingRow of chunk) {
+                        if (!embeddingRow.nodeId) continue;
+                        const embeddingValues = parseVectorValue(embeddingRow.embedding);
+                        if (embeddingValues.length === 0) continue;
+
+                        const base = values.length;
+                        valueSql.push(
+                            `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}::vector)`,
+                        );
+                        values.push(
+                            newDoc.id,
+                            embeddingRow.nodeId,
+                            embeddingRow.nodeText ?? "",
+                            vectorToLiteral(embeddingValues),
+                        );
+                    }
+
+                    if (valueSql.length === 0) continue;
+
+                    await client.query(
+                        `
+                        INSERT INTO document_node_embeddings (doc_id, node_id, node_text, embedding)
+                        VALUES ${valueSql.join(", ")}
+                        ON CONFLICT (doc_id, node_id) DO UPDATE
+                        SET
+                            node_text = EXCLUDED.node_text,
+                            embedding = EXCLUDED.embedding,
+                            updated_at = now()
+                        `,
+                        values,
+                    );
+                }
+            }
+
+            await client.query("COMMIT");
+            return reply.status(201).send(newDoc);
+        } catch (error) {
+            await client.query("ROLLBACK");
+            request.log.error({ error }, "Failed to import .vi project bundle.");
+            return reply.status(500).send({ error: "Failed to import .vi file." });
+        } finally {
+            client.release();
+        }
     });
 
 
@@ -775,6 +1391,11 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.put("/state/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
         const body = request.body as SaveBody;
+
+        const reviewOnly = await getDocumentReviewOnly(id);
+        if (reviewOnly) {
+            return reply.status(403).send({ error: "This is a review project and cannot be modified." });
+        }
 
         if (!body || typeof body !== "object" || body.state === undefined) {
             return reply.status(400).send({ error: "Missing state" });
@@ -816,7 +1437,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 state = EXCLUDED.state,
                 timeline = EXCLUDED.timeline,
                 version = documents.version + 1
-            RETURNING id, title, description, version, updated_at
+            RETURNING id, title, description, version, updated_at, review_only
             `,
             [id, title, description, JSON.stringify(body.state), JSON.stringify(body.timeline)]
         );
@@ -854,6 +1475,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.patch("/state/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
         const body = request.body as { title?: string; description?: string | null };
+        if (!await ensureDocumentWritable(id, reply)) return;
 
         const title = body.title?.trim();
         const description =
@@ -871,7 +1493,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             description = COALESCE($3, description),
             version = version + 1
             WHERE id = $1
-            RETURNING id, title, description, version, updated_at
+            RETURNING id, title, description, version, updated_at, review_only
             `,
             [id, title ?? null, description ?? null]
         );
@@ -890,6 +1512,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.post("/state/:id/github/link", async (request, reply) => {
         const { id } = request.params as { id: string };
         const { owner, repo } = request.body as { owner?: string; repo?: string };
+        if (!await ensureDocumentWritable(id, reply)) return;
 
         if (!owner || !repo) {
             return reply.status(400).send({ error: "Missing owner or repo" });
@@ -969,6 +1592,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.delete("/state/:id/github/link", async (request, reply) => {
         const { id } = request.params as { id: string };
+        if (!await ensureDocumentWritable(id, reply)) return;
 
         const { rowCount } = await app.pg.query(
             `
@@ -1073,6 +1697,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.post("/state/:docId/files", async (request, reply) => {
         const { docId } = request.params as { docId: string };
+        if (!await ensureDocumentWritable(docId, reply)) return;
 
         const parts = request.parts();
 
@@ -1281,6 +1906,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.delete("/state/:docId/files/:id", async (request, reply) => {
         const { docId } = request.params as { docId: string };
         const { id } = request.params as { id: string };
+        if (!await ensureDocumentWritable(docId, reply)) return;
 
         const client = await request.server.pg.connect();
         try {

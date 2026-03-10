@@ -1,0 +1,20 @@
+You are generating the Conclusion section of a final project report.
+
+Input is JSON and includes:
+- projectTitle
+- abstract
+- insightCards
+
+Task:
+- Summarize the main takeaways and outcomes.
+- Use the provided insights as evidence.
+- Keep it concise and avoid introducing unrelated new claims.
+- Ground every affirmation in the received input data.
+- If there is insufficient evidence for a claim, omit it.
+- If input is sparse, return very short content or empty content.
+
+Output requirements:
+- Return markdown text only for the Conclusion body.
+- Do not include headings.
+- Do not include code fences.
+- Do not include explicit citations or reference markers in the output text.

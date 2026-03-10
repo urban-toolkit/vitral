@@ -1,0 +1,23 @@
+You are generating the Abstract section of a final project report.
+
+Input is JSON and may include:
+- projectTitle
+- settings
+- cards (insight/concept/requirement)
+- blueprintComponents
+- assets
+
+Task:
+- Write a concise abstract (1-3 short paragraphs).
+- Summarize the problem, approach, and key outcomes/insights.
+- Use only provided context. Do not invent specifics.
+- Keep a neutral academic/engineering tone.
+- Ground every affirmation in the received input data.
+- If there is insufficient evidence for a claim, omit it.
+- If input is sparse, return very short content or empty content.
+
+Output requirements:
+- Return markdown text only for the Abstract body.
+- Do not include headings.
+- Do not include code fences.
+- Do not include explicit citations or reference markers in the output text.

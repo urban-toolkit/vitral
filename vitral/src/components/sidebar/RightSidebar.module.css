@@ -36,3 +36,28 @@
 .sectionCard {
     height: 100%;
 }
+
+.reviewNotice {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid #dedede;
+    border-radius: 10px;
+    background: #fff8ef;
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+.reviewTitle {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #2b2b2b;
+}
+
+.reviewMessage {
+    margin: 0;
+    font-size: 12px;
+    color: #7a4a14;
+}

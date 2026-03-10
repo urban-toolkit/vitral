@@ -46,12 +46,12 @@ export function Toolbar({
                     className={classes.toolIcon}
                 />
             </button>
-            <button type="button" className={`${classes.tool} ${isActive("text") ? classes.toolActive : ""}`} onClick={onFreeInputClicked} title="Text tool">
+            {/* <button type="button" className={`${classes.tool} ${isActive("text") ? classes.toolActive : ""}`} onClick={onFreeInputClicked} title="Text tool">
                 <FontAwesomeIcon icon={faFont} className={classes.toolIcon} />
             </button>
             <button type="button" className={classes.tool}>
                 <FontAwesomeIcon icon={faWandSparkles} className={classes.toolIcon} />
-            </button>
+            </button> */}
         </div>
     );
 }

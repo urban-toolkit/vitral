@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 
-import { loadDocuments, deleteDocument } from "@/api/stateApi";
+import { loadDocuments, deleteDocument, importProjectVi } from "@/api/stateApi";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -16,6 +16,8 @@ export function ProjectsPage() {
     const navigate = useNavigate();
 
     const [documents, setDocuments] = useState<DocumentResponse[]>([]);
+    const [importingProject, setImportingProject] = useState(false);
+    const importInputRef = useRef<HTMLInputElement | null>(null);
 
     const fetchDocuments = async () => {
         const fetchedDocuments = await loadDocuments();
@@ -46,15 +48,53 @@ export function ProjectsPage() {
         checkGitStatus();
     }, []);
 
+    const handleImportProject = async (event: ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
+        setImportingProject(true);
+        try {
+            const imported = await importProjectVi(file);
+            await fetchDocuments();
+            navigate(`/project/${imported.id}`);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to import project.";
+            window.alert(message);
+        } finally {
+            setImportingProject(false);
+        }
+    };
+
     return (
         <div className={classes.pageContainer}>
             <div className={classes.innerContent}>
-                <p className={classes.title}>Projects</p>
+                <div className={classes.headerRow}>
+                    <p className={classes.title}>Projects</p>
+                    <button
+                        type="button"
+                        className={classes.importButton}
+                        onClick={() => importInputRef.current?.click()}
+                        disabled={importingProject}
+                    >
+                        {importingProject ? "Importing..." : "Import project"}
+                    </button>
+                    <input
+                        ref={importInputRef}
+                        type="file"
+                        accept=".vi"
+                        className={classes.hiddenInput}
+                        onChange={handleImportProject}
+                    />
+                </div>
                 
                 <div className={classes.projectsGrid}>
                     {documents.map((document) => {
                         return <div key={document.id} className={classes.projectCard}>
                             <div className={classes.innerCard}>
+                                {document.review_only ? (
+                                    <span className={classes.reviewBadge}>Review only</span>
+                                ) : null}
                                 <p className={classes.documentTitle}>{document.title}</p>
                                 <p>{document.description}</p>
                                 <p>{document.id}</p>

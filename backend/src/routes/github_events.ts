@@ -27,6 +27,24 @@ type GitHubEventRow = {
 
 type NormalizedEvent = Omit<GitHubEventRow, "id" | "inserted_at">;
 
+function toClientEvent(e: GitHubEventRow) {
+    return {
+        id: e.id,
+        type: e.event_type,
+        key: e.event_key,
+        occurredAt: e.occurred_at,
+        actor: e.actor_login,
+        title: e.title,
+        url: e.url,
+        issueNumber: e.issue_number,
+        prNumber: e.pr_number,
+        commitSha: e.commit_sha,
+        branch: e.branch_name,
+        filesAffected: getCommitFilesFromPayload(e.payload),
+        payload: e.payload,
+    };
+}
+
 function isoWithSafetyWindow(dt: Date, safetyMs = 2 * 60 * 1000) {
     return new Date(dt.getTime() - safetyMs).toISOString();
 }
@@ -257,14 +275,12 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
                 ? Math.max(1, Math.min(Math.trunc(numericLimit), 10000))
                 : 200;
 
-        const token = request.cookies["gh_access_token"];
-        if (!token) return reply.status(401).send({ error: "Not connected to GitHub" });
-
         // Load doc + repo link + cursor
         const { rows } = await app.pg.query(
             `
             SELECT
                 id,
+                review_only,
                 github_owner,
                 github_repo,
                 github_default_branch,
@@ -278,6 +294,26 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
         if (rows.length === 0) return reply.status(404).send({ error: "Document not found" });
 
         const doc = rows[0];
+        const reviewOnly = Boolean(doc.review_only);
+        if (reviewOnly) {
+            const { rows: reviewEvents } = await app.pg.query<GitHubEventRow>(
+                `
+                SELECT *
+                FROM document_github_events
+                WHERE document_id = $1
+                  AND event_type = 'commit'
+                ORDER BY occurred_at DESC
+                LIMIT $2
+                `,
+                [id, safeLimit],
+            );
+
+            return reviewEvents.map((eventRow) => toClientEvent(eventRow));
+        }
+
+        const token = request.cookies["gh_access_token"];
+        if (!token) return reply.status(401).send({ error: "Not connected to GitHub" });
+
         const owner = doc.github_owner as string | null;
         const repo = doc.github_repo as string | null;
         let defaultBranch: string | null = doc.github_default_branch ?? null;
@@ -461,20 +497,6 @@ export const githubEventsRoutes: FastifyPluginAsync = async (app) => {
             }
         );
 
-        return enrichedEvents.map((e: GitHubEventRow) => ({
-            id: e.id,
-            type: e.event_type,
-            key: e.event_key,
-            occurredAt: e.occurred_at,
-            actor: e.actor_login,
-            title: e.title,
-            url: e.url,
-            issueNumber: e.issue_number,
-            prNumber: e.pr_number,
-            commitSha: e.commit_sha,
-            branch: e.branch_name,
-            filesAffected: getCommitFilesFromPayload(e.payload),
-            payload: e.payload,
-        }));
+        return enrichedEvents.map((eventRow: GitHubEventRow) => toClientEvent(eventRow));
     });
 }

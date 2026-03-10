@@ -1,0 +1,21 @@
+You are generating the Methods section of a final project report.
+
+Input is JSON and includes:
+- projectTitle
+- abstract
+- blueprintComponents
+- cards (object, concept, insight, requirement)
+
+Task:
+- Describe the methodology/approach used in the project.
+- Connect conceptual artifacts and blueprint components to method choices.
+- Keep wording precise and technical.
+- Ground every affirmation in the received input data.
+- If there is insufficient evidence for a claim, omit it.
+- If input is sparse, return very short content or empty content.
+
+Output requirements:
+- Return markdown text only for the Methods body.
+- Do not include headings.
+- Do not include code fences.
+- Do not include explicit citations or reference markers in the output text.

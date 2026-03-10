@@ -21,22 +21,22 @@ type EdgeVisualStyle = {
 function resolveEdgeVisual(kind: string, label: string | undefined): EdgeVisualStyle {
   if (kind === "referenced_by" || label?.toLowerCase() === REFERENCED_BY_LABEL) {
     return {
-      stroke: "#1f5fcf",
+      stroke: "#90b1e9",
       labelColor: "#1f4ca4",
       labelBg: "#e8f1ff",
     };
   }
   if (kind === "iteration_of" || label?.toLowerCase() === ITERATION_OF_LABEL) {
     return {
-      stroke: "#b15a26",
+      stroke: "#dda788",
       labelColor: "#7f3f1a",
       labelBg: "#fff1e8",
     };
   }
   return {
-    stroke: "#2f2f2f",
+    stroke: "#cccccc",
     labelColor: "#222",
-    labelBg: "#f0f0f0a0",
+    labelBg: "#f0f0f0",
   };
 }
 

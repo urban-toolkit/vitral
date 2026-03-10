@@ -15,7 +15,21 @@ You will recieve a JSON describing the image file as:
 
 {
     name: string,
-    content: string
+    ext: string,
+    content: string,
+    projectSettings?: {
+        projectTitle: string,
+        projectGoal: string,
+        participants: [{ name: string, role: string }],
+        availableRoles: string[],
+        timeline: {
+            start: string,
+            end: string,
+            defaultStages: string[],
+            stages: [{ name: string, start: string, end: string }],
+            milestones: [{ name: string, occurredAt: string, generatedBy: "manual" | "llm" }]
+        }
+    }
 }
 
 You should follow these steps:
@@ -32,6 +46,8 @@ You should follow these steps:
     - Chart: generate no cards.
     - Sketch: generate no cards.
     - Note: generate any cards.
+
+- Use `projectSettings` as context for file content.
 
 You should also include a reference to the portion of the content that generated the card, verbatim.
 

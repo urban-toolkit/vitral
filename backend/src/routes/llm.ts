@@ -39,6 +39,30 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                 return `\n\nAvailable assets metadata (you may reference these ids in card.assets):\n${JSON.stringify(assets)}`;
             };
 
+            const formatStructuredContextBlock = (payload: unknown): string => {
+                if (!payload || typeof payload !== "object") return "";
+
+                const source = payload as Record<string, unknown>;
+                const context: Record<string, unknown> = {};
+                for (const [key, value] of Object.entries(source)) {
+                    if (key === "content" || key === "images" || key === "assets") continue;
+                    context[key] = value;
+                }
+
+                if (Array.isArray(source.images)) {
+                    context.imageCount = source.images.length;
+                    context.imageIds = source.images
+                        .map((image, index) => {
+                            if (!image || typeof image !== "object") return `image_${index + 1}`;
+                            const id = (image as { id?: unknown }).id;
+                            return typeof id === "string" && id.trim() !== "" ? id : `image_${index + 1}`;
+                        });
+                }
+
+                if (Object.keys(context).length === 0) return "";
+                return `\n\nStructured input context:\n${JSON.stringify(context)}`;
+            };
+
             let inputContent: any[] = [];
 
             const multimodalPrompts = new Set([
@@ -56,6 +80,7 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                     content?: string;
                     images?: { id: string; dataUrl: string }[];
                     assets?: AssetMetadata[];
+                    projectSettings?: Record<string, unknown>;
                 } | undefined;
                 try {
                     parsed = JSON.parse(body.input);
@@ -66,10 +91,11 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                 const textContent = parsed?.content ?? "";
                 const images = Array.isArray(parsed?.images) ? parsed!.images : [];
                 const assetsBlock = formatAssetsBlock(parsed?.assets);
+                const contextBlock = formatStructuredContextBlock(parsed);
 
                 inputContent.push({
                     type: "input_text",
-                    text: promptContent + (textContent ? "\n" + textContent : "") + assetsBlock,
+                    text: promptContent + contextBlock + (textContent ? "\n\nPrimary content:\n" + textContent : "") + assetsBlock,
                 });
 
                 if (images.length === 0 && parsed?.content && typeof parsed.content === "string" && parsed.content.startsWith("data:")) {
@@ -107,11 +133,12 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
 
                 const parsedText = typeof parsed?.content === "string" ? parsed.content : body.input;
                 const assetsBlock = formatAssetsBlock(parsed?.assets);
+                const contextBlock = formatStructuredContextBlock(parsed);
 
                 inputContent = [
                     {
                         type: "input_text",
-                        text: promptContent + "\n" + parsedText + assetsBlock,
+                        text: promptContent + contextBlock + "\n\nPrimary content:\n" + parsedText + assetsBlock,
                     },
                 ];
             }

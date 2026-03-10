@@ -1,5 +1,7 @@
 import type { FormEvent } from "react";
 import classes from "./CanvasChatOverlay.module.css";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faPaperPlane } from '@fortawesome/free-solid-svg-icons';
 
 export type CanvasChatEntry = {
     id: string;
@@ -72,7 +74,7 @@ export function CanvasChatOverlay({
                 <div className={classes.messages}>
                     {messages.length === 0 ? (
                         <p className={classes.empty}>
-                            Ask about the current canvas. Example: "Summarize most important concepts about transportation."
+                            Example: "List out all requirements including their titles and descriptions."
                         </p>
                     ) : (
                         messages.map((message) => (
@@ -98,7 +100,7 @@ export function CanvasChatOverlay({
                         className={classes.input}
                         value={inputValue}
                         onChange={(event) => onInputValueChange(event.target.value)}
-                        placeholder="Ask about your canvas..."
+                        placeholder="Ask about your design process..."
                         disabled={loading}
                         rows={3}
                         onKeyDown={(event) => {
@@ -114,7 +116,7 @@ export function CanvasChatOverlay({
                         className={classes.sendButton}
                         disabled={loading || inputValue.trim().length === 0}
                     >
-                        {loading ? "Thinking..." : "Send"}
+                        {loading ? "..." : <FontAwesomeIcon icon={faPaperPlane}></FontAwesomeIcon>}
                     </button>
                 </form>
             </section>

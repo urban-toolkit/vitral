@@ -57,6 +57,7 @@ export function useDocumentSync(projectId: string) {
 
     const [status, setStatus] = useState<SyncStatus>("idle");
     const [error, setError] = useState<string | null>(null);
+    const [reviewOnly, setReviewOnly] = useState(false);
 
     const lastSavedHashRef = useRef<string>("");
     const hasLoadedRef = useRef(false); // Blocks autosave until loading is done
@@ -144,9 +145,11 @@ export function useDocumentSync(projectId: string) {
         async function init() {
             setStatus("loading");
             setError(null);
+            setReviewOnly(false);
 
             try {
                 const doc = await loadDocument(projectId);
+                setReviewOnly(Boolean(doc.review_only));
 
                 const serverFlow = doc.state?.flow;
 
@@ -206,6 +209,7 @@ export function useDocumentSync(projectId: string) {
                 if (ac.signal.aborted) return;
                 setStatus("error");
                 setError(e?.message ?? "Failed to load project");
+                setReviewOnly(false);
             }
         }
 
@@ -221,11 +225,12 @@ export function useDocumentSync(projectId: string) {
     useEffect(() => {
         if (!hasLoadedRef.current) return;
         if (status === "loading" || status === "error") return;
+        if (reviewOnly) return;
 
         if (currentHash === lastSavedHashRef.current) return;
 
         debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, participants, defaultStages, timelineStartEnd, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, debouncedSave, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, defaultStages, timelineStartEnd, participants]);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, reviewOnly, debouncedSave, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, defaultStages, timelineStartEnd, participants]);
 
-    return { status, error };
+    return { status, error, reviewOnly };
 }

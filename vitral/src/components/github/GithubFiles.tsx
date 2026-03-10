@@ -144,29 +144,28 @@ export const GitHubFiles = memo(function GitHubFiles({
                     <p className={classes.infoLine}>
                         Repository: <span className={classes.bold}>{githubDocumentLink.github_repo}</span>.
                     </p>
-                    <p className={classes.infoLine}>Linked by: {githubDocumentLink.github_owner}.</p>
-                    <p className={classes.infoLine}>Default branch: {githubDocumentLink.github_default_branch}.</p>
-
                     <div className={classes.filesSection}>
                         <div className={classes.pathControls}>
                             <p className={classes.pathLine}>
                                 Path: <b>/{currentPath || ""}</b>
                             </p>
-                            {currentPath ? (
-                                <button
-                                    className={classes.linkButton}
-                                    onClick={() => {
-                                        const parts = currentPath.split("/").filter(Boolean);
-                                        parts.pop();
-                                        setCurrentPath(parts.join("/"));
-                                    }}
-                                >
-                                    Up
+                            <div>
+                                {currentPath ? (
+                                    <button
+                                        className={classes.linkButton}
+                                        onClick={() => {
+                                            const parts = currentPath.split("/").filter(Boolean);
+                                            parts.pop();
+                                            setCurrentPath(parts.join("/"));
+                                        }}
+                                    >
+                                        Up
+                                    </button>
+                                ) : null}
+                                <button className={classes.linkButton} onClick={() => setCurrentPath("")}>
+                                    Root
                                 </button>
-                            ) : null}
-                            <button className={classes.linkButton} onClick={() => setCurrentPath("")}>
-                                Root
-                            </button>
+                            </div>
                         </div>
 
                         {itemsLoading ? (

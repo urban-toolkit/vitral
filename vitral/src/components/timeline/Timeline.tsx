@@ -57,6 +57,7 @@ export type {
 
 export const Timeline = ({
   projectId,
+  readOnly = false,
   startMarker,
   endMarker,
   projectName,
@@ -260,26 +261,33 @@ export const Timeline = ({
     highlightedCodebaseFilePaths,
     hoveredBlueprintComponentNodeId,
     connectedBlueprintComponentNodeIds,
+    readOnly,
     dispatch,
     onStageBoundaryChange,
     onStageLaneDeletion,
     onAttachFileToCodebaseSubtrack: (subtrackId, filePath) => {
+      if (readOnly) return;
       dispatch(attachFileToCodebaseSubtrack({ subtrackId, filePath }));
     },
     onToggleCodebaseSubtrackCollapsed: (subtrackId) => {
+      if (readOnly) return;
       dispatch(toggleCodebaseSubtrackCollapsed(subtrackId));
     },
     onToggleCodebaseSubtrackInactive: (subtrackId) => {
+      if (readOnly) return;
       dispatch(toggleCodebaseSubtrackInactive(subtrackId));
     },
     onDeleteCodebaseSubtrack: (subtrackId) => {
+      if (readOnly) return;
       dispatch(deleteCodebaseSubtrack(subtrackId));
     },
     onCreateBlueprintCodebaseLink: (blueprintEventId, codebaseSubtrackId) => {
+      if (readOnly) return;
       dispatch(addBlueprintCodebaseLink({ blueprintEventId, codebaseSubtrackId, origin: "manual" }));
       setPendingBlueprintLinkEventId(null);
     },
     onDeleteSystemScreenshotMarker: (markerId) => {
+      if (readOnly) return;
       dispatch(deleteSystemScreenshotMarker(markerId));
       setSystemScreenshotTooltip((previous) =>
         previous?.markerId === markerId ? null : previous
@@ -288,6 +296,7 @@ export const Timeline = ({
       dispatch(setHighlightedCodebaseFilePaths([]));
     },
     onSuggestCodebaseSubtrackFiles: (subtrackId) => {
+      if (readOnly) return;
       void handleSuggestCodebaseSubtrackFiles(subtrackId);
     },
     suggestingCodebaseSubtrackIds,
@@ -305,6 +314,7 @@ export const Timeline = ({
   });
 
   const updateSubStageStage = (subStageId: string, newStage: string) => {
+    if (readOnly) return;
     const matchingSubStages = parsed.subStages.filter((subStage) => subStage.id == subStageId);
 
     if (matchingSubStages.length <= 0) return;
@@ -323,6 +333,10 @@ export const Timeline = ({
 
   const commitNameEdit = () => {
     if (!nameEdit) return;
+    if (readOnly) {
+      setNameEdit(null);
+      return;
+    }
 
     const nextName = nameEdit.value.trim();
 
@@ -374,6 +388,7 @@ export const Timeline = ({
   };
 
   const handleGenerateMilestones = async () => {
+    if (readOnly) return;
     if (isGeneratingMilestones) return;
     setIsGeneratingMilestones(true);
     document.body.style.cursor = "wait";
@@ -425,6 +440,7 @@ export const Timeline = ({
   };
 
   const handleSuggestCodebaseSubtrackFiles = async (subtrackId: string) => {
+    if (readOnly) return;
     if (suggestingCodebaseSubtrackIds.includes(subtrackId)) return;
 
     const subtrack = codebaseSubtracks.find((entry) => entry.id === subtrackId);
@@ -500,7 +516,9 @@ export const Timeline = ({
         <span
           ref={newStageButtonRef}
           className={classes.newStage}
+          style={readOnly ? { display: "none" } : undefined}
           onClick={() => {
+            if (readOnly) return;
             onStageLaneCreation("Untitled");
           }}
         >
@@ -510,8 +528,10 @@ export const Timeline = ({
         <span
           ref={newCodebaseSubtrackButtonRef}
           className={classes.newStage}
+          style={readOnly ? { display: "none" } : undefined}
           title="Add codebase subtrack"
           onClick={() => {
+            if (readOnly) return;
             dispatch(
               addCodebaseSubtrack({
                 id: crypto.randomUUID(),
@@ -529,9 +549,11 @@ export const Timeline = ({
         <span
           ref={syncCodebaseButtonRef}
           className={classes.newStage}
+          style={readOnly ? { display: "none" } : undefined}
           title="Sync codebase commits"
           onClick={async (event) => {
             event.stopPropagation();
+            if (readOnly) return;
             if (!onSyncCodebaseEvents || isSyncingCodebase) return;
             setIsSyncingCodebase(true);
             try {
@@ -548,6 +570,7 @@ export const Timeline = ({
           ref={llmButtonRef}
           className={classes.milestonesLlmButton}
           style={{
+            ...(readOnly ? { display: "none" } : {}),
             left: 125,
             top: margin.top + 67,
             color: isGeneratingMilestones ? "#9b9b9b" : undefined,
@@ -559,7 +582,7 @@ export const Timeline = ({
           <FontAwesomeIcon icon={faWandSparkles} />
         </span>
 
-        {pendingBlueprintLinkEventId && (
+        {pendingBlueprintLinkEventId && !readOnly && (
           <div
             className={classes.linkModeHint}
             onClick={(event) => event.stopPropagation()}
@@ -575,7 +598,7 @@ export const Timeline = ({
           </div>
         )}
 
-        {blueprintLinkMenu && (
+        {blueprintLinkMenu && !readOnly && (
           <div
             className={classes.timelineContextMenu}
             style={{ left: blueprintLinkMenu.x, top: blueprintLinkMenu.y }}
@@ -595,7 +618,7 @@ export const Timeline = ({
           </div>
         )}
 
-        {blueprintCodebaseLinkMenu && (
+        {blueprintCodebaseLinkMenu && !readOnly && (
           <div
             className={classes.timelineContextMenu}
             style={{ left: blueprintCodebaseLinkMenu.x, top: blueprintCodebaseLinkMenu.y }}
@@ -725,7 +748,9 @@ export const Timeline = ({
         >
           <select
             value={parsed.subStages.find((subStage) => subStage.id === stageMenu.subStageId)?.stage ?? ""}
+            disabled={readOnly}
             onChange={(event) => {
+              if (readOnly) return;
               updateSubStageStage(stageMenu.subStageId, event.target.value);
               setStageMenu(null);
             }}
@@ -777,9 +802,11 @@ export const Timeline = ({
         options={defaultStages}
         onClose={() => setTagPicker(null)}
         onCreate={(value) => {
+          if (readOnly) return;
           onStageCreation(value);
         }}
         onSelect={(value) => {
+          if (readOnly) return;
           if (!tagPicker) return;
 
           onStageUpdate({
@@ -798,7 +825,7 @@ export const Timeline = ({
           x={milestoneMenu.x}
           y={milestoneMenu.y}
           onCreate={
-            milestoneMenu.date !== ""
+            !readOnly && milestoneMenu.date !== ""
               ? () => {
                   dispatch(
                     addDesignStudyEvent({
@@ -812,7 +839,7 @@ export const Timeline = ({
               : undefined
           }
           onDelete={
-            selectedMilestone
+            !readOnly && selectedMilestone
               ? () => {
                   dispatch(deleteDesignStudyEvent(selectedMilestone.id));
                 }
