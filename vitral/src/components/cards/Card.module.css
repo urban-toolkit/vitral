@@ -90,7 +90,7 @@
 }
 
 .socialCard {
-	background-color: var(--social-color);
+	background-color: var(--technical-color);
 	border-radius: 16px;
 	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
 	backdrop-filter: blur(4px);
@@ -99,7 +99,7 @@
 }
 
 .socialCardBack {
-	background-color: var(--social-color-darker);
+	background-color: var(--technical-color-darker);
 	border-radius: 16px;
 	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
 	backdrop-filter: blur(4px);

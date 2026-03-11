@@ -48,7 +48,7 @@ export function Title({ textTitle, onSetTitle, onOpenSettings }: TitleProps) {
             </div>
 
             <div className={classes.subtitleContainer}>
-                <p>Design studies are <span className={classes.socialTag}>social</span> and <span className={classes.technicalTag}>technical</span></p>
+                <p>Design studies are <span className={classes.socialTag}>technical</span> and <span className={classes.technicalTag}>social</span></p>
             </div>
         </div>
     );

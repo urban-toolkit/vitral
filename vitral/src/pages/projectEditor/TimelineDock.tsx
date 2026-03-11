@@ -1,12 +1,12 @@
 import { memo } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faAnglesUp } from "@fortawesome/free-solid-svg-icons";
+import { faChevronUp } from "@fortawesome/free-solid-svg-icons";
 
 import { Timeline, type BlueprintEvent, type KnowledgeBaseEvent } from "@/components/timeline/Timeline";
 import type { DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
 
 export const TIMELINE_DOCK_HEIGHT = 380;
-export const TIMELINE_DOCK_TOGGLE_HEIGHT = 35;
+export const TIMELINE_DOCK_TOGGLE_HEIGHT = 15;
 
 const KNOWLEDGE_BASE_EVENTS: KnowledgeBaseEvent[] = [];
 
@@ -59,23 +59,23 @@ export const TimelineDock = memo(function TimelineDock({
         <>
             <div
                 style={{
-                    ...(open ? { bottom: `${TIMELINE_DOCK_HEIGHT}px` } : { bottom: 0 }),
+                    ...(open ? { bottom: `${TIMELINE_DOCK_HEIGHT + 65}px` } : { bottom: "65px" }),
+                    left: "50%",
+                    transform: "translate(-50%, 0)",
                     cursor: "pointer",
                     height: `${TIMELINE_DOCK_TOGGLE_HEIGHT - 10}px`,
                     padding: "5px",
                     position: "fixed",
-                    backgroundColor: "white",
                     zIndex: 2,
-                    border: "1px solid rgba(174, 172, 172, 0.39)",
                     display: "flex",
                     justifyContent: "center",
                     alignItems: "center",
                 }}
                 onClick={onToggleOpen}
             >
-                <p style={{ margin: 0 }}>Events</p>
+                {/* <p style={{ margin: 0 }}>Events</p> */}
                 <FontAwesomeIcon
-                    icon={faAnglesUp}
+                    icon={faChevronUp}
                     style={open ? { transform: "rotateX(180deg)" } : {}}
                 />
             </div>

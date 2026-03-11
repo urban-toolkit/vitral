@@ -17,9 +17,10 @@
     width: 100%;
     height: 100%;
     border-radius: 999px;
-    background: linear-gradient(180deg, #6ea7ff 0%, #3f7fe6 100%);
-    border: 1px solid #1f5cc0;
-    box-shadow: 0 8px 20px rgba(28, 71, 146, 0.32);
+    background: var(--social-color);
+    border: 1px solid rgba(0, 0, 0, 0.2);
+	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+	backdrop-filter: blur(4px);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -27,7 +28,6 @@
     text-align: center;
     padding: 10px;
     box-sizing: border-box;
-    color: #ffffff;
 }
 
 .line {
@@ -70,8 +70,8 @@
     min-height: 16px;
     padding: 0 4px;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(250, 250, 250, 0.9);
+    border: 1px solid rgba(0, 0, 0, 0.2);
 }
 
 .attachmentLabel {
@@ -87,7 +87,6 @@
 .attachmentRemove {
     border: 0;
     background: transparent;
-    color: #fff;
     font-size: 10px;
     line-height: 1;
     padding: 0;
@@ -96,5 +95,5 @@
 }
 
 .attachmentRemove:hover {
-    opacity: 1;
+    color: red;
 }

@@ -110,6 +110,7 @@ type UseTimelineChartParams = {
     newStageButtonRef: RefObject<HTMLSpanElement | null>;
     newCodebaseSubtrackButtonRef: RefObject<HTMLSpanElement | null>;
     syncCodebaseButtonRef: RefObject<HTMLSpanElement | null>;
+    llmButtonRef: RefObject<HTMLSpanElement | null>;
     width: number;
     height: number;
     margin: { top: number; right: number; bottom: number; left: number };
@@ -158,6 +159,7 @@ export function useTimelineChart({
     newStageButtonRef,
     newCodebaseSubtrackButtonRef,
     syncCodebaseButtonRef,
+    llmButtonRef,
     width,
     height,
     margin,
@@ -352,6 +354,7 @@ export function useTimelineChart({
             .attr("class", classes.axis)
             .attr("transform", `translate(0, ${margin.top + 14})`);
 
+        const laneBackgroundG = svg.append("g");
         const stageG = svg.append("g");
         const markerG = svg.append("g");
         const lanesG = svg.append("g");
@@ -390,7 +393,7 @@ export function useTimelineChart({
         lanes.forEach((lane) => {
             const y = laneY[lane.key];
 
-            lanesG
+            laneBackgroundG
                 .append("rect")
                 .attr("class", classes.laneLine)
                 .attr("x", margin.left)
@@ -444,6 +447,21 @@ export function useTimelineChart({
             .append("g")
             .attr("class", "codebase-subtrack");
 
+        laneBackgroundG
+            .selectAll("rect.codebase-subtrack-lane-line")
+            .data(codebaseSubtrackRows)
+            .enter()
+            .append("rect")
+            .attr("class", `${classes.laneLine} codebase-subtrack-lane-line`)
+            .attr("x", margin.left)
+            .attr("y", (row) => row.top)
+            .attr("width", totalTrackWidth)
+            .attr("height", (row) => row.height)
+            .style("fill", (row: any) => (row.isHighlighted ? "rgba(0, 199, 255, 0.14)" : "transparent"))
+            .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "#E3E3E3"))
+            .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : 1))
+            .style("pointer-events", "none");
+
         codebaseSubtrackGroups
             .append("line")
             .attr("class", classes.codebaseHierarchyLine)
@@ -453,18 +471,6 @@ export function useTimelineChart({
             .attr("y2", (row: any) => row.top + 12)
             .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
             .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : null))
-            .style("pointer-events", "none");
-
-        codebaseSubtrackGroups
-            .append("rect")
-            .attr("class", classes.laneLine)
-            .attr("x", margin.left)
-            .attr("y", (row) => row.top)
-            .attr("width", totalTrackWidth)
-            .attr("height", (row) => row.height)
-            .style("fill", (row: any) => (row.isHighlighted ? "rgba(0, 199, 255, 0.14)" : "transparent"))
-            .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "#E3E3E3"))
-            .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : 1))
             .style("pointer-events", "none");
 
         codebaseSubtrackGroups
@@ -555,14 +561,14 @@ export function useTimelineChart({
 
         codebaseSubtrackStatusIcon
             .append("circle")
-            .attr("r", 8)
+            .attr("r", 12)
             .attr("fill", "transparent");
 
         codebaseSubtrackStatusIcon
             .append("path")
             .attr("d", (row: any) => (row.inactive ? faCheckPath : faCirclePath))
-            .attr("transform", "scale(0.018) translate(-256 -256)")
-            .attr("fill", (row: any) => (row.inactive ? "#9b9b9b" : "#00A8DB"));
+            .attr("transform", "scale(0.022) translate(-256 -256)")
+            .attr("fill", (row: any) => (row.inactive ? "#9b9b9b" : "black"));
 
         codebaseSubtrackStatusIcon
             .append("title")
@@ -576,7 +582,7 @@ export function useTimelineChart({
             .attr("data-timeline-interactive", "true")
             .attr("fill", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
             .style("cursor", readOnly ? "default" : "pointer")
-            .text((row: any) => (row.collapsed ? ">" : "v"))
+            .text((row: any) => (row.collapsed ? "❯" : "V"))
             .on("click", (event: any, row: any) => {
                 if (readOnly) return;
                 event.stopPropagation();
@@ -631,8 +637,8 @@ export function useTimelineChart({
         codebaseSubtrackSuggestionIcon
             .append("path")
             .attr("d", faWandSparklesPath)
-            .attr("fill", (row: any) => (suggestingSubtrackIdSet.has(row.id) ? "#9b9b9b" : "#2d7dd2"))
-            .attr("transform", `scale(0.018) translate(${-faWandSparklesWidth / 2} ${-faWandSparklesHeight / 2})`);
+            .attr("fill", (row: any) => (suggestingSubtrackIdSet.has(row.id) ? "#9b9b9b" : "black"))
+            .attr("transform", `scale(0.023) translate(${-faWandSparklesWidth / 2} ${-faWandSparklesHeight / 2})`);
 
         codebaseSubtrackSuggestionIcon
             .append("title")
@@ -663,9 +669,10 @@ export function useTimelineChart({
             .attr("fill", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
             .text((row: any) => {
                 if (row.filePaths.length === 0) return "Drop GitHub files here";
-                const preview = row.filePaths.slice(0, 2).join(", ");
-                const moreCount = row.filePaths.length - 2;
-                return moreCount > 0 ? `${preview} +${moreCount}` : preview;
+                const preview = row.filePaths
+                    .slice(0, 2)
+                    .join(", ");
+                return preview.length > 20 ? `${preview.slice(0, 20)}...` : preview;
             })
             .attr("display", (row) => (row.collapsed ? "none" : "block"));
 
@@ -821,16 +828,17 @@ export function useTimelineChart({
             const axis = d3.axisBottom<Date>(x).ticks(Math.max(3, Math.floor(innerW / 120)));
             axisG.call(axis);
 
-            axisG
-                .selectAll("rect")
+            const axisBackground = axisG
+                .selectAll<SVGRectElement, string>("rect.axis-lane-background")
                 .data(["placeholder"])
-                .enter()
-                .append("rect")
-                .attr("class", classes.laneLine)
+                .join("rect")
+                .attr("class", `${classes.laneLine} axis-lane-background`)
                 .attr("x", timelineLeft)
                 .attr("y", 0)
                 .attr("width", innerW)
                 .attr("height", 30);
+            axisBackground.lower();
+            axisG.raise();
 
             const dividerDrag = d3
                 .drag<SVGLineElement, any>()
@@ -885,7 +893,7 @@ export function useTimelineChart({
                         .attr("class", classes.stageLabel)
                         .attr("x", (d: any) => (x(d.start) + x(d.end)) / 2)
                         .attr("y", margin.top + 58)
-                        .text((d: any) => `${d.name} v`);
+                        .text((d: any) => `${d.name} V`);
 
                     group
                         .append("text")
@@ -965,6 +973,11 @@ export function useTimelineChart({
                 syncCodebaseButtonRef.current,
                 timelineLeft - 20,
                 laneY.codebase + 5
+            );
+            setRefPos(
+                llmButtonRef.current,
+                timelineLeft - 20,
+                laneY.designStudy + 5
             );
 
             stageG
@@ -1342,7 +1355,7 @@ export function useTimelineChart({
                     .attr("class", classes.eventShape)
                     .style("fill", (eventData: any) => {
                         if (kind === "designStudy") {
-                            return eventData.generatedBy === "llm" ? "#2D7DD2" : "#FF4545";
+                            return eventData.generatedBy === "llm" ? "rgb(110, 176, 238)" : "rgb(238, 168, 110)";
                         }
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
@@ -1356,7 +1369,7 @@ export function useTimelineChart({
                     })
                     .style("stroke", (eventData: any) => {
                         if (kind === "designStudy") {
-                            return eventData.generatedBy === "llm" ? "#174A8A" : "#8E1E1E";
+                            return eventData.generatedBy === "llm" ? "rgb(67, 132, 192)" : "rgb(188, 115, 56)";
                         }
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
@@ -1569,6 +1582,7 @@ export function useTimelineChart({
         newStageButtonRef,
         newCodebaseSubtrackButtonRef,
         syncCodebaseButtonRef,
+        llmButtonRef,
         codebaseSubtracks,
         blueprintCodebaseLinks,
         systemScreenshotMarkers,

@@ -34,7 +34,6 @@
 }
 
 .panelCollapsed {
-    width: 236px;
     min-width: 236px;
     padding: 10px 12px;
     display: flex;

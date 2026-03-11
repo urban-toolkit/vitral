@@ -1114,7 +1114,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     ...node,
                     style: {
                         ...(node.style ?? {}),
-                        opacity: isEmphasized ? 1 : 0.35,
+                        opacity: isEmphasized ? 1 : 0.5,
                     },
                 };
             }

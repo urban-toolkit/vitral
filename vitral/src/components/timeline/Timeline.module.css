@@ -6,8 +6,9 @@
     background-color: white;
     padding: 10px;
     overflow-y: auto;
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.39);
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
 }
 
 .screenshotTooltip {
@@ -92,6 +93,9 @@
     height: auto;
     position: relative;
     font-size: var(--font-size-md);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px 0 0 12px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
 }
 
 .svg {
@@ -107,7 +111,7 @@
 
 .marker {
     position: absolute;
-    color: red;
+    color: rgb(238, 168, 110);
     transform: translate(-50%, -50%);
 }
 
@@ -115,15 +119,6 @@
     position: absolute;
     font-size: var(--font-size-xs);
     opacity: 50%;
-    cursor: pointer;
-}
-
-.milestonesLlmButton {
-    position: absolute;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: var(--font-size-xs);
     cursor: pointer;
 }
 
@@ -213,12 +208,12 @@
 /* lanes */
 .laneLine {
     stroke: #E3E3E3;
-    fill: none;
+    fill: rgba(250, 250, 250, 0.9);
 }
 
 .codebaseDropZone {
     stroke: none;
-    fill: rgb(240, 240, 240);
+    fill: rgba(250, 250, 250, 0.9);
 }
 
 .headerZoneDivider {
@@ -254,15 +249,15 @@
 }
 
 .eventShape {
-    fill: rgba(0, 0, 0, 0.8);
-    stroke: rgba(255, 255, 255, 0.85);
+    fill: rgb(238, 168, 110);
+    stroke: rgb(188, 115, 56);
     stroke-width: 1;
 }
 
 .blueprintCodebaseLink {
     fill: none;
     stroke: rgba(45, 125, 210, 0.45);
-    stroke-width: 2;
+    stroke-width: 3;
     pointer-events: none;
 }
 

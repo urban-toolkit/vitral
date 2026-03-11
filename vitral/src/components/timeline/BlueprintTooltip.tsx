@@ -21,15 +21,31 @@ export function BlueprintTooltip({ event }: BlueprintTooltipProps) {
 
       {event.paperTitle ? (
         <p style={{ fontSize: "var(--font-size-sm)", color: "var(--subtitle-color)" }}>
-          {event.paperTitle}
+          {
+            event.paperTitle != "Manual component" && event.paperTitle
+            ?
+            <><strong>Paper:</strong> {event.paperTitle}</>
+            :
+            null
+          }
         </p>
       ) : null}
+
+      <br/>
 
       <p style={{ fontSize: "var(--font-size-sm)", whiteSpace: "pre-wrap" }}>
         {event.paperDescription && event.paperDescription.trim() !== ""
           ? event.paperDescription
-          : "No paper description available."}
+          : 
+          event.paperTitle != "Manual component" && event.paperTitle
+          ?
+          "No paper description available."
+          :
+          ""
+        }
       </p>
+
+      <br/>
 
       {event.referenceCitation && event.referenceCitation.trim() !== "" ? (
         <p style={{ fontSize: "var(--font-size-xs)", whiteSpace: "pre-wrap", color: "var(--subtitle-color)" }}>

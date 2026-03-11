@@ -64,6 +64,125 @@ function blueprintGroupConfig(level: unknown): {
     return { minWidth: 220, minHeight: 120, paddingRight: 28, paddingBottom: 24 };
 }
 
+function getComponentColumns(count: number): number {
+    if (count <= 1) return 1;
+    if (count <= 4) return 2;
+    if (count <= 9) return 3;
+    return 4;
+}
+
+function getIntermediateColumns(count: number): number {
+    if (count <= 1) return 1;
+    if (count <= 4) return 2;
+    return 3;
+}
+
+function sortNodesByPosition(nodes: nodeType[]): nodeType[] {
+    return [...nodes].sort((a, b) => {
+        if (a.position.y !== b.position.y) return a.position.y - b.position.y;
+        if (a.position.x !== b.position.x) return a.position.x - b.position.x;
+        return a.id.localeCompare(b.id);
+    });
+}
+
+function compactBlueprintChildren(group: nodeType, children: nodeType[]): void {
+    const data = group.data as Record<string, unknown>;
+    const level = data.blueprintGroupLevel;
+
+    if (level === "intermediate") {
+        const components = sortNodesByPosition(
+            children.filter((child) => nodeLabel(child) === "blueprint_component")
+        );
+        if (components.length === 0) return;
+
+        const columns = getComponentColumns(components.length);
+        const contentTop = 42;
+        const paddingX = 18;
+        const componentSize = 112;
+        const gapX = 24;
+        const gapY = 24;
+
+        components.forEach((component, index) => {
+            const col = index % columns;
+            const row = Math.floor(index / columns);
+            component.position = {
+                x: paddingX + col * (componentSize + gapX),
+                y: contentTop + row * (componentSize + gapY),
+            };
+        });
+        return;
+    }
+
+    if (level === "high") {
+        const intermediateGroups = sortNodesByPosition(
+            children.filter((child) => {
+                if (nodeLabel(child) !== "blueprint_group") return false;
+                const childData = child.data as Record<string, unknown>;
+                return childData.blueprintGroupLevel === "intermediate";
+            }),
+        );
+        if (intermediateGroups.length === 0) return;
+
+        const columns = getIntermediateColumns(intermediateGroups.length);
+        const rows = Math.max(1, Math.ceil(intermediateGroups.length / columns));
+        const columnWidths = new Array<number>(columns).fill(0);
+        const rowHeights = new Array<number>(rows).fill(0);
+
+        for (let index = 0; index < intermediateGroups.length; index++) {
+            const col = index % columns;
+            const row = Math.floor(index / columns);
+            const size = nodeSize(intermediateGroups[index]);
+            columnWidths[col] = Math.max(columnWidths[col], size.width);
+            rowHeights[row] = Math.max(rowHeights[row], size.height);
+        }
+
+        const columnOffsets = new Array<number>(columns).fill(0);
+        const rowOffsets = new Array<number>(rows).fill(0);
+        const gapX = 28;
+        const gapY = 28;
+        for (let index = 1; index < columns; index++) {
+            columnOffsets[index] = columnOffsets[index - 1] + columnWidths[index - 1] + gapX;
+        }
+        for (let index = 1; index < rows; index++) {
+            rowOffsets[index] = rowOffsets[index - 1] + rowHeights[index - 1] + gapY;
+        }
+
+        const contentTop = 46;
+        const paddingX = 22;
+
+        intermediateGroups.forEach((intermediateGroup, index) => {
+            const col = index % columns;
+            const row = Math.floor(index / columns);
+            intermediateGroup.position = {
+                x: paddingX + columnOffsets[col],
+                y: contentTop + rowOffsets[row],
+            };
+        });
+        return;
+    }
+
+    if (level === "paper") {
+        const highGroups = sortNodesByPosition(
+            children.filter((child) => {
+                if (nodeLabel(child) !== "blueprint_group") return false;
+                const childData = child.data as Record<string, unknown>;
+                return childData.blueprintGroupLevel === "high";
+            }),
+        );
+        if (highGroups.length === 0) return;
+
+        const contentTop = 54;
+        const paddingX = 28;
+        const gapX = 120;
+        let cursorX = paddingX;
+
+        highGroups.forEach((highGroup) => {
+            highGroup.position = { x: cursorX, y: contentTop };
+            cursorX += nodeSize(highGroup).width + gapX;
+        });
+    }
+}
+
 function resizeSystemBlueprintGroups(nodes: nodeType[]): void {
     const byId = new Map(nodes.map((node) => [node.id, node]));
     const childrenByParent = new Map<string, nodeType[]>();
@@ -102,6 +221,7 @@ function resizeSystemBlueprintGroups(nodes: nodeType[]): void {
         const data = group.data as Record<string, unknown>;
         const config = blueprintGroupConfig(data.blueprintGroupLevel);
         const children = childrenByParent.get(group.id) ?? [];
+        compactBlueprintChildren(group, children);
 
         let maxRight = 0;
         let maxBottom = 0;
