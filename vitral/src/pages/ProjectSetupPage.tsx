@@ -79,6 +79,10 @@ function safeIso(input: string, fallbackIso: string): string {
     return Number.isNaN(parsed.getTime()) ? fallbackIso : parsed.toISOString();
 }
 
+function isPlaceholderStageName(name: string): boolean {
+    return name.trim().toLowerCase() === "untitled";
+}
+
 function toDateInputFromUnknown(value: Date | string | undefined, fallback: string): string {
     if (!value) return fallback;
     const parsed = new Date(value);
@@ -174,7 +178,10 @@ function normalizeSetup(source: unknown): SetupState {
     };
 }
 
-function toTimelinePayload(setup: SetupState): TimelineStatePayload {
+function toTimelinePayload(
+    setup: SetupState,
+    existingTimeline?: TimelineStatePayload,
+): TimelineStatePayload {
     const fallbackStartIso = new Date().toISOString();
     const fallbackEndIso = plusDays(new Date(), 90).toISOString();
 
@@ -194,17 +201,28 @@ function toTimelinePayload(setup: SetupState): TimelineStatePayload {
 
     return {
         stages,
-        subStages: [],
+        subStages: Array.isArray(existingTimeline?.subStages) ? existingTimeline.subStages : [],
         designStudyEvents,
-        blueprintEvents: [],
-        codebaseSubtracks: [],
-        blueprintCodebaseLinks: [],
+        blueprintEvents: Array.isArray(existingTimeline?.blueprintEvents) ? existingTimeline.blueprintEvents : [],
+        codebaseSubtracks: Array.isArray(existingTimeline?.codebaseSubtracks) ? existingTimeline.codebaseSubtracks : [],
+        blueprintCodebaseLinks: Array.isArray(existingTimeline?.blueprintCodebaseLinks)
+            ? existingTimeline.blueprintCodebaseLinks
+            : [],
+        systemScreenshotMarkers: Array.isArray(existingTimeline?.systemScreenshotMarkers)
+            ? existingTimeline.systemScreenshotMarkers
+            : [],
         participants: setup.participants.map((participant, index) => ({
             id: participant.id || crypto.randomUUID(),
             name: participant.name?.trim() || `Participant ${index + 1}`,
             role: participant.role?.trim() || "Researcher",
         })),
-        defaultStages: Array.from(new Set(stages.map((stage) => stage.name))),
+        defaultStages: Array.from(
+            new Set(
+                stages
+                    .map((stage) => stage.name)
+                    .filter((name) => name.trim() !== "" && !isPlaceholderStageName(name))
+            )
+        ),
         timelineStartEnd: {
             start: safeIso(setup.timeline.expectedStart, fallbackStartIso),
             end: safeIso(setup.timeline.expectedEnd, fallbackEndIso),
@@ -323,6 +341,7 @@ export function ProjectSetupPage() {
     const [selectedTemplate, setSelectedTemplate] = useState<TemplateSelection>(null);
     const [setup, setSetup] = useState<SetupState>(() => buildInitialSetup());
     const [existingFlowState, setExistingFlowState] = useState<FlowStatePayload>({ flow: { nodes: [], edges: [] } });
+    const [existingTimelinePayload, setExistingTimelinePayload] = useState<TimelineStatePayload | undefined>(undefined);
 
     const [activeTab, setActiveTab] = useState<"form" | "json">("form");
     const [jsonDraft, setJsonDraft] = useState(() => JSON.stringify(buildInitialSetup(), null, 2));
@@ -388,6 +407,7 @@ export function ProjectSetupPage() {
                     ]);
 
                     setExistingFlowState(doc.state ?? { flow: { nodes: [], edges: [] } });
+                    setExistingTimelinePayload(doc.timeline);
                     setLoadedGoal(doc.description || "");
                     setSetup((prev) => ({
                         ...prev,
@@ -656,7 +676,10 @@ export function ProjectSetupPage() {
                 }
             }
 
-            const timelinePayload = toTimelinePayload(effectiveSetup);
+            const timelinePayload = toTimelinePayload(
+                effectiveSetup,
+                isEditMode ? existingTimelinePayload : undefined,
+            );
 
             if (isEditMode && projectId) {
                 await saveDocument(projectId, existingFlowState, timelinePayload, title);

@@ -362,6 +362,7 @@ export function useTimelineChart({
         const subStagesG = svg.append("g");
         const blueprintCodebaseLinksG = svg.append("g");
         const eventsG = svg.append("g");
+        const screenshotOverlayG = svg.append("g");
 
         const lanes = [
             { key: "designStudy", label: "Design study" },
@@ -1162,7 +1163,9 @@ export function useTimelineChart({
             const clampTimelineX = (value: number) =>
                 Math.max(timelineLeft, Math.min(timelineLeft + innerW, value));
 
-            const screenshotMarkerGroups = markerG
+            screenshotOverlayG.selectAll("*").remove();
+
+            const screenshotMarkerGroups = screenshotOverlayG
                 .selectAll("g.systemScreenshotMarker")
                 .data(parsedSystemScreenshotMarkers, (markerData: any) => markerData.id)
                 .join((enter) =>
@@ -1246,6 +1249,9 @@ export function useTimelineChart({
                 .attr("font-size", 10)
                 .style("pointer-events", "none")
                 .text((markerData: any) => formatDate(markerData.occurredAt));
+
+            // Keep screenshot marker line/circle above the top axis background band.
+            screenshotOverlayG.raise();
 
             blueprintCodebaseLinksG.selectAll("*").remove();
             eventsG.selectAll("*").remove();

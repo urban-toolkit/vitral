@@ -696,6 +696,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
     const [hoveredAssetFileId, setHoveredAssetFileId] = useState<string | null>(null);
     const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
+    const [processingSystemScreenshot, setProcessingSystemScreenshot] = useState(false);
     const [projectGoal, setProjectGoal] = useState("");
     const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
     const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
@@ -2402,6 +2403,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const handleUploadSystemScreenshotForLatestMarker = useCallback(async (file: File) => {
         if (reviewOnly) return;
+        setProcessingSystemScreenshot(true);
         try {
             const imageDataUrl = await readImageFileAsDataUrl(file);
             const { width: imageWidth, height: imageHeight } = await readImageDimensionsFromDataUrl(imageDataUrl);
@@ -2448,6 +2450,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to load screenshot.";
             window.alert(message);
+        } finally {
+            setProcessingSystemScreenshot(false);
         }
     }, [codebaseSubtracks, dispatch, mostRecentSystemScreenshotMarker?.id, projectGoal, projectId, reviewOnly, title]);
 
@@ -2567,6 +2571,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 <SystemScreenshotPanel
                     rightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX + 12}
                     latestImageDataUrl={mostRecentSystemScreenshotMarker?.imageDataUrl ?? ""}
+                    processing={processingSystemScreenshot}
                     onAddMarker={handleAddSystemScreenshotMarker}
                     onUploadForLatestMarker={handleUploadSystemScreenshotForLatestMarker}
                 />

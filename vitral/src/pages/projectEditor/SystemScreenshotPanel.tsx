@@ -6,6 +6,7 @@ import styles from "./SystemScreenshotPanel.module.css";
 type SystemScreenshotPanelProps = {
     rightOffsetPx: number;
     latestImageDataUrl: string;
+    processing: boolean;
     onAddMarker: () => void;
     onUploadForLatestMarker: (file: File) => Promise<void> | void;
 };
@@ -13,6 +14,7 @@ type SystemScreenshotPanelProps = {
 export function SystemScreenshotPanel({
     rightOffsetPx,
     latestImageDataUrl,
+    processing,
     onAddMarker,
     onUploadForLatestMarker,
 }: SystemScreenshotPanelProps) {
@@ -29,6 +31,11 @@ export function SystemScreenshotPanel({
 
     return (
         <div className={styles.root} style={{ right: rightOffsetPx }}>
+            {processing ? (
+                <div className={styles.loadingIndicator} aria-label="Processing screenshot">
+                    <span className={styles.loadingSpinner} />
+                </div>
+            ) : null}
             <div className={styles.header}>
                 <button
                     type="button"

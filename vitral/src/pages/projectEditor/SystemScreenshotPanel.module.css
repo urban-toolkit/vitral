@@ -10,6 +10,36 @@
     backdrop-filter: blur(4px);
 }
 
+.loadingIndicator {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+}
+
+.loadingSpinner {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    border: 2px solid rgba(229, 150, 45, 0.25);
+    border-top-color: #e5962d;
+    animation: screenshotSpin 0.8s linear infinite;
+}
+
+@keyframes screenshotSpin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .header {
     display: flex;
     align-items: center;
