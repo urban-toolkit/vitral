@@ -39,6 +39,13 @@ export type ProjectViGithubEventEntry = {
     insertedAt: string;
 };
 
+export type ProjectViRevisionEntry = {
+    version: number;
+    capturedAt: string;
+    state: unknown;
+    timeline: unknown;
+};
+
 export type ProjectViBundleV1 = {
     format: "vitral-project";
     version: 1;
@@ -59,6 +66,7 @@ export type ProjectViBundleV1 = {
     files: ProjectViFileEntry[];
     embeddings: ProjectViEmbeddingEntry[];
     githubEvents: ProjectViGithubEventEntry[];
+    revisions: ProjectViRevisionEntry[];
 };
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -142,6 +150,21 @@ function normalizeGithubEventEntry(value: unknown, index: number): ProjectViGith
     };
 }
 
+function normalizeRevisionEntry(value: unknown, index: number): ProjectViRevisionEntry {
+    if (!isRecord(value)) {
+        throw new Error(`Invalid .vi payload: revisions[${index}] must be an object`);
+    }
+    const parsedVersion = typeof value.version === "number" ? value.version : Number(value.version);
+    return {
+        version: Number.isFinite(parsedVersion) ? Math.max(1, Math.trunc(parsedVersion)) : 1,
+        capturedAt: typeof value.capturedAt === "string" && value.capturedAt.trim() !== ""
+            ? value.capturedAt
+            : new Date().toISOString(),
+        state: value.state ?? {},
+        timeline: value.timeline ?? {},
+    };
+}
+
 export function encodeProjectVi(bundle: ProjectViBundleV1): Buffer {
     const jsonBytes = Buffer.from(JSON.stringify(bundle), "utf8");
     const compressed = gzipSync(jsonBytes);
@@ -198,6 +221,7 @@ export function decodeProjectVi(bytes: Buffer): ProjectViBundleV1 {
     const filesRaw = Array.isArray(parsed.files) ? parsed.files : [];
     const embeddingsRaw = Array.isArray(parsed.embeddings) ? parsed.embeddings : [];
     const githubEventsRaw = Array.isArray(parsed.githubEvents) ? parsed.githubEvents : [];
+    const revisionsRaw = Array.isArray(parsed.revisions) ? parsed.revisions : [];
 
     return {
         format: "vitral-project",
@@ -233,5 +257,6 @@ export function decodeProjectVi(bytes: Buffer): ProjectViBundleV1 {
         files: filesRaw.map((entry, index) => normalizeFileEntry(entry, index)),
         embeddings: embeddingsRaw.map((entry, index) => normalizeEmbeddingEntry(entry, index)),
         githubEvents: githubEventsRaw.map((entry, index) => normalizeGithubEventEntry(entry, index)),
+        revisions: revisionsRaw.map((entry, index) => normalizeRevisionEntry(entry, index)),
     };
 }

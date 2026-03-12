@@ -2066,6 +2066,33 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             return reply.status(404).send({ error: "Document not found" });
         }
 
+        const revisionRows = await app.pg.query<{
+            version: number;
+            captured_at: string;
+            state: unknown;
+            timeline: unknown;
+        }>(
+            `
+            SELECT version, captured_at, state, timeline
+            FROM document_state_revisions
+            WHERE document_id = $1
+            ORDER BY captured_at ASC, version ASC, id ASC
+            `,
+            [id],
+        );
+
+        const revisions: ProjectViBundleV1["revisions"] = revisionRows.rows.map((row: {
+            version: number;
+            captured_at: string;
+            state: unknown;
+            timeline: unknown;
+        }) => ({
+            version: Number.isFinite(row.version) ? Math.max(1, Math.trunc(row.version)) : 1,
+            capturedAt: new Date(row.captured_at).toISOString(),
+            state: row.state ?? {},
+            timeline: row.timeline ?? {},
+        }));
+
         const fileRows = await app.pg.query<{
             id: string;
             name: string;
@@ -2250,6 +2277,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             files,
             embeddings,
             githubEvents,
+            revisions,
         };
 
         const encoded = encodeProjectVi(bundle);
@@ -2482,6 +2510,51 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                         githubEvent.branchName,
                         JSON.stringify(githubEvent.payload ?? {}),
                         insertedAt,
+                    ],
+                );
+            }
+
+            const revisionsToPersist: ProjectViBundleV1["revisions"] = bundle.revisions.length > 0
+                ? bundle.revisions
+                : [{
+                    version: Number.isFinite(bundle.document.version)
+                        ? Math.max(1, Math.trunc(bundle.document.version))
+                        : 1,
+                    capturedAt: typeof bundle.document.updatedAt === "string" && bundle.document.updatedAt.trim() !== ""
+                        ? bundle.document.updatedAt
+                        : nowIso,
+                    state: bundle.document.state ?? {},
+                    timeline: bundle.document.timeline ?? {},
+                }];
+
+            for (const revision of revisionsToPersist) {
+                const parsedCapturedAt = new Date(revision.capturedAt);
+                const capturedAt = Number.isNaN(parsedCapturedAt.getTime())
+                    ? nowIso
+                    : parsedCapturedAt.toISOString();
+                const revisionVersion = Number.isFinite(revision.version)
+                    ? Math.max(1, Math.trunc(revision.version))
+                    : 1;
+                const remappedRevisionState = remapStateFileReferences(revision.state, fileIdMap);
+                const revisionTimeline = revision.timeline ?? {};
+
+                await client.query(
+                    `
+                    INSERT INTO document_state_revisions (
+                        document_id,
+                        version,
+                        captured_at,
+                        state,
+                        timeline
+                    )
+                    VALUES ($1, $2, $3::timestamptz, $4::jsonb, $5::jsonb)
+                    `,
+                    [
+                        newDoc.id,
+                        revisionVersion,
+                        capturedAt,
+                        JSON.stringify(remappedRevisionState),
+                        JSON.stringify(revisionTimeline),
                     ],
                 );
             }
