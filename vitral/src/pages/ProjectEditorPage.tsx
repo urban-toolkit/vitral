@@ -2827,15 +2827,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 />
             ) : null}
 
-            {!reviewOnly ? (
-                <SystemScreenshotPanel
-                    rightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX + 12}
-                    latestImageDataUrl={playbackAwareSystemScreenshotMarker?.imageDataUrl ?? ""}
-                    processing={processingSystemScreenshot}
-                    onAddMarker={handleAddSystemScreenshotMarker}
-                    onUploadForLatestMarker={handleUploadSystemScreenshotForLatestMarker}
-                />
-            ) : null}
+            <SystemScreenshotPanel
+                rightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX + 12}
+                latestImageDataUrl={playbackAwareSystemScreenshotMarker?.imageDataUrl ?? ""}
+                processing={processingSystemScreenshot}
+                readOnly={reviewOnly}
+                onAddMarker={handleAddSystemScreenshotMarker}
+                onUploadForLatestMarker={handleUploadSystemScreenshotForLatestMarker}
+            />
 
             <RightSidebar
                 projectId={projectId}

@@ -7,6 +7,7 @@ type SystemScreenshotPanelProps = {
     rightOffsetPx: number;
     latestImageDataUrl: string;
     processing: boolean;
+    readOnly?: boolean;
     onAddMarker: () => void;
     onUploadForLatestMarker: (file: File) => Promise<void> | void;
 };
@@ -15,6 +16,7 @@ export function SystemScreenshotPanel({
     rightOffsetPx,
     latestImageDataUrl,
     processing,
+    readOnly = false,
     onAddMarker,
     onUploadForLatestMarker,
 }: SystemScreenshotPanelProps) {
@@ -50,7 +52,9 @@ export function SystemScreenshotPanel({
                     type="button"
                     className={styles.iconButton}
                     title="Create new system version marker"
+                    disabled={readOnly}
                     onClick={() => {
+                        if (readOnly) return;
                         onAddMarker();
                         inputRef.current?.click();
                     }}
@@ -61,14 +65,19 @@ export function SystemScreenshotPanel({
 
             {!collapsed ? (
                 <div
-                    className={`${styles.dropZone} ${draggingOver ? styles.dropZoneActive : ""}`}
-                    onClick={() => inputRef.current?.click()}
+                    className={`${styles.dropZone} ${draggingOver ? styles.dropZoneActive : ""} ${readOnly ? styles.dropZoneReadOnly : ""}`}
+                    onClick={() => {
+                        if (readOnly) return;
+                        inputRef.current?.click();
+                    }}
                     onDragEnter={(event) => {
+                        if (readOnly) return;
                         event.preventDefault();
                         event.stopPropagation();
                         setDraggingOver(true);
                     }}
                     onDragOver={(event) => {
+                        if (readOnly) return;
                         event.preventDefault();
                         event.stopPropagation();
                         setDraggingOver(true);
@@ -77,11 +86,13 @@ export function SystemScreenshotPanel({
                         }
                     }}
                     onDragLeave={(event) => {
+                        if (readOnly) return;
                         event.preventDefault();
                         event.stopPropagation();
                         setDraggingOver(false);
                     }}
                     onDrop={(event: DragEvent<HTMLDivElement>) => {
+                        if (readOnly) return;
                         event.preventDefault();
                         event.stopPropagation();
                         setDraggingOver(false);
