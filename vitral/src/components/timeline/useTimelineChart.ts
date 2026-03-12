@@ -309,6 +309,7 @@ export function useTimelineChart({
         const highlightedSubtrackIdsFromFileHover = new Set<string>();
         const highlightedSubtrackIdsFromBlueprintHover = new Set<string>();
         const highlightedBlueprintEventIds = new Set<string>();
+        const highlightedKnowledgeBlueprintLinkIds = new Set<string>();
         const connectedBlueprintComponentNodeIdSet = new Set(connectedBlueprintComponentNodeIds);
         const suggestingSubtrackIdSet = new Set(suggestingCodebaseSubtrackIds);
         const parsedSystemScreenshotMarkers = systemScreenshotMarkers
@@ -393,6 +394,7 @@ export function useTimelineChart({
             if (hoveredTreeNodeIds && hoveredTreeNodeIds.size > 0) {
                 for (const link of knowledgeBlueprintLinks) {
                     if (hoveredTreeNodeIds.has(link.cardNodeId)) {
+                        highlightedKnowledgeBlueprintLinkIds.add(link.id);
                         highlightedBlueprintEventIds.add(link.blueprintEventId);
                     }
                 }
@@ -1112,10 +1114,10 @@ export function useTimelineChart({
                 });
         };
 
-        let hoveredKnowledgePillTreeId: string | null = null;
+        let activeKnowledgePillTreeId: string | null = null;
         const hideKnowledgePillTooltip = () => {
-            if (hoveredKnowledgePillTreeId === null) return;
-            hoveredKnowledgePillTreeId = null;
+            if (activeKnowledgePillTreeId === null) return;
+            activeKnowledgePillTreeId = null;
             onHoveredKnowledgeTreeIdChange(null);
             setShowTooltip(false);
         };
@@ -1574,7 +1576,7 @@ export function useTimelineChart({
                 return { startX, width, centerX, trackRow, startY };
             };
             const showKnowledgePillTooltip = (event: MouseEvent, pillData: any) => {
-                hoveredKnowledgePillTreeId = pillData.treeId;
+                activeKnowledgePillTreeId = pillData.treeId;
                 onHoveredKnowledgeTreeIdChange(pillData.treeId);
                 const heightOffset = containerRef.current
                     ? containerRef.current.getBoundingClientRect().top
@@ -1614,8 +1616,13 @@ export function useTimelineChart({
                     });
                     return `translate(${layout.startX}, ${layout.startY})`;
                 })
-                .on("mouseleave", () => {
-                    hideKnowledgePillTooltip();
+                .on("mouseenter", (_event: any, pillData: any) => {
+                    if (activeKnowledgePillTreeId !== null) return;
+                    onHoveredKnowledgeTreeIdChange(pillData.treeId);
+                })
+                .on("mouseleave", (_event: any, pillData: any) => {
+                    if (activeKnowledgePillTreeId !== null && activeKnowledgePillTreeId === pillData.treeId) return;
+                    onHoveredKnowledgeTreeIdChange(null);
                 });
 
             const pillRects = pillGroups
@@ -1628,15 +1635,15 @@ export function useTimelineChart({
                 .attr("stroke", "rgb(188, 115, 56)")
                 .attr("stroke-width", 1.2)
                 .attr("data-timeline-interactive", "true")
-                .style("cursor", readOnly ? "help" : "ns-resize")
-                .on("mouseenter", (event: any, pillData: any) => {
+                .style("cursor", readOnly ? "pointer" : "ns-resize")
+                .on("click", (event: any, pillData: any) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (activeKnowledgePillTreeId === pillData.treeId) {
+                        hideKnowledgePillTooltip();
+                        return;
+                    }
                     showKnowledgePillTooltip(event, pillData);
-                })
-                .on("mousemove", (event: any, pillData: any) => {
-                    showKnowledgePillTooltip(event, pillData);
-                })
-                .on("mouseleave", () => {
-                    hideKnowledgePillTooltip();
                 });
 
             pillRects.append("title")
@@ -1718,8 +1725,7 @@ export function useTimelineChart({
                     .attr("data-timeline-interactive", "true")
                     .style("cursor", "pointer")
                     .on("click", (event: any, eventData: any) => {
-                        hoveredKnowledgePillTreeId = null;
-                        onHoveredKnowledgeTreeIdChange(null);
+                        hideKnowledgePillTooltip();
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
                             : 0;
@@ -1817,16 +1823,24 @@ export function useTimelineChart({
                     `Label: ${connectionData.label || connectionData.kind}`
                 );
 
-            knowledgeBlueprintLinksG
+            const knowledgeBlueprintPaths = knowledgeBlueprintLinksG
                 .selectAll("path.knowledge-blueprint-link")
                 .data(knowledgeBlueprintLinks)
                 .join("path")
                 .attr("class", "knowledge-blueprint-link")
                 .attr("data-timeline-interactive", "true")
                 .attr("fill", "none")
-                .attr("stroke", (linkData: any) => connectionColorForKind(linkData.kind))
-                .attr("stroke-width", 3)
-                .attr("opacity", 0.85)
+                .attr("stroke", (linkData: any) =>
+                    highlightedKnowledgeBlueprintLinkIds.has(linkData.id)
+                        ? BLUEPRINT_HIGHLIGHT_STROKE
+                        : connectionColorForKind(linkData.kind)
+                )
+                .attr("stroke-width", (linkData: any) =>
+                    highlightedKnowledgeBlueprintLinkIds.has(linkData.id) ? 4 : 3
+                )
+                .attr("opacity", (linkData: any) =>
+                    highlightedKnowledgeBlueprintLinkIds.has(linkData.id) ? 1 : 0.85
+                )
                 .style("cursor", "pointer")
                 .attr("d", (linkData: any) => {
                     const createdPosition = cardCreatedPositionByNodeId.get(linkData.cardNodeId);
@@ -1836,7 +1850,8 @@ export function useTimelineChart({
                     const endY = laneY.blueprint + laneH / 2;
                     const midY = (startY + endY) / 2;
                     return `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`;
-                })
+                });
+            knowledgeBlueprintPaths
                 .append("title")
                 .text((linkData: any) =>
                     `${linkData.cardTitle} (${linkData.cardLabel}) -> ${linkData.blueprintEventName}\n` +
@@ -2135,8 +2150,7 @@ export function useTimelineChart({
                     })
                     .on("click", (event: any, eventData: any) => {
                         if (kind !== "codebase" && kind !== "blueprint") return;
-                        hoveredKnowledgePillTreeId = null;
-                        onHoveredKnowledgeTreeIdChange(null);
+                        hideKnowledgePillTooltip();
 
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
@@ -2210,19 +2224,8 @@ export function useTimelineChart({
                 plot(rowEvents, "codebase", row.center, drawSquare, row.inactive ? 0.35 : 1);
             }
 
-            svg.on("mousemove.knowledge-pill-hover-guard", (event: MouseEvent) => {
-                if (hoveredKnowledgePillTreeId === null) return;
-                const target = event.target;
-                if (!(target instanceof Element)) {
-                    hideKnowledgePillTooltip();
-                    return;
-                }
-                if (!target.closest("g.knowledge-tree-pill")) {
-                    hideKnowledgePillTooltip();
-                }
-            });
             svg.on("mousedown.knowledge-pill-hover-guard", (event: MouseEvent) => {
-                if (hoveredKnowledgePillTreeId === null) return;
+                if (activeKnowledgePillTreeId === null) return;
                 const target = event.target;
                 if (!(target instanceof Element) || !target.closest("g.knowledge-tree-pill")) {
                     hideKnowledgePillTooltip();
