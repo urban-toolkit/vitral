@@ -89,6 +89,7 @@ import {
     selectAllDesignStudyEvents,
     selectAllStages,
     selectDefaultStages,
+    selectHighlightedKnowledgeNodeIds,
     selectParticipants,
     selectSystemScreenshotMarkers,
     selectHoveredCodebaseFilePath,
@@ -742,6 +743,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
     const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
     const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
+    const highlightedKnowledgeNodeIds = useSelector(selectHighlightedKnowledgeNodeIds);
 
     const llmProjectSettings = useMemo<LlmProjectSettingsContext>(() => {
         const participantRecords = participants.map((participant) => ({
@@ -810,45 +812,81 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [mostRecentSystemScreenshotMarker, playbackAt, systemScreenshotMarkers]);
     const isPlaybackMode = playbackAt !== null;
     const interactionLocked = reviewOnly || isPlaybackMode;
+    const knowledgeProvenanceTriggerKey = useMemo(() => {
+        const nodeParts = nodes
+            .map((node) => {
+                const nodeData = (node.data ?? {}) as Record<string, unknown>;
+                const label = normalizeNodeLabel(String(nodeData.label ?? ""));
+                const titleValue = typeof nodeData.title === "string" ? nodeData.title : "";
+                const descriptionValue = typeof nodeData.description === "string" ? nodeData.description : "";
+                const relevantValue = nodeData.relevant === false ? "0" : "1";
+                const parentValue = typeof node.parentId === "string" ? node.parentId : "";
+                return `${node.id}|${label}|${titleValue}|${descriptionValue}|${relevantValue}|${parentValue}`;
+            })
+            .sort();
+        const edgeParts = edges
+            .map((edge) => {
+                const edgeData = (edge.data ?? {}) as Record<string, unknown>;
+                const labelValue = typeof edgeData.label === "string"
+                    ? edgeData.label
+                    : (typeof edge.label === "string" ? edge.label : "");
+                const sourceLabel = typeof edgeData.from === "string" ? edgeData.from : "";
+                const targetLabel = typeof edgeData.to === "string" ? edgeData.to : "";
+                return `${edge.id}|${edge.source}|${edge.target}|${labelValue}|${sourceLabel}|${targetLabel}`;
+            })
+            .sort();
+        const blueprintParts = blueprintEvents
+            .map((eventData) => `${eventData.id}|${eventData.componentNodeId ?? ""}|${eventData.name ?? ""}|${eventData.occurredAt}`)
+            .sort();
+        return [
+            nodeParts.join("~"),
+            edgeParts.join("~"),
+            blueprintParts.join("~"),
+        ].join("||");
+    }, [blueprintEvents, edges, nodes]);
+    const lastKnowledgeProvenanceKeyRef = useRef<string>("");
+    const previousKnowledgeSyncStatusRef = useRef<string>(status);
 
     useEffect(() => {
+        const previousStatus = previousKnowledgeSyncStatusRef.current;
+        const shouldForceAfterSaveSettled = previousStatus === "saving" && status === "ready";
+        previousKnowledgeSyncStatusRef.current = status;
+
         if (status === "loading") return;
+        const requestKey = `${projectId}|${knowledgeProvenanceTriggerKey}`;
+        if (lastKnowledgeProvenanceKeyRef.current === requestKey && !shouldForceAfterSaveSettled) return;
+
         let active = true;
-        const timers: number[] = [];
         const loadKnowledgeProvenanceSnapshot = async () => {
             const at = new Date().toISOString();
             try {
                 const provenance = await loadKnowledgeProvenance(projectId, at);
                 if (!active) return;
+                lastKnowledgeProvenanceKeyRef.current = requestKey;
                 setKnowledgePills(Array.isArray(provenance.pills) ? provenance.pills : []);
                 setKnowledgeCreationEvents(Array.isArray(provenance.events) ? provenance.events : []);
                 setKnowledgeCrossTreeConnections(Array.isArray(provenance.crossTreeConnections) ? provenance.crossTreeConnections : []);
                 setKnowledgeBlueprintLinks(Array.isArray(provenance.blueprintLinks) ? provenance.blueprintLinks : []);
             } catch (error) {
                 if (!active) return;
+                lastKnowledgeProvenanceKeyRef.current = "";
                 console.warn("Failed to load knowledge provenance timeline payload.", error);
-                setKnowledgePills([]);
-                setKnowledgeCreationEvents([]);
-                setKnowledgeCrossTreeConnections([]);
-                setKnowledgeBlueprintLinks([]);
             }
         };
 
-        timers.push(window.setTimeout(() => {
+        const immediateTimerId = window.setTimeout(() => {
             void loadKnowledgeProvenanceSnapshot();
-        }, 280));
-        // Second fetch catches just-persisted revisions without requiring another canvas action.
-        timers.push(window.setTimeout(() => {
+        }, 260);
+        const settledTimerId = window.setTimeout(() => {
             void loadKnowledgeProvenanceSnapshot();
-        }, 1100));
+        }, 1450);
 
         return () => {
             active = false;
-            for (const timerId of timers) {
-                window.clearTimeout(timerId);
-            }
+            window.clearTimeout(immediateTimerId);
+            window.clearTimeout(settledTimerId);
         };
-    }, [blueprintEvents, edges, nodes, projectId, status]);
+    }, [knowledgeProvenanceTriggerKey, projectId, status]);
 
     useEffect(() => {
         if (!playbackAt) {
@@ -1189,6 +1227,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         () => (queryMatchedNodeIds ? new Set(queryMatchedNodeIds) : null),
         [queryMatchedNodeIds],
     );
+    const highlightedKnowledgeNodeIdSet = useMemo(
+        () => new Set(highlightedKnowledgeNodeIds),
+        [highlightedKnowledgeNodeIds],
+    );
 
     const labelFilteredNodes = useMemo(() => {
         return nodes.filter((node) => {
@@ -1242,6 +1284,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return baseNodes.map((node) => {
             const nodeLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
             const nodeData = node.data as Record<string, unknown>;
+            const isCardNode = CARD_LABELS.includes(nodeLabel as cardLabel);
+            const isKnowledgeHighlighted = isCardNode && highlightedKnowledgeNodeIdSet.has(node.id);
+            const knowledgeHighlightStyle = isKnowledgeHighlighted
+                ? {
+                    boxShadow: "0 0 0 3px rgba(231, 127, 35, 0.9)",
+                    borderRadius: 18,
+                }
+                : null;
             if (nodeLabel === "blueprint_component") {
                 const attachedCodebasePaths = Array.isArray(nodeData.codebaseFilePaths)
                     ? nodeData.codebaseFilePaths
@@ -1260,21 +1310,35 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 };
             }
 
-            const isCardNode = CARD_LABELS.includes(nodeLabel as cardLabel);
             if (isCardNode && hoveredAssetFileId) {
                 const attachmentIds = Array.isArray(nodeData.attachmentIds)
                     ? nodeData.attachmentIds.filter((id): id is string => typeof id === "string")
                     : [];
                 if (attachmentIds.includes(hoveredAssetFileId)) {
+                    const assetShadow = "0 0 0 3px rgba(0, 168, 219, 0.85)";
+                    const combinedShadow = isKnowledgeHighlighted
+                        ? `${assetShadow}, 0 0 0 6px rgba(231, 127, 35, 0.65)`
+                        : assetShadow;
                     return {
                         ...node,
                         style: {
                             ...(node.style ?? {}),
-                            boxShadow: "0 0 0 3px rgba(0, 168, 219, 0.85)",
+                            ...(knowledgeHighlightStyle ?? {}),
+                            boxShadow: combinedShadow,
                             borderRadius: 18,
                         },
                     };
                 }
+            }
+
+            if (knowledgeHighlightStyle) {
+                return {
+                    ...node,
+                    style: {
+                        ...(node.style ?? {}),
+                        ...knowledgeHighlightStyle,
+                    },
+                };
             }
 
             return node;
@@ -1285,6 +1349,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         emphasizedBlueprintComponentIds,
         normalizedHoveredCodebasePath,
         hoveredAssetFileId,
+        highlightedKnowledgeNodeIdSet,
     ]);
 
     const compactBlueprintNodes = useMemo(() => {

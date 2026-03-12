@@ -256,7 +256,7 @@
 
 .blueprintCodebaseLink {
     fill: none;
-    stroke: rgba(45, 125, 210, 0.45);
+    stroke: rgb(204, 204, 204);
     stroke-width: 3;
     pointer-events: none;
 }

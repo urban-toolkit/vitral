@@ -89,6 +89,7 @@ const initialState: TimelineState = {
     participants: [],
     hoveredCodebaseFilePath: null,
     highlightedCodebaseFilePaths: [],
+    highlightedKnowledgeNodeIds: [],
     hoveredBlueprintComponentNodeId: null,
     defaultStages: [],
     timelineStartEnd: {
@@ -549,6 +550,14 @@ export const timelineSlice = createSlice({
             ));
         },
 
+        setHighlightedKnowledgeNodeIds: (state, action: PayloadAction<string[]>) => {
+            state.highlightedKnowledgeNodeIds = Array.from(new Set(
+                action.payload
+                    .filter((id) => typeof id === "string" && id.trim() !== "")
+                    .map((id) => id.trim())
+            ));
+        },
+
         setHoveredBlueprintComponentNodeId: (state, action: PayloadAction<string | null>) => {
             state.hoveredBlueprintComponentNodeId = action.payload;
         },
@@ -825,6 +834,7 @@ export const {
     setParticipants,
     setHoveredCodebaseFilePath,
     setHighlightedCodebaseFilePaths,
+    setHighlightedKnowledgeNodeIds,
     setHoveredBlueprintComponentNodeId,
     setBlueprintCodebaseLinks,
     setSystemScreenshotMarkers,
@@ -902,6 +912,11 @@ export const selectHoveredCodebaseFilePath = createSelector(
 export const selectHighlightedCodebaseFilePaths = createSelector(
     selectTimelineState,
     s => s.highlightedCodebaseFilePaths
+);
+
+export const selectHighlightedKnowledgeNodeIds = createSelector(
+    selectTimelineState,
+    s => s.highlightedKnowledgeNodeIds
 );
 
 export const selectSystemScreenshotMarkers = createSelector(

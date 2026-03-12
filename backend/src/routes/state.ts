@@ -391,24 +391,25 @@ async function refreshProvenanceGraph(
     docId: string,
     snapshot: ProvenanceSnapshot,
 ): Promise<void> {
-    await pg.query(
-        `
-        DELETE FROM prov_object_activity WHERE document_id = $1;
-        DELETE FROM prov_user_activity WHERE document_id = $1;
-        DELETE FROM prov_requirement_activity WHERE document_id = $1;
-        DELETE FROM prov_concept_activity WHERE document_id = $1;
-        DELETE FROM prov_component_requirement WHERE document_id = $1;
-        DELETE FROM prov_card_connection WHERE document_id = $1;
-        DELETE FROM prov_object WHERE document_id = $1;
-        DELETE FROM prov_activity WHERE document_id = $1;
-        DELETE FROM prov_user WHERE document_id = $1;
-        DELETE FROM prov_requirement WHERE document_id = $1;
-        DELETE FROM prov_concept WHERE document_id = $1;
-        DELETE FROM prov_insight WHERE document_id = $1;
-        DELETE FROM prov_component WHERE document_id = $1;
-        `,
-        [docId],
-    );
+    const deleteStatements = [
+        "DELETE FROM prov_object_activity WHERE document_id = $1",
+        "DELETE FROM prov_user_activity WHERE document_id = $1",
+        "DELETE FROM prov_requirement_activity WHERE document_id = $1",
+        "DELETE FROM prov_concept_activity WHERE document_id = $1",
+        "DELETE FROM prov_component_requirement WHERE document_id = $1",
+        "DELETE FROM prov_card_connection WHERE document_id = $1",
+        "DELETE FROM prov_object WHERE document_id = $1",
+        "DELETE FROM prov_activity WHERE document_id = $1",
+        "DELETE FROM prov_user WHERE document_id = $1",
+        "DELETE FROM prov_requirement WHERE document_id = $1",
+        "DELETE FROM prov_concept WHERE document_id = $1",
+        "DELETE FROM prov_insight WHERE document_id = $1",
+        "DELETE FROM prov_component WHERE document_id = $1",
+    ] as const;
+
+    for (const statement of deleteStatements) {
+        await pg.query(statement, [docId]);
+    }
 
     for (const card of snapshot.cards.values()) {
         if (card.label === "object") {
@@ -1255,7 +1256,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             [id, effectiveAt.toISOString()],
         );
 
-        const creationEvents = createdCardEventsRes.rows
+        const creationEventsFromDb = createdCardEventsRes.rows
             .map((row: typeof createdCardEventsRes.rows[number]) => {
                 const snapshotCard = snapshotGraph.cards.get(row.node_id);
                 const snapshotLabel = snapshotCard?.label ?? null;
@@ -1300,18 +1301,78 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                         deleted: isDeleted,
                     },
                 };
-            })
-            .sort((a: {
-                id: string;
-                occurredAt: string;
-            }, b: {
-                id: string;
-                occurredAt: string;
-            }) => {
-                const delta = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
-                if (delta !== 0) return delta;
-                return a.id.localeCompare(b.id);
             });
+
+        const fallbackCreatedAtByNodeId = new Map<string, string>();
+        if (isRecord(snapshot.state) && isRecord(snapshot.state.flow) && Array.isArray(snapshot.state.flow.nodes)) {
+            for (const rawNode of snapshot.state.flow.nodes) {
+                if (!isRecord(rawNode)) continue;
+                const nodeId = typeof rawNode.id === "string" ? rawNode.id : "";
+                if (!nodeId) continue;
+                if (!snapshotGraph.cards.has(nodeId)) continue;
+                const data = isRecord(rawNode.data) ? rawNode.data : {};
+                const createdAt = typeof data.createdAt === "string" ? data.createdAt : "";
+                const parsed = new Date(createdAt);
+                fallbackCreatedAtByNodeId.set(
+                    nodeId,
+                    Number.isNaN(parsed.getTime()) ? snapshot.capturedAt : parsed.toISOString(),
+                );
+            }
+        }
+
+        const creationEventsFallback = Array.from(snapshotGraph.cards.values()).map((card) => {
+            const treeId = (
+                snapshotGraph.treeByCardId.get(card.nodeId) ??
+                (card.label === "activity" ? card.nodeId : null)
+            );
+            const treeTitle = treeId
+                ? (
+                    snapshotGraph.treeTitleByActivityId.get(treeId) ??
+                    (card.label === "activity" && treeId === card.nodeId ? card.title : null) ??
+                    "Activity"
+                )
+                : null;
+            return {
+                id: `synthetic-created:${card.nodeId}`,
+                occurredAt: fallbackCreatedAtByNodeId.get(card.nodeId) ?? snapshot.capturedAt,
+                eventType: "created" as const,
+                isDeleted: false,
+                nodeId: card.nodeId,
+                cardLabel: card.label,
+                cardTitle: card.title,
+                cardDescription: card.description,
+                treeId,
+                treeTitle,
+                metadata: {
+                    relevant: card.relevant,
+                    deleted: false,
+                    synthetic: true,
+                },
+            };
+        });
+
+        const createdNodeIdsFromDb = new Set(
+            creationEventsFromDb.map((eventData: { nodeId: string }) => eventData.nodeId),
+        );
+        const creationEventsSyntheticMissing = creationEventsFallback.filter(
+            (eventData) => !createdNodeIdsFromDb.has(eventData.nodeId),
+        );
+
+        const creationEvents = (
+            creationEventsFromDb.length > 0
+                ? [...creationEventsFromDb, ...creationEventsSyntheticMissing]
+                : creationEventsFallback
+        ).sort((a: {
+            id: string;
+            occurredAt: string;
+        }, b: {
+            id: string;
+            occurredAt: string;
+        }) => {
+            const delta = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+            if (delta !== 0) return delta;
+            return a.id.localeCompare(b.id);
+        });
 
         const cardCreatedAtByNodeId = new Map<string, string>();
         for (const eventData of creationEvents) {
@@ -1379,14 +1440,25 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             });
         }
 
-        const activeConnectionsByEdgeId = new Map<string, typeof connectionEventsRes.rows[number]>();
+        const connectionFirstSeenAtByEdgeId = new Map<string, string>();
         for (const row of connectionEventsRes.rows) {
-            if (row.event_type === "deleted") {
-                activeConnectionsByEdgeId.delete(row.edge_id);
-                continue;
+            if (!connectionFirstSeenAtByEdgeId.has(row.edge_id)) {
+                connectionFirstSeenAtByEdgeId.set(row.edge_id, row.occurred_at);
             }
-            activeConnectionsByEdgeId.set(row.edge_id, row);
         }
+
+        const activeConnections = Array.from(snapshotGraph.connections.values()).map((connection) => ({
+            edge_id: connection.edgeId,
+            occurred_at: connectionFirstSeenAtByEdgeId.get(connection.edgeId) ?? effectiveAt.toISOString(),
+            source_node_id: connection.sourceNodeId,
+            target_node_id: connection.targetNodeId,
+            source_label: connection.sourceLabel,
+            target_label: connection.targetLabel,
+            source_title: connection.sourceTitle,
+            target_title: connection.targetTitle,
+            connection_label: connection.label || null,
+            connection_kind: connection.kind,
+        }));
 
         const treeOfCard = (cardNodeId: string, cardLabel: string): string | null => {
             const fromSnapshot = snapshotGraph.treeByCardId.get(cardNodeId);
@@ -1395,7 +1467,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             return null;
         };
 
-        const crossTreeConnections = Array.from(activeConnectionsByEdgeId.values())
+        const rawCrossTreeConnections = activeConnections
             .map((row) => {
                 const sourceTreeId = treeOfCard(row.source_node_id, row.source_label);
                 const targetTreeId = treeOfCard(row.target_node_id, row.target_label);
@@ -1420,13 +1492,32 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 if (!connection.sourceTreeId || !connection.targetTreeId) return false;
                 return connection.sourceTreeId !== connection.targetTreeId;
             });
+        const crossTreeConnectionsByKey = new Map<string, typeof rawCrossTreeConnections[number]>();
+        for (const connection of rawCrossTreeConnections) {
+            const normalizedLabel = String(connection.label ?? "").trim().toLowerCase();
+            const normalizedNodePair = [connection.sourceNodeId, connection.targetNodeId]
+                .sort((a, b) => a.localeCompare(b))
+                .join("::");
+            const normalizedTreePair = [connection.sourceTreeId ?? "", connection.targetTreeId ?? ""]
+                .sort((a, b) => a.localeCompare(b))
+                .join("::");
+            const dedupeKey = `${normalizedTreePair}|${normalizedNodePair}|${connection.kind}|${normalizedLabel}`;
+            if (crossTreeConnectionsByKey.has(dedupeKey)) continue;
+            crossTreeConnectionsByKey.set(dedupeKey, connection);
+        }
+        const crossTreeConnections = Array.from(crossTreeConnectionsByKey.values())
+            .sort((a, b) => {
+                const delta = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+                if (delta !== 0) return delta;
+                return a.id.localeCompare(b.id);
+            });
 
         const timelineBlueprintEvents = extractBlueprintEventsFromTimeline(snapshot.timeline);
         const blueprintByComponentNodeId = new Map(
             timelineBlueprintEvents.map((event) => [event.componentNodeId, event] as const),
         );
 
-        const blueprintLinks = Array.from(activeConnectionsByEdgeId.values())
+        const blueprintLinks = activeConnections
             .map((row) => {
                 const sourceIsBlueprint = row.source_label === "blueprint_component";
                 const targetIsBlueprint = row.target_label === "blueprint_component";
@@ -2567,7 +2658,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 nodeEmbeddingQueue.enqueue(delta.upserts);
             }
         } catch (error) {
-            request.log.error({ error }, "Failed to process node embedding updates.");
+            request.log.error({ error }, "Failed to process provenance or node embedding updates.");
         }
 
         return reply.status(200).send(rows[0]);

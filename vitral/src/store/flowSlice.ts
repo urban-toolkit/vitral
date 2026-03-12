@@ -49,6 +49,44 @@ function nodeSize(node: nodeType): { width: number; height: number } {
     };
 }
 
+function edgeDataRecord(edge: edgeType): Record<string, unknown> {
+    return edge.data && typeof edge.data === "object"
+        ? edge.data as Record<string, unknown>
+        : {};
+}
+
+function edgeString(value: unknown): string {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function edgeLabel(edge: edgeType): string {
+    const data = edgeDataRecord(edge);
+    return edgeString(edge.label) || edgeString(data.label);
+}
+
+function edgeDedupKey(edge: edgeType): string {
+    const data = edgeDataRecord(edge);
+    const source = edgeString(edge.source);
+    const target = edgeString(edge.target);
+    const label = edgeLabel(edge);
+    const kind = edgeString(data.kind);
+    const from = edgeString(data.from);
+    const to = edgeString(data.to);
+    return `${source}|${target}|${label}|${kind}|${from}|${to}`;
+}
+
+function dedupeEdges(edges: edgeType[]): edgeType[] {
+    const seen = new Set<string>();
+    const result: edgeType[] = [];
+    for (const edge of edges) {
+        const key = edgeDedupKey(edge);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push(edge);
+    }
+    return result;
+}
+
 function blueprintGroupConfig(level: unknown): {
     minWidth: number;
     minHeight: number;
@@ -255,7 +293,7 @@ const flowSlice = createSlice({
             state.nodes = action.payload;
         },
         setEdges: (state, action) => {
-            state.edges = action.payload;
+            state.edges = dedupeEdges(Array.isArray(action.payload) ? action.payload : []);
         },
         addNode: (state, action: PayloadAction<nodeType>) => {
             state.nodes.push(action.payload);
@@ -273,10 +311,11 @@ const flowSlice = createSlice({
             resizeSystemBlueprintGroups(state.nodes);
         },
         connectEdge: (state, action) => {
-            state.edges.push(action.payload);
+            state.edges = dedupeEdges([...state.edges, action.payload]);
         },
         connectEdges: (state, action) => {
-            state.edges = state.edges.concat(action.payload);
+            const incoming = Array.isArray(action.payload) ? action.payload : [];
+            state.edges = dedupeEdges(state.edges.concat(incoming));
         },
         removeEdge: (state, action) => {
             state.edges = state.edges.filter(e => e.id !== action.payload);
@@ -293,7 +332,7 @@ const flowSlice = createSlice({
         },
         onEdgesChange: (state, action) => {
             const a = applyEdgeChanges(action.payload, state.edges);
-            state.edges = a;
+            state.edges = dedupeEdges(a);
         },
         setTitle: (state, action) => {
             state.title = action.payload;

@@ -9,8 +9,9 @@
 }
 
 .rootHovered .circle {
-    box-shadow: 0 0 0 3px rgba(0, 168, 219, 0.9), 0 12px 28px rgba(6, 79, 120, 0.45);
-    border-color: #00a8db;
+    /* box-shadow: 0 0 0 3px rgba(0, 168, 219, 0.9), 0 12px 28px rgba(6, 79, 120, 0.45); */
+    border-color: #5bbad6;
+    border-width: 3px;
 }
 
 .circle {

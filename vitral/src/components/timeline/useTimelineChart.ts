@@ -81,6 +81,8 @@ const faWandSparklesPath = Array.isArray(faWandSparkles.icon[4])
     : faWandSparkles.icon[4];
 const faWandSparklesWidth = faWandSparkles.icon[0];
 const faWandSparklesHeight = faWandSparkles.icon[1];
+const BLUEPRINT_HIGHLIGHT_FILL = "#00A8DB";
+const BLUEPRINT_HIGHLIGHT_STROKE = "#005E79";
 
 function getDroppedGitHubFilePath(event: DragEvent): string | null {
     const payload = event.dataTransfer?.getData("application/x-vitral-github-file");
@@ -126,6 +128,8 @@ type UseTimelineChartParams = {
     knowledgeTreePills: KnowledgeTreePill[];
     knowledgeCrossTreeConnections: KnowledgeCrossTreeConnection[];
     knowledgeBlueprintLinks: KnowledgeBlueprintLink[];
+    hoveredKnowledgeTreeId: string | null;
+    onHoveredKnowledgeTreeIdChange: (treeId: string | null) => void;
     blueprintCodebaseLinks: BlueprintCodebaseLink[];
     systemScreenshotMarkers: SystemScreenshotMarker[];
     playbackAt: Date | string | null;
@@ -187,6 +191,8 @@ export function useTimelineChart({
     knowledgeTreePills,
     knowledgeCrossTreeConnections,
     knowledgeBlueprintLinks,
+    hoveredKnowledgeTreeId,
+    onHoveredKnowledgeTreeIdChange,
     blueprintCodebaseLinks,
     systemScreenshotMarkers,
     playbackAt,
@@ -300,8 +306,9 @@ export function useTimelineChart({
         if (normalizedHoveredPath) {
             highlightedCodebasePathSet.add(normalizedHoveredPath);
         }
+        const highlightedSubtrackIdsFromFileHover = new Set<string>();
         const highlightedSubtrackIdsFromBlueprintHover = new Set<string>();
-        const highlightedBlueprintEventIdsFromFileHover = new Set<string>();
+        const highlightedBlueprintEventIds = new Set<string>();
         const connectedBlueprintComponentNodeIdSet = new Set(connectedBlueprintComponentNodeIds);
         const suggestingSubtrackIdSet = new Set(suggestingCodebaseSubtrackIds);
         const parsedSystemScreenshotMarkers = systemScreenshotMarkers
@@ -349,32 +356,52 @@ export function useTimelineChart({
                 events: Array<KnowledgeTreePill["events"][number] & { date: Date }>;
             }) => pill !== null)
             .sort((a, b) => +a.startDate - +b.startDate);
+        const knowledgeTreeNodeIdsByTreeId = new Map<string, Set<string>>();
+        for (const pill of parsedKnowledgeTreePills) {
+            const nodeIds = new Set(
+                pill.events
+                    .map((eventData) => eventData.nodeId)
+                    .filter((nodeId): nodeId is string => typeof nodeId === "string" && nodeId.trim() !== "")
+            );
+            knowledgeTreeNodeIdsByTreeId.set(pill.treeId, nodeIds);
+        }
 
         if (highlightedCodebasePathSet.size > 0) {
-            const highlightedSubtrackIdsFromFileHover = new Set(
-                codebaseSubtracks
-                    .filter((subtrack) =>
-                        subtrack.filePaths.some((path) => highlightedCodebasePathSet.has(normalizePath(path)))
-                    )
-                    .map((subtrack) => subtrack.id)
-            );
+            for (const subtrack of codebaseSubtracks) {
+                if (subtrack.filePaths.some((path) => highlightedCodebasePathSet.has(normalizePath(path)))) {
+                    highlightedSubtrackIdsFromFileHover.add(subtrack.id);
+                }
+            }
 
             for (const link of blueprintCodebaseLinks) {
                 if (highlightedSubtrackIdsFromFileHover.has(link.codebaseSubtrackId)) {
-                    highlightedBlueprintEventIdsFromFileHover.add(link.blueprintEventId);
+                    highlightedBlueprintEventIds.add(link.blueprintEventId);
                 }
             }
         }
 
         if (hoveredBlueprintComponentNodeId) {
-            const hoveredBlueprintEventIds = new Set(
-                parsed.bp
-                    .filter((eventData) => eventData.componentNodeId === hoveredBlueprintComponentNodeId)
-                    .map((eventData) => eventData.id)
-            );
+            for (const eventData of parsed.bp) {
+                if (eventData.componentNodeId === hoveredBlueprintComponentNodeId) {
+                    highlightedBlueprintEventIds.add(eventData.id);
+                }
+            }
+        }
 
+        if (hoveredKnowledgeTreeId) {
+            const hoveredTreeNodeIds = knowledgeTreeNodeIdsByTreeId.get(hoveredKnowledgeTreeId);
+            if (hoveredTreeNodeIds && hoveredTreeNodeIds.size > 0) {
+                for (const link of knowledgeBlueprintLinks) {
+                    if (hoveredTreeNodeIds.has(link.cardNodeId)) {
+                        highlightedBlueprintEventIds.add(link.blueprintEventId);
+                    }
+                }
+            }
+        }
+
+        if (highlightedBlueprintEventIds.size > 0) {
             for (const link of blueprintCodebaseLinks) {
-                if (hoveredBlueprintEventIds.has(link.blueprintEventId)) {
+                if (highlightedBlueprintEventIds.has(link.blueprintEventId)) {
                     highlightedSubtrackIdsFromBlueprintHover.add(link.codebaseSubtrackId);
                 }
             }
@@ -398,7 +425,7 @@ export function useTimelineChart({
                 height: heightForRow,
                 center: top + heightForRow / 2,
                 isHighlighted:
-                    subtrack.filePaths.some((path) => highlightedCodebasePathSet.has(normalizePath(path))) ||
+                    highlightedSubtrackIdsFromFileHover.has(subtrack.id) ||
                     highlightedSubtrackIdsFromBlueprintHover.has(subtrack.id),
             };
         });
@@ -428,7 +455,19 @@ export function useTimelineChart({
             .attr("orient", "auto")
             .append("path")
             .attr("d", "M 0 0 L 10 5 L 0 10 z")
-            .attr("fill", "rgba(45, 125, 210, 0.8)");
+            .attr("fill", "rgb(204, 204, 204)");
+
+        defs.append("marker")
+            .attr("id", "blueprint-link-arrow-head-active")
+            .attr("viewBox", "0 0 10 10")
+            .attr("refX", 5)
+            .attr("refY", 5)
+            .attr("markerWidth", 6)
+            .attr("markerHeight", 6)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M 0 0 L 10 5 L 0 10 z")
+            .attr("fill", BLUEPRINT_HIGHLIGHT_STROKE);
 
         defs.append("marker")
             .attr("id", "knowledge-blueprint-arrow-head")
@@ -751,7 +790,7 @@ export function useTimelineChart({
             .attr("height", (row: any) => row.height)
             .attr("class", classes.codebaseDropZone)
             .style("fill", (row: any) => (row.isHighlighted ? "rgba(0, 199, 255, 0.14)" : "transparent"))
-            .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "none"))
+            .style("stroke", (row: any) => (row.isHighlighted ? "#15738d" : "none"))
             .style("stroke-width", (row: any) => (row.isHighlighted ? 2 : 0))
             .attr("data-timeline-interactive", "true")
             .style("pointer-events", readOnly ? "none" : "all")
@@ -1077,6 +1116,7 @@ export function useTimelineChart({
         const hideKnowledgePillTooltip = () => {
             if (hoveredKnowledgePillTreeId === null) return;
             hoveredKnowledgePillTreeId = null;
+            onHoveredKnowledgeTreeIdChange(null);
             setShowTooltip(false);
         };
 
@@ -1535,6 +1575,7 @@ export function useTimelineChart({
             };
             const showKnowledgePillTooltip = (event: MouseEvent, pillData: any) => {
                 hoveredKnowledgePillTreeId = pillData.treeId;
+                onHoveredKnowledgeTreeIdChange(pillData.treeId);
                 const heightOffset = containerRef.current
                     ? containerRef.current.getBoundingClientRect().top
                     : 0;
@@ -1583,8 +1624,8 @@ export function useTimelineChart({
                 .attr("height", knowledgePillHeight)
                 .attr("rx", 16)
                 .attr("ry", 16)
-                .attr("fill", "rgba(45, 125, 210, 0.12)")
-                .attr("stroke", "rgba(45, 125, 210, 0.55)")
+                .attr("fill", "rgba(238, 168, 110, 0.26)")
+                .attr("stroke", "rgb(188, 115, 56)")
                 .attr("stroke-width", 1.2)
                 .attr("data-timeline-interactive", "true")
                 .style("cursor", readOnly ? "help" : "ns-resize")
@@ -1678,13 +1719,13 @@ export function useTimelineChart({
                     .style("cursor", "pointer")
                     .on("click", (event: any, eventData: any) => {
                         hoveredKnowledgePillTreeId = null;
+                        onHoveredKnowledgeTreeIdChange(null);
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
                             : 0;
                         const clampedX = Math.min(Math.max(event.clientX, 0), window.innerWidth - 300);
                         const clampedY =
                             Math.min(Math.max(event.clientY, 0), window.innerHeight - 160) - heightOffset;
-                        hoveredKnowledgePillTreeId = null;
                         setSelectedEvent({
                             kind: "knowledge",
                             event: {
@@ -1723,7 +1764,7 @@ export function useTimelineChart({
                 .attr("data-timeline-interactive", "true")
                 .attr("fill", "none")
                 .attr("stroke", (connectionData: any) => connectionColorForKind(connectionData.kind))
-                .attr("stroke-width", 2)
+                .attr("stroke-width", 3)
                 .attr("opacity", 0.9)
                 .style("cursor", "pointer")
                 .attr("d", (connectionData: any) => {
@@ -1784,9 +1825,8 @@ export function useTimelineChart({
                 .attr("data-timeline-interactive", "true")
                 .attr("fill", "none")
                 .attr("stroke", (linkData: any) => connectionColorForKind(linkData.kind))
-                .attr("stroke-width", 1.8)
+                .attr("stroke-width", 3)
                 .attr("opacity", 0.85)
-                .attr("marker-end", "url(#knowledge-blueprint-arrow-head)")
                 .style("cursor", "pointer")
                 .attr("d", (linkData: any) => {
                     const createdPosition = cardCreatedPositionByNodeId.get(linkData.cardNodeId);
@@ -1938,7 +1978,21 @@ export function useTimelineChart({
                 .attr("class", classes.blueprintCodebaseLink)
                 .classed(
                     classes.blueprintCodebaseLinkActive,
-                    (entry: any) => entry.link.blueprintEventId === pendingBlueprintLinkEventId
+                    (entry: any) =>
+                        entry.link.blueprintEventId === pendingBlueprintLinkEventId ||
+                        highlightedBlueprintEventIds.has(entry.link.blueprintEventId)
+                )
+                .style("stroke", (entry: any) => {
+                    if (highlightedBlueprintEventIds.has(entry.link.blueprintEventId)) {
+                        return BLUEPRINT_HIGHLIGHT_STROKE;
+                    }
+                    if (entry.link.blueprintEventId === pendingBlueprintLinkEventId) {
+                        return "#2d7dd2";
+                    }
+                    return null;
+                })
+                .style("stroke-width", (entry: any) =>
+                    highlightedBlueprintEventIds.has(entry.link.blueprintEventId) ? 3.2 : null
                 )
                 .style("pointer-events", "stroke")
                 .style("cursor", "context-menu")
@@ -1949,7 +2003,12 @@ export function useTimelineChart({
 
                     return `M ${sourceX} ${sourceY} L ${sourceX} ${targetY}`;
                 })
-                .attr("marker-end", "url(#blueprint-link-arrow-head)")
+                .attr("marker-end", (entry: any) =>
+                    highlightedBlueprintEventIds.has(entry.link.blueprintEventId) ||
+                    entry.link.blueprintEventId === pendingBlueprintLinkEventId
+                        ? "url(#blueprint-link-arrow-head-active)"
+                        : "url(#blueprint-link-arrow-head)"
+                )
                 .on("contextmenu", (event: any, entry: any) => {
                     if (readOnly) return;
                     event.preventDefault();
@@ -1991,14 +2050,8 @@ export function useTimelineChart({
                         const resolvedCenterY = typeof centerY === "function"
                             ? centerY(eventData)
                             : centerY;
-                        const isHoveredBlueprintComponentEvent =
-                            kind === "blueprint" &&
-                            hoveredBlueprintComponentNodeId &&
-                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
-                        const isHighlightedByFileHover =
-                            kind === "blueprint" &&
-                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
-                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" && highlightedBlueprintEventIds.has(eventData.id);
                         const scale = isHighlightedBlueprintEvent ? 1.35 : 1;
                         return `translate(${x(toDate(eventData.date))}, ${resolvedCenterY}) scale(${scale})`;
                     })
@@ -2011,53 +2064,29 @@ export function useTimelineChart({
                         if (kind === "designStudy") {
                             return eventData.generatedBy === "llm" ? "rgb(110, 176, 238)" : "rgb(238, 168, 110)";
                         }
-                        if (kind === "knowledge") {
-                            return "#2d7dd2";
-                        }
-                        const isHoveredBlueprintComponentEvent =
-                            kind === "blueprint" &&
-                            hoveredBlueprintComponentNodeId &&
-                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
-                        const isHighlightedByFileHover =
-                            kind === "blueprint" &&
-                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
-                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
-                        return isHighlightedBlueprintEvent ? "#00A8DB" : null;
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" && highlightedBlueprintEventIds.has(eventData.id);
+                        return isHighlightedBlueprintEvent ? BLUEPRINT_HIGHLIGHT_FILL : null;
                     })
                     .style("stroke", (eventData: any) => {
                         if (kind === "designStudy") {
                             return eventData.generatedBy === "llm" ? "rgb(67, 132, 192)" : "rgb(188, 115, 56)";
                         }
-                        if (kind === "knowledge") {
-                            return "#1d5fa8";
-                        }
-                        const isHoveredBlueprintComponentEvent =
-                            kind === "blueprint" &&
-                            hoveredBlueprintComponentNodeId &&
-                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
-                        const isHighlightedByFileHover =
-                            kind === "blueprint" &&
-                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
-                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" && highlightedBlueprintEventIds.has(eventData.id);
                         const isDisconnectedBlueprintEvent =
                             kind === "blueprint" &&
                             typeof eventData.componentNodeId === "string" &&
                             eventData.componentNodeId.trim() !== "" &&
                             !connectedBlueprintComponentNodeIdSet.has(eventData.componentNodeId);
                         if (isDisconnectedBlueprintEvent) return "#4D4D4D";
-                        return isHighlightedBlueprintEvent ? "#005E79" : null;
+                        return isHighlightedBlueprintEvent ? BLUEPRINT_HIGHLIGHT_STROKE : null;
                     })
                     .style("stroke-width", (eventData: any) => {
                         if (kind === "designStudy") return 1.4;
                         if (kind === "knowledge") return 1.5;
-                        const isHoveredBlueprintComponentEvent =
-                            kind === "blueprint" &&
-                            hoveredBlueprintComponentNodeId &&
-                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
-                        const isHighlightedByFileHover =
-                            kind === "blueprint" &&
-                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
-                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" && highlightedBlueprintEventIds.has(eventData.id);
                         const isDisconnectedBlueprintEvent =
                             kind === "blueprint" &&
                             typeof eventData.componentNodeId === "string" &&
@@ -2070,14 +2099,8 @@ export function useTimelineChart({
                         if (kind === "knowledge") {
                             return eventData.isDeleted ? 0.45 : 1;
                         }
-                        const isHoveredBlueprintComponentEvent =
-                            kind === "blueprint" &&
-                            hoveredBlueprintComponentNodeId &&
-                            eventData.componentNodeId === hoveredBlueprintComponentNodeId;
-                        const isHighlightedByFileHover =
-                            kind === "blueprint" &&
-                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
-                        const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
+                        const isHighlightedBlueprintEvent =
+                            kind === "blueprint" && highlightedBlueprintEventIds.has(eventData.id);
                         const isDisconnectedBlueprintEvent =
                             kind === "blueprint" &&
                             typeof eventData.componentNodeId === "string" &&
@@ -2113,6 +2136,7 @@ export function useTimelineChart({
                     .on("click", (event: any, eventData: any) => {
                         if (kind !== "codebase" && kind !== "blueprint") return;
                         hoveredKnowledgePillTreeId = null;
+                        onHoveredKnowledgeTreeIdChange(null);
 
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
@@ -2157,11 +2181,10 @@ export function useTimelineChart({
                         setShowTooltip(false);
                     });
 
-                if (kind === "blueprint" && (hoveredBlueprintComponentNodeId || highlightedBlueprintEventIdsFromFileHover.size > 0)) {
+                if (kind === "blueprint" && highlightedBlueprintEventIds.size > 0) {
                     eventMarks
                         .filter((eventData: any) =>
-                            eventData.componentNodeId === hoveredBlueprintComponentNodeId ||
-                            highlightedBlueprintEventIdsFromFileHover.has(eventData.id)
+                            highlightedBlueprintEventIds.has(eventData.id)
                         )
                         .raise();
                 }
@@ -2288,6 +2311,8 @@ export function useTimelineChart({
         knowledgeTreePills,
         knowledgeCrossTreeConnections,
         knowledgeBlueprintLinks,
+        hoveredKnowledgeTreeId,
+        onHoveredKnowledgeTreeIdChange,
         blueprintCodebaseLinks,
         systemScreenshotMarkers,
         playbackAt,

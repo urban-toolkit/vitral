@@ -272,6 +272,7 @@ export type TimelineState = {
     participants: ProjectParticipant[];
     hoveredCodebaseFilePath: string | null;
     highlightedCodebaseFilePaths: string[];
+    highlightedKnowledgeNodeIds: string[];
     hoveredBlueprintComponentNodeId: string | null;
     defaultStages: string[];
     timelineStartEnd: {

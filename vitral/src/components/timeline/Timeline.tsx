@@ -36,6 +36,7 @@ import {
 	selectParticipants,
 	selectSystemScreenshotMarkers,
 	setHighlightedCodebaseFilePaths,
+	setHighlightedKnowledgeNodeIds,
 	toggleKnowledgeSubtrackCollapsed,
 	toggleKnowledgeSubtrackInactive,
 	toggleCodebaseSubtrackInactive,
@@ -106,6 +107,7 @@ export const Timeline = ({
 	const [selectedEvent, setSelectedEvent] = useState<SelectedTimelineEvent | null>(null);
 	const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
 	const [showTooltip, setShowTooltip] = useState(false);
+	const [hoveredKnowledgeTreeId, setHoveredKnowledgeTreeId] = useState<string | null>(null);
 	const [systemScreenshotTooltip, setSystemScreenshotTooltip] = useState<{
 		markerId: string;
 		x: number;
@@ -182,6 +184,29 @@ export const Timeline = ({
 		() => systemScreenshotTooltipMarker?.zones?.find((zone) => zone.id === hoveredScreenshotZoneId) ?? null,
 		[hoveredScreenshotZoneId, systemScreenshotTooltipMarker]
 	);
+	const knowledgeTreeNodeIdsByTreeId = useMemo(() => {
+		const map = new Map<string, string[]>();
+		for (const pill of knowledgeTreePills) {
+			const nodeIds = Array.isArray(pill.events)
+				? Array.from(new Set(
+					pill.events
+						.map((eventData) => eventData.nodeId)
+						.filter((nodeId): nodeId is string => typeof nodeId === "string" && nodeId.trim() !== "")
+				))
+				: [];
+			map.set(pill.treeId, nodeIds);
+		}
+		return map;
+	}, [knowledgeTreePills]);
+
+	useEffect(() => {
+		if (!hoveredKnowledgeTreeId) {
+			dispatch(setHighlightedKnowledgeNodeIds([]));
+			return;
+		}
+		const nodeIds = knowledgeTreeNodeIdsByTreeId.get(hoveredKnowledgeTreeId) ?? [];
+		dispatch(setHighlightedKnowledgeNodeIds(nodeIds));
+	}, [dispatch, hoveredKnowledgeTreeId, knowledgeTreeNodeIdsByTreeId]);
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -205,6 +230,7 @@ export const Timeline = ({
 			setBlueprintLinkMenu(null);
 			setBlueprintCodebaseLinkMenu(null);
 			setPendingBlueprintLinkEventId(null);
+			setHoveredKnowledgeTreeId(null);
 			setSystemScreenshotTooltip(null);
 			setHoveredScreenshotZoneId(null);
 			dispatch(setHighlightedCodebaseFilePaths([]));
@@ -244,6 +270,7 @@ export const Timeline = ({
 	useEffect(() => {
 		return () => {
 			dispatch(setHighlightedCodebaseFilePaths([]));
+			dispatch(setHighlightedKnowledgeNodeIds([]));
 		};
 	}, [dispatch]);
 
@@ -281,6 +308,8 @@ export const Timeline = ({
 		knowledgeTreePills,
 		knowledgeCrossTreeConnections,
 		knowledgeBlueprintLinks,
+		hoveredKnowledgeTreeId,
+		onHoveredKnowledgeTreeIdChange: setHoveredKnowledgeTreeId,
 		blueprintCodebaseLinks,
 		systemScreenshotMarkers,
 		playbackAt,
@@ -564,6 +593,7 @@ export const Timeline = ({
 					setMilestoneMenu(null);
 					setBlueprintLinkMenu(null);
 					setBlueprintCodebaseLinkMenu(null);
+					setHoveredKnowledgeTreeId(null);
 					setSystemScreenshotTooltip(null);
 					setHoveredScreenshotZoneId(null);
 					dispatch(setHighlightedCodebaseFilePaths([]));
