@@ -1090,14 +1090,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         () => Array.from(emphasizedBlueprintComponentIds),
         [emphasizedBlueprintComponentIds]
     );
+    const normalizedHoveredCodebasePath = useMemo(
+        () => (hoveredCodebaseFilePath ? normalizePath(hoveredCodebaseFilePath) : ""),
+        [hoveredCodebaseFilePath]
+    );
 
     const filteredNodes = useMemo(() => {
         const baseNodes = queryMatchedNodeSet
             ? labelFilteredNodes.filter((node) => queryMatchedNodeSet.has(node.id))
             : labelFilteredNodes;
-        const normalizedHoveredCodebasePath = hoveredCodebaseFilePath
-            ? normalizePath(hoveredCodebaseFilePath)
-            : "";
 
         return baseNodes.map((node) => {
             const nodeLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
@@ -1143,7 +1144,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         labelFilteredNodes,
         queryMatchedNodeSet,
         emphasizedBlueprintComponentIds,
-        hoveredCodebaseFilePath,
+        normalizedHoveredCodebasePath,
         hoveredAssetFileId,
     ]);
 
@@ -1234,17 +1235,51 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         return visibleBlueprintNodes.map((node) => {
-            const newRootAbsolute = newRootAbsolutePositions.get(node.id);
-            if (!newRootAbsolute) return node;
+            const nodeLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
+            const nodeData = node.data as Record<string, unknown>;
+            const attachedCodebasePaths = Array.isArray(nodeData.codebaseFilePaths)
+                ? nodeData.codebaseFilePaths
+                    .filter((path): path is string => typeof path === "string")
+                    .map((path) => normalizePath(path))
+                : [];
+            const isHoveredByFile = normalizedHoveredCodebasePath !== "" &&
+                attachedCodebasePaths.includes(normalizedHoveredCodebasePath);
+            const isEmphasized = emphasizedBlueprintComponentIds.has(node.id) || isHoveredByFile;
+            const opacityStyle = nodeLabel === "blueprint_component"
+                ? { opacity: isEmphasized ? 1 : 0.5 }
+                : {};
 
-            if (node.parentId && visibleById.has(node.parentId)) return node;
+            const newRootAbsolute = newRootAbsolutePositions.get(node.id);
+            if (!newRootAbsolute) {
+                return {
+                    ...node,
+                    style: {
+                        ...(node.style ?? {}),
+                        ...opacityStyle,
+                    },
+                };
+            }
+
+            if (node.parentId && visibleById.has(node.parentId)) {
+                return {
+                    ...node,
+                    style: {
+                        ...(node.style ?? {}),
+                        ...opacityStyle,
+                    },
+                };
+            }
 
             return {
                 ...node,
                 position: newRootAbsolute,
+                style: {
+                    ...(node.style ?? {}),
+                    ...opacityStyle,
+                },
             };
         });
-    }, [nodes, viewMode]);
+    }, [nodes, viewMode, emphasizedBlueprintComponentIds, normalizedHoveredCodebasePath]);
 
     const filteredEdges = useMemo(() => {
         const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));

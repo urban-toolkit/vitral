@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronLeft, faChevronRight, faDownload, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
+import { faArrowPointer, faChartLine, faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDiagramProject, faDownload, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
 import type { cardLabel } from "@/config/types";
 import type { QuerySystemPapersResult, SystemPaper } from "@/api/stateApi";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
@@ -8,6 +8,13 @@ import { BLUEPRINT_DRAG_MIME, buildBlueprintDragPayload } from "@/components/blu
 import styles from "./CanvasSidebar.module.css";
 
 export type CanvasViewMode = "explore" | "evolution" | "blueprintComponents" | "features";
+
+const VIEW_INFO_TEXT: Record<CanvasViewMode, string> = {
+    explore: "The Explore view display cards and system components as they were added and it is the default view for manipulating the canvas.",
+    evolution: "The Evolution view hide system components and horizontally display the cards by addition date.",
+    blueprintComponents: "The System view hide cards so you can focus on the system components.",
+    features: "The Features view hide all cards that are not part of branches containing a system component or requirement. It is intended to help reason about links between requirements and the system.",
+};
 
 function truncateLabel(text: string, maxChars: number): string {
     if (!text) return "";
@@ -421,46 +428,82 @@ export const CanvasSidebar = memo(function CanvasSidebar({
 
                         <h3 className={styles.title}>Views</h3>
 
-                        <p className={styles.sectionLabel}>View mode</p>
                         <div className={styles.group}>
                             <button
                                 type="button"
                                 className={`${styles.option} ${viewMode === "explore" ? styles.optionActive : ""}`}
                                 onClick={() => onViewModeChange("explore")}
                             >
-                                Explore view
+                                <span className={styles.optionContent}>
+                                    <span className={styles.optionLabel}>
+                                        <FontAwesomeIcon icon={faDiagramProject} className={styles.optionLabelIcon} />
+                                        Explore view
+                                    </span>
+                                    <span className={styles.optionInfo}>
+                                        <FontAwesomeIcon icon={faCircleInfo} />
+                                        <span className={styles.optionTooltip}>
+                                            {VIEW_INFO_TEXT.explore}
+                                        </span>
+                                    </span>
+                                </span>
                             </button>
                             <button
                                 type="button"
                                 className={`${styles.option} ${viewMode === "evolution" ? styles.optionActive : ""}`}
                                 onClick={() => onViewModeChange("evolution")}
                             >
-                                Evolution view
+                                <span className={styles.optionContent}>
+                                    <span className={styles.optionLabel}>
+                                        <FontAwesomeIcon icon={faChartLine} className={styles.optionLabelIcon} />
+                                        Evolution view
+                                    </span>
+                                    <span className={styles.optionInfo}>
+                                        <FontAwesomeIcon icon={faCircleInfo} />
+                                        <span className={styles.optionTooltip}>
+                                            {VIEW_INFO_TEXT.evolution}
+                                        </span>
+                                    </span>
+                                </span>
                             </button>
                             <button
                                 type="button"
                                 className={`${styles.option} ${viewMode === "blueprintComponents" ? styles.optionActive : ""}`}
                                 onClick={() => onViewModeChange("blueprintComponents")}
                             >
-                                System view
+                                <span className={styles.optionContent}>
+                                    <span className={styles.optionLabel}>
+                                        <FontAwesomeIcon icon={faDesktop} className={styles.optionLabelIcon} />
+                                        System view
+                                    </span>
+                                    <span className={styles.optionInfo}>
+                                        <FontAwesomeIcon icon={faCircleInfo} />
+                                        <span className={styles.optionTooltip}>
+                                            {VIEW_INFO_TEXT.blueprintComponents}
+                                        </span>
+                                    </span>
+                                </span>
                             </button>
                             <button
                                 type="button"
                                 className={`${styles.option} ${viewMode === "features" ? styles.optionActive : ""}`}
                                 onClick={() => onViewModeChange("features")}
                             >
-                                Features view
+                                <span className={styles.optionContent}>
+                                    <span className={styles.optionLabel}>
+                                        <FontAwesomeIcon icon={faArrowPointer} className={styles.optionLabelIcon} />
+                                        Features view
+                                    </span>
+                                    <span className={styles.optionInfo}>
+                                        <FontAwesomeIcon icon={faCircleInfo} />
+                                        <span className={styles.optionTooltip}>
+                                            {VIEW_INFO_TEXT.features}
+                                        </span>
+                                    </span>
+                                </span>
                             </button>
                         </div>
 
-                        <p className={styles.helper}>
-                            Evolution view aligns trees on a horizontal timeline using each node timestamp. Blueprint components view isolates and compacts blueprint components. Features view surfaces branches linked to requirements and blueprint components.
-                        </p>
-                        <p className={styles.helper}>
-                            Open AI chat with <strong>Ctrl + Space</strong>.
-                        </p>
-
-                        <p className={styles.sectionLabel}>Card types</p>
+                        <h3 className={styles.title}>Filters</h3>
                         <div className={styles.labelGrid}>
                             {CARD_LABELS.map((label) => {
                                 const selected = selectedLabels.includes(label);
@@ -487,17 +530,25 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                             })}
                         </div>
 
-                        <p className={styles.sectionLabel}>System papers</p>
-                        <div className={styles.systemPaperActions}>
-                            <button
-                                type="button"
-                                className={styles.systemPaperRefresh}
-                                onClick={onSystemPapersRefresh}
-                                disabled={systemPapersLoading}
-                            >
-                                {systemPapersLoading ? "Refreshing..." : "Refresh"}
-                            </button>
-                        </div>
+                        <h3 
+                            className={styles.title} 
+                            style={{
+                                width: "100%", 
+                                display: "flex", 
+                                flexDirection: "row",
+                                justifyContent: "space-between",
+                                alignItems: "center"
+                            }}>
+                            <span>
+                                System Inspirations
+                            </span>
+                            <span className={styles.optionInfo}>
+                                <FontAwesomeIcon icon={faCircleInfo} />
+                                <span className={styles.optionTooltip} style={{fontWeight: "normal"}}>
+                                    Here you can find the top five systems from the literature that better cover your requirements set.
+                                </span>
+                            </span>
+                        </h3>
                         {systemPapersError ? (
                             <p className={styles.queryError}>{systemPapersError}</p>
                         ) : null}
@@ -553,6 +604,16 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                         ) : (
                             <p className={styles.systemPaperEmpty}>No results yet.</p>
                         )}
+                        <div className={styles.systemPaperActions}>
+                            <button
+                                type="button"
+                                className={styles.systemPaperRefresh}
+                                onClick={onSystemPapersRefresh}
+                                disabled={systemPapersLoading}
+                            >
+                                {systemPapersLoading ? "Refreshing..." : "Refresh"}
+                            </button>
+                        </div>
                     </>
                 )}
             </div>

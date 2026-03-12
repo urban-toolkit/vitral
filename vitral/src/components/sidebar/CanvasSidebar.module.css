@@ -152,8 +152,8 @@
 }
 
 .projectSubtitle {
-    margin: 0 0 4px;
-    font-size: var(--font-size-md);
+    margin: 4px 0 4px;
+    font-size: var(--font-size-sm);
     color: var(--subtitle-color);
 }
 
@@ -175,6 +175,9 @@
     margin: 0;
     font-size: 15px;
     font-weight: 700;
+    border-top: 1px solid #d9d9d9;
+    padding-top: 15px;
+    margin-top: 10px;
 }
 
 .subtitle {
@@ -205,12 +208,71 @@
     padding: 10px;
     cursor: pointer;
     font-size: 13px;
+    position: relative;
+    overflow: visible;
+}
+
+.optionContent {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.optionLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.optionLabelIcon {
+    width: 14px;
+}
+
+.optionInfo {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #6a6a6a;
+    font-size: 14px;
+}
+
+.optionTooltip {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 240px;
+    max-width: min(240px, 70vw);
+    padding: 10px;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
+    color: #2d2d2d;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: normal;
+    z-index: 40;
+    opacity: 0;
+    transform: translateY(-4px);
+    pointer-events: none;
+    transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.optionInfo:hover .optionTooltip {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .optionActive {
     border-color: #111;
     background: #111;
     color: #fff;
+}
+
+.optionActive .optionInfo {
+    color: rgba(255, 255, 255, 0.88);
 }
 
 .helper {
@@ -239,7 +301,6 @@
 }
 
 .labelOptionActive {
-    border-color: #111;
     background: #f6f6f6;
 }
 

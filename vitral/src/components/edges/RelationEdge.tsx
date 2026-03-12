@@ -103,7 +103,7 @@ export function RelationEdge(props: EdgeProps) {
         <>
           <rect
             x={labelX - (labelWidth / 2)}
-            y={labelY - 14}
+            y={labelY - 11}
             width={labelWidth}
             height={20}
             rx={6}
