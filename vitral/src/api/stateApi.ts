@@ -49,6 +49,7 @@ export type QueryDocumentNodesRequest = {
     limit?: number;
     minScore?: number;
     scopeNodeIds?: string[];
+    at?: string;
 };
 
 export type QueryDocumentNodesResponse = {
@@ -68,6 +69,7 @@ export type QueryCanvasChatRequest = {
     limit?: number;
     minScore?: number;
     scopeNodeIds?: string[];
+    at?: string;
 };
 
 export type QueryCanvasChatResponse = {

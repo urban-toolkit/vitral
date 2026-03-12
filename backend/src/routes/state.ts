@@ -36,6 +36,7 @@ type QueryNodesBody = {
     limit?: number;
     minScore?: number;
     scopeNodeIds?: string[];
+    at?: string;
 };
 
 type QueryChatMessage = {
@@ -49,6 +50,7 @@ type QueryChatBody = {
     limit?: number;
     minScore?: number;
     scopeNodeIds?: string[];
+    at?: string;
 };
 
 type SimilarityCardInput = {
@@ -113,6 +115,42 @@ function extractJsonObject(text: string): string {
 function truncateText(value: string, maxLength: number): string {
     if (value.length <= maxLength) return value;
     return `${value.slice(0, maxLength)}...`;
+}
+
+function rankNodesBySemanticQuery(
+    nodes: CardNodeForSearch[],
+    semanticQuery: string,
+    limit: number,
+): string[] {
+    const normalized = semanticQuery.trim().toLowerCase();
+    if (!normalized) return nodes.slice(0, limit).map((node) => node.id);
+    const tokens = (normalized.match(/[a-z0-9]{2,}/g) ?? [])
+        .filter((token, index, array) => array.indexOf(token) === index);
+    if (tokens.length === 0) return nodes.slice(0, limit).map((node) => node.id);
+
+    const scored = nodes.map((node) => {
+        const title = node.title.toLowerCase();
+        const description = node.description.toLowerCase();
+        const label = node.label.toLowerCase();
+        let score = 0;
+        if (title.includes(normalized)) score += 14;
+        if (description.includes(normalized)) score += 8;
+        if (label.includes(normalized)) score += 6;
+        for (const token of tokens) {
+            if (title.includes(token)) score += 5;
+            if (description.includes(token)) score += 2;
+            if (label.includes(token)) score += 2;
+        }
+        return { id: node.id, score };
+    });
+
+    return scored
+        .sort((a, b) => {
+            if (a.score !== b.score) return b.score - a.score;
+            return a.id.localeCompare(b.id);
+        })
+        .slice(0, limit)
+        .map((entry) => entry.id);
 }
 
 function embeddingTextFromCard(card: { label: string; title: string; description: string }): string {
@@ -1602,25 +1640,24 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const scopeNodeIds = Array.isArray(body?.scopeNodeIds)
             ? body.scopeNodeIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
             : undefined;
+        let parsedAt: Date | null = null;
+        if (typeof body?.at === "string" && body.at.trim() !== "") {
+            parsedAt = new Date(body.at);
+            if (Number.isNaN(parsedAt.getTime())) {
+                return reply.status(400).send({ error: "Invalid at timestamp" });
+            }
+        }
 
         if (!rawQuery) {
             return reply.status(400).send({ error: "Missing query" });
         }
 
-        const docRes = await app.pg.query<{ state: unknown }>(
-            `
-            SELECT state
-            FROM documents
-            WHERE id = $1
-            `,
-            [id],
-        );
-
-        if (docRes.rows.length === 0) {
+        const snapshot = await loadSnapshotAt(app.pg, id, parsedAt);
+        if (!snapshot) {
             return reply.status(404).send({ error: "Document not found" });
         }
 
-        let candidateNodes = extractCardNodesForSearch(docRes.rows[0]?.state);
+        let candidateNodes = extractCardNodesForSearch(snapshot.state);
         if (scopeNodeIds) {
             const scopeSet = new Set(scopeNodeIds);
             candidateNodes = candidateNodes.filter((node) => scopeSet.has(node.id));
@@ -1647,10 +1684,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             });
         }
 
+        if (parsedAt) {
+            return reply.send({
+                parsed,
+                matchedNodeIds: rankNodesBySemanticQuery(structuredFilteredNodes, semanticQuery, limit),
+                usedVectorSearch: false,
+            });
+        }
+
         if (!openAiClient) {
             return reply.send({
                 parsed,
-                matchedNodeIds: structuredNodeIds.slice(0, limit),
+                matchedNodeIds: rankNodesBySemanticQuery(structuredFilteredNodes, semanticQuery, limit),
                 usedVectorSearch: false,
             });
         }
@@ -1664,7 +1709,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         if (!embeddingTable.rows[0]?.table_name) {
             return reply.send({
                 parsed,
-                matchedNodeIds: structuredNodeIds.slice(0, limit),
+                matchedNodeIds: rankNodesBySemanticQuery(structuredFilteredNodes, semanticQuery, limit),
                 usedVectorSearch: false,
             });
         }
@@ -1685,7 +1730,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         if (!semanticVector) {
             return reply.send({
                 parsed,
-                matchedNodeIds: structuredNodeIds.slice(0, limit),
+                matchedNodeIds: rankNodesBySemanticQuery(structuredFilteredNodes, semanticQuery, limit),
                 usedVectorSearch: false,
             });
         }
@@ -1736,6 +1781,13 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const scopeNodeIds = Array.isArray(body?.scopeNodeIds)
             ? body.scopeNodeIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
             : undefined;
+        let parsedAt: Date | null = null;
+        if (typeof body?.at === "string" && body.at.trim() !== "") {
+            parsedAt = new Date(body.at);
+            if (Number.isNaN(parsedAt.getTime())) {
+                return reply.status(400).send({ error: "Invalid at timestamp" });
+            }
+        }
 
         const conversation = Array.isArray(body?.conversation)
             ? body.conversation
@@ -1753,20 +1805,12 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             return reply.status(400).send({ error: "Missing message" });
         }
 
-        const docRes = await app.pg.query<{ state: unknown }>(
-            `
-            SELECT state
-            FROM documents
-            WHERE id = $1
-            `,
-            [id],
-        );
-
-        if (docRes.rows.length === 0) {
+        const snapshot = await loadSnapshotAt(app.pg, id, parsedAt);
+        if (!snapshot) {
             return reply.status(404).send({ error: "Document not found" });
         }
 
-        let candidateNodes = extractCardNodesForSearch(docRes.rows[0]?.state);
+        let candidateNodes = extractCardNodesForSearch(snapshot.state);
         if (scopeNodeIds) {
             const scopeSet = new Set(scopeNodeIds);
             candidateNodes = candidateNodes.filter((node) => scopeSet.has(node.id));
@@ -1780,7 +1824,9 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         if (structuredNodeIds.length > 0) {
             const semanticQuery = parsed.semanticQuery.trim();
-            if (semanticQuery && openAiClient) {
+            if (semanticQuery && parsedAt) {
+                matchedNodeIds = rankNodesBySemanticQuery(structuredFilteredNodes, semanticQuery, limit);
+            } else if (semanticQuery && openAiClient) {
                 const embeddingTable = await app.pg.query<{ table_name: string | null }>(
                     `
                     SELECT to_regclass('public.document_node_embeddings') AS table_name
@@ -1833,9 +1879,10 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const fallbackApplyFilter = /\b(show|list|find|filter|display|only)\b/i.test(rawMessage);
         let applyFilter = fallbackApplyFilter;
+        const canvasReference = parsedAt ? "selected point in time" : "current canvas";
         let replyText = contextNodes.length > 0
-            ? `I found ${contextNodes.length} relevant nodes on the canvas.`
-            : "I could not find relevant nodes on the current canvas.";
+            ? `I found ${contextNodes.length} relevant nodes on the ${canvasReference}.`
+            : `I could not find relevant nodes on the ${canvasReference}.`;
 
         if (openAiClient) {
             const historyText = conversation
@@ -1898,7 +1945,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
 
         if (applyFilter && matchedNodeIds.length === 0) {
-            replyText = "I applied the filter, but no matching nodes were found on the current canvas.";
+            replyText = `I applied the filter, but no matching nodes were found on the ${canvasReference}.`;
         }
 
         return reply.send({

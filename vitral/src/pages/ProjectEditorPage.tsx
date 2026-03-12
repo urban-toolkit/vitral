@@ -812,6 +812,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [mostRecentSystemScreenshotMarker, playbackAt, systemScreenshotMarkers]);
     const isPlaybackMode = playbackAt !== null;
     const interactionLocked = reviewOnly || isPlaybackMode;
+    const timelineContextNodes = useMemo(
+        () => (isPlaybackMode && playbackSnapshot ? playbackSnapshot.nodes : nodes),
+        [isPlaybackMode, nodes, playbackSnapshot],
+    );
+    const timelineContextEdges = useMemo(
+        () => (isPlaybackMode && playbackSnapshot ? playbackSnapshot.edges : edges),
+        [edges, isPlaybackMode, playbackSnapshot],
+    );
     const knowledgeProvenanceTriggerKey = useMemo(() => {
         const nodeParts = nodes
             .map((node) => {
@@ -1233,19 +1241,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     );
 
     const labelFilteredNodes = useMemo(() => {
-        return nodes.filter((node) => {
+        return timelineContextNodes.filter((node) => {
             const rawLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
             if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
             return selectedLabelSet.has(rawLabel as cardLabel);
         });
-    }, [nodes, selectedLabelSet]);
+    }, [selectedLabelSet, timelineContextNodes]);
 
     const emphasizedBlueprintComponentIds = useMemo(() => {
-        const nodeById = new Map(nodes.map((node) => [node.id, node]));
+        const nodeById = new Map(timelineContextNodes.map((node) => [node.id, node]));
         const emphasized = new Set<string>();
 
-        for (let index = 0; index < edges.length; index++) {
-            const edge = edges[index];
+        for (let index = 0; index < timelineContextEdges.length; index++) {
+            const edge = timelineContextEdges[index];
             const sourceNode = nodeById.get(edge.source);
             const targetNode = nodeById.get(edge.target);
             if (!sourceNode || !targetNode) continue;
@@ -1266,7 +1274,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         return emphasized;
-    }, [nodes, edges]);
+    }, [timelineContextEdges, timelineContextNodes]);
     const connectedBlueprintComponentNodeIds = useMemo(
         () => Array.from(emphasizedBlueprintComponentIds),
         [emphasizedBlueprintComponentIds]
@@ -1355,11 +1363,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const compactBlueprintNodes = useMemo(() => {
         if (viewMode !== "blueprintComponents") return null;
 
-        const absoluteById = resolveAbsoluteNodePositions(nodes);
-        const nodeById = new Map(nodes.map((node) => [node.id, node]));
+        const absoluteById = resolveAbsoluteNodePositions(timelineContextNodes);
+        const nodeById = new Map(timelineContextNodes.map((node) => [node.id, node]));
         const visibleNodeIds = new Set<string>();
 
-        const blueprintComponents = nodes.filter((node) => (
+        const blueprintComponents = timelineContextNodes.filter((node) => (
             String(node.data?.label ?? "").toLowerCase() === "blueprint_component"
         ));
 
@@ -1378,7 +1386,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             }
         }
 
-        const visibleBlueprintNodes = nodes.filter((node) => visibleNodeIds.has(node.id));
+        const visibleBlueprintNodes = timelineContextNodes.filter((node) => visibleNodeIds.has(node.id));
         const visibleById = new Map(visibleBlueprintNodes.map((node) => [node.id, node]));
 
         const toDimension = (value: unknown, fallback: number) => {
@@ -1483,19 +1491,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 },
             };
         });
-    }, [nodes, viewMode, emphasizedBlueprintComponentIds, normalizedHoveredCodebasePath]);
+    }, [timelineContextNodes, viewMode, emphasizedBlueprintComponentIds, normalizedHoveredCodebasePath]);
 
     const filteredEdges = useMemo(() => {
         const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
-        return edges.filter((edge) => (
+        return timelineContextEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
         ));
-    }, [edges, filteredNodes]);
+    }, [timelineContextEdges, filteredNodes]);
 
     const featureViewNodes = useMemo(() => {
         if (viewMode !== "features") return null;
 
-        const nodeById = new Map(nodes.map((node) => [node.id, node]));
+        const nodeById = new Map(timelineContextNodes.map((node) => [node.id, node]));
         const adjacency = new Map<string, string[]>();
 
         const connect = (a: string, b: string) => {
@@ -1507,13 +1515,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             }
         };
 
-        for (const edge of edges) {
+        for (const edge of timelineContextEdges) {
             connect(edge.source, edge.target);
             connect(edge.target, edge.source);
         }
 
         const requirementOrBlueprintIds = new Set(
-            nodes
+            timelineContextNodes
                 .filter((node) => {
                     const label = String(node.data?.label ?? "").toLowerCase();
                     if (label === "blueprint_component") return true;
@@ -1545,7 +1553,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             return distances;
         };
 
-        const activityIds = nodes
+        const activityIds = timelineContextNodes
             .filter((node) => normalizeNodeLabel(String(node.data?.label ?? "")) === "activity")
             .map((node) => node.id);
 
@@ -1590,8 +1598,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             includeBlueprintAncestors(nodeId);
         }
 
-        return nodes.filter((node) => includedNodeIds.has(node.id));
-    }, [viewMode, nodes, edges]);
+        return timelineContextNodes.filter((node) => includedNodeIds.has(node.id));
+    }, [viewMode, timelineContextNodes, timelineContextEdges]);
 
     const evolutionBaseNodes = useMemo(() => {
         if (viewMode === "blueprintComponents") {
@@ -1608,22 +1616,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [viewMode, filteredNodes, compactBlueprintNodes, featureViewNodes]);
 
     const displayedNodes = useMemo(() => {
-        if (isPlaybackMode && playbackSnapshot) {
-            return playbackSnapshot.nodes;
-        }
         if (viewMode === "evolution") {
             return buildEvolutionLayoutNodes(evolutionBaseNodes, filteredEdges);
         }
         return evolutionBaseNodes;
-    }, [isPlaybackMode, playbackSnapshot, viewMode, evolutionBaseNodes, filteredEdges]);
+    }, [viewMode, evolutionBaseNodes, filteredEdges]);
 
     const displayedEdges = useMemo(() => {
-        if (isPlaybackMode && playbackSnapshot) {
-            return playbackSnapshot.edges;
-        }
         if (viewMode === "blueprintComponents" || viewMode === "features") {
             const visibleNodeIds = new Set(displayedNodes.map((node) => node.id));
-            return edges.filter((edge) => (
+            return timelineContextEdges.filter((edge) => (
                 visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
             ));
         }
@@ -1631,7 +1633,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return filteredEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
         ));
-    }, [isPlaybackMode, playbackSnapshot, viewMode, edges, filteredEdges, displayedNodes]);
+    }, [viewMode, timelineContextEdges, filteredEdges, displayedNodes]);
 
     const isInsideSystemBlueprintParentBox = useCallback((position: { x: number; y: number }) => {
         const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -2123,14 +2125,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const computeLabelScopedNodeIds = useCallback((labels: cardLabel[]) => {
         const labelSet = new Set(labels);
-        return nodes
+        return timelineContextNodes
             .filter((node) => {
                 const rawLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
                 if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
                 return labelSet.has(rawLabel as cardLabel);
             })
             .map((node) => node.id);
-    }, [nodes]);
+    }, [timelineContextNodes]);
 
     const runNaturalLanguageQuery = useCallback(async (queryText: string, scopeNodeIds: string[]) => {
         const trimmed = queryText.trim();
@@ -2147,7 +2149,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 query: trimmed,
                 scopeNodeIds,
                 limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
-                minScore: 0.3
+                minScore: 0.3,
+                at: isPlaybackMode ? playbackAt ?? undefined : undefined,
             });
             if (requestId !== queryRequestIdRef.current) return;
             setActiveQuery(trimmed);
@@ -2156,7 +2159,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             if (requestId !== queryRequestIdRef.current) return;
             console.error("Failed to refresh filtered nodes for the current query.", error);
         }
-    }, [projectId]);
+    }, [isPlaybackMode, playbackAt, projectId]);
 
     const clearCanvasFilter = useCallback(() => {
         setActiveQuery("");
@@ -2195,6 +2198,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     scopeNodeIds,
                     limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
                     minScore: 0.3,
+                    at: isPlaybackMode ? playbackAt ?? undefined : undefined,
                 });
                 if (requestId !== chatRequestIdRef.current) return;
 
@@ -2220,7 +2224,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 }
             }
         })();
-    }, [chatInput, chatLoading, chatMessages, labelFilteredNodes, projectId]);
+    }, [chatInput, chatLoading, chatMessages, labelFilteredNodes, isPlaybackMode, playbackAt, projectId]);
 
     const handleSystemPapersRefresh = useCallback(() => {
         const cards = nodes
