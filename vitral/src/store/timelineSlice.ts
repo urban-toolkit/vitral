@@ -82,6 +82,8 @@ const initialState: TimelineState = {
         allIds: []
     },
     codebaseSubtracks: [],
+    knowledgeSubtracks: [],
+    knowledgePillTrackAssignments: {},
     blueprintCodebaseLinks: [],
     systemScreenshotMarkers: [],
     participants: [],
@@ -133,6 +135,18 @@ function setAllBlueprintEvents(state: TimelineState, blueprintEvents: BlueprintE
         state.blueprintEvents.byId[event.id] = event;
         state.blueprintEvents.allIds.push(event.id);
     }
+}
+
+function sanitizeSubtrack(subtrack: CodebaseSubtrack, fallbackName: string): CodebaseSubtrack {
+    return {
+        id: subtrack.id || crypto.randomUUID(),
+        name: subtrack.name || fallbackName,
+        filePaths: Array.isArray(subtrack.filePaths)
+            ? subtrack.filePaths.filter((path) => typeof path === "string")
+            : [],
+        collapsed: Boolean(subtrack.collapsed),
+        inactive: Boolean(subtrack.inactive),
+    };
 }
 
 export const timelineSlice = createSlice({
@@ -369,28 +383,15 @@ export const timelineSlice = createSlice({
 
         // Codebase subtracks
         setCodebaseSubtracks: (state, action: PayloadAction<CodebaseSubtrack[]>) => {
-            state.codebaseSubtracks = action.payload.map((subtrack, index) => ({
-                id: subtrack.id || crypto.randomUUID(),
-                name: subtrack.name || `Codebase subtrack ${index + 1}`,
-                filePaths: Array.isArray(subtrack.filePaths)
-                    ? subtrack.filePaths.filter((path) => typeof path === "string")
-                    : [],
-                collapsed: Boolean(subtrack.collapsed),
-                inactive: Boolean(subtrack.inactive),
-            }));
+            state.codebaseSubtracks = action.payload.map((subtrack, index) =>
+                sanitizeSubtrack(subtrack, `Codebase subtrack ${index + 1}`)
+            );
         },
 
         addCodebaseSubtrack: (state, action: PayloadAction<CodebaseSubtrack>) => {
             const subtrack = action.payload;
             if (state.codebaseSubtracks.some((existing) => existing.id === subtrack.id)) return;
-
-            state.codebaseSubtracks.push({
-                id: subtrack.id,
-                name: subtrack.name,
-                filePaths: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
-                collapsed: Boolean(subtrack.collapsed),
-                inactive: Boolean(subtrack.inactive),
-            });
+            state.codebaseSubtracks.push(sanitizeSubtrack(subtrack, "Codebase subtrack"));
         },
 
         attachFileToCodebaseSubtrack: (
@@ -433,6 +434,89 @@ export const timelineSlice = createSlice({
             const subtrack = state.codebaseSubtracks.find((item) => item.id === action.payload);
             if (!subtrack) return;
             subtrack.inactive = !subtrack.inactive;
+        },
+
+        // Knowledge subtracks
+        setKnowledgeSubtracks: (state, action: PayloadAction<CodebaseSubtrack[]>) => {
+            state.knowledgeSubtracks = action.payload.map((subtrack, index) =>
+                sanitizeSubtrack(subtrack, `Knowledge subtrack ${index + 1}`)
+            );
+            const validSubtrackIds = new Set(state.knowledgeSubtracks.map((subtrack) => subtrack.id));
+            for (const treeId of Object.keys(state.knowledgePillTrackAssignments)) {
+                const assignedSubtrackId = state.knowledgePillTrackAssignments[treeId];
+                if (assignedSubtrackId && !validSubtrackIds.has(assignedSubtrackId)) {
+                    state.knowledgePillTrackAssignments[treeId] = null;
+                }
+            }
+        },
+
+        addKnowledgeSubtrack: (state, action: PayloadAction<CodebaseSubtrack>) => {
+            const subtrack = action.payload;
+            if (state.knowledgeSubtracks.some((existing) => existing.id === subtrack.id)) return;
+            state.knowledgeSubtracks.push(sanitizeSubtrack(subtrack, "Knowledge subtrack"));
+        },
+
+        toggleKnowledgeSubtrackCollapsed: (state, action: PayloadAction<string>) => {
+            const subtrack = state.knowledgeSubtracks.find((item) => item.id === action.payload);
+            if (!subtrack) return;
+            subtrack.collapsed = !subtrack.collapsed;
+        },
+
+        renameKnowledgeSubtrack: (
+            state,
+            action: PayloadAction<{ subtrackId: string; name: string }>
+        ) => {
+            const { subtrackId, name } = action.payload;
+            const subtrack = state.knowledgeSubtracks.find((item) => item.id === subtrackId);
+            if (!subtrack) return;
+            subtrack.name = name;
+        },
+
+        deleteKnowledgeSubtrack: (state, action: PayloadAction<string>) => {
+            const subtrackId = action.payload;
+            state.knowledgeSubtracks = state.knowledgeSubtracks.filter(
+                (subtrack) => subtrack.id !== subtrackId
+            );
+            for (const treeId of Object.keys(state.knowledgePillTrackAssignments)) {
+                if (state.knowledgePillTrackAssignments[treeId] === subtrackId) {
+                    state.knowledgePillTrackAssignments[treeId] = null;
+                }
+            }
+        },
+
+        toggleKnowledgeSubtrackInactive: (state, action: PayloadAction<string>) => {
+            const subtrack = state.knowledgeSubtracks.find((item) => item.id === action.payload);
+            if (!subtrack) return;
+            subtrack.inactive = !subtrack.inactive;
+        },
+
+        setKnowledgePillTrackAssignments: (
+            state,
+            action: PayloadAction<Record<string, string | null>>
+        ) => {
+            const validSubtrackIds = new Set(state.knowledgeSubtracks.map((subtrack) => subtrack.id));
+            const nextAssignments: Record<string, string | null> = {};
+            for (const [treeId, subtrackId] of Object.entries(action.payload ?? {})) {
+                if (typeof treeId !== "string" || treeId.trim() === "") continue;
+                nextAssignments[treeId] =
+                    typeof subtrackId === "string" && validSubtrackIds.has(subtrackId)
+                        ? subtrackId
+                        : null;
+            }
+            state.knowledgePillTrackAssignments = nextAssignments;
+        },
+
+        assignKnowledgePillToSubtrack: (
+            state,
+            action: PayloadAction<{ treeId: string; subtrackId: string | null }>
+        ) => {
+            const { treeId, subtrackId } = action.payload;
+            if (!treeId || treeId.trim() === "") return;
+            if (subtrackId && !state.knowledgeSubtracks.some((subtrack) => subtrack.id === subtrackId)) {
+                state.knowledgePillTrackAssignments[treeId] = null;
+                return;
+            }
+            state.knowledgePillTrackAssignments[treeId] = subtrackId ?? null;
         },
 
         setParticipants: (state, action: PayloadAction<ProjectParticipant[]>) => {
@@ -730,6 +814,14 @@ export const {
     renameCodebaseSubtrack,
     deleteCodebaseSubtrack,
     toggleCodebaseSubtrackInactive,
+    setKnowledgeSubtracks,
+    addKnowledgeSubtrack,
+    toggleKnowledgeSubtrackCollapsed,
+    renameKnowledgeSubtrack,
+    deleteKnowledgeSubtrack,
+    toggleKnowledgeSubtrackInactive,
+    setKnowledgePillTrackAssignments,
+    assignKnowledgePillToSubtrack,
     setParticipants,
     setHoveredCodebaseFilePath,
     setHighlightedCodebaseFilePaths,
@@ -785,6 +877,16 @@ export const selectAllBlueprintEvents = createSelector(
 export const selectCodebaseSubtracks = createSelector(
     selectTimelineState,
     s => s.codebaseSubtracks
+);
+
+export const selectKnowledgeSubtracks = createSelector(
+    selectTimelineState,
+    s => s.knowledgeSubtracks
+);
+
+export const selectKnowledgePillTrackAssignments = createSelector(
+    selectTimelineState,
+    s => s.knowledgePillTrackAssignments
 );
 
 export const selectBlueprintCodebaseLinks = createSelector(

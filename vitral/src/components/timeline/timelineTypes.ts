@@ -29,9 +29,61 @@ export type TimelineEventBase = {
   description?: string;
 };
 
+export type KnowledgeTreeCardEvent = {
+  id: string;
+  occurredAt: Date | string;
+  eventType: "created";
+  isDeleted?: boolean;
+  nodeId: string;
+  cardLabel: string;
+  cardTitle: string;
+  cardDescription: string;
+  metadata?: unknown;
+};
+
+export type KnowledgeTreePill = {
+  treeId: string;
+  treeTitle: string;
+  occurredAt: Date | string;
+  events: KnowledgeTreeCardEvent[];
+};
+
+export type KnowledgeCrossTreeConnection = {
+  id: string;
+  occurredAt: Date | string;
+  label: string;
+  kind: "regular" | "referenced_by" | "iteration_of";
+  sourceNodeId: string;
+  targetNodeId: string;
+  sourceCardTitle: string;
+  sourceCardLabel: string;
+  targetCardTitle: string;
+  targetCardLabel: string;
+  sourceTreeId: string;
+  targetTreeId: string;
+};
+
+export type KnowledgeBlueprintLink = {
+  id: string;
+  kind: "regular" | "referenced_by" | "iteration_of";
+  label: string;
+  cardNodeId: string;
+  cardLabel: string;
+  cardTitle: string;
+  cardCreatedAt: Date | string;
+  blueprintEventId: string;
+  blueprintEventName: string;
+  blueprintOccurredAt: Date | string;
+  componentNodeId: string;
+};
+
 export type KnowledgeBaseEvent = TimelineEventBase & {
   kind: "knowledge";
   subtype?: string;
+  isDeleted?: boolean;
+  treeId?: string;
+  treeTitle?: string;
+  events?: KnowledgeTreeCardEvent[];
 };
 
 export type AnyEvent =
@@ -59,6 +111,11 @@ export type TimelineProps = {
   knowledgeBaseEvents?: KnowledgeBaseEvent[];
   designStudyEvents?: DesignStudyEvent[];
   blueprintEvents?: BlueprintEvent[];
+  knowledgeTreePills?: KnowledgeTreePill[];
+  knowledgeCrossTreeConnections?: KnowledgeCrossTreeConnection[];
+  knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];
+  playbackAt?: Date | string | null;
+  onPlaybackAtChange?: (value: string | null) => void;
   connectedBlueprintComponentNodeIds?: string[];
   margin?: { top: number; right: number; bottom: number; left: number };
 };

@@ -2,13 +2,18 @@ import { memo } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronUp } from "@fortawesome/free-solid-svg-icons";
 
-import { Timeline, type BlueprintEvent, type KnowledgeBaseEvent } from "@/components/timeline/Timeline";
+import {
+    Timeline,
+    type BlueprintEvent,
+    type KnowledgeBaseEvent,
+    type KnowledgeBlueprintLink,
+    type KnowledgeCrossTreeConnection,
+    type KnowledgeTreePill,
+} from "@/components/timeline/Timeline";
 import type { DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
 
 export const TIMELINE_DOCK_HEIGHT = 380;
 export const TIMELINE_DOCK_TOGGLE_HEIGHT = 15;
-
-const KNOWLEDGE_BASE_EVENTS: KnowledgeBaseEvent[] = [];
 
 type TimelineDockProps = {
     projectId: string;
@@ -20,6 +25,12 @@ type TimelineDockProps = {
     projectName?: string;
     projectGoal?: string;
     codebaseEvents: GitHubEvent[];
+    knowledgeBaseEvents?: KnowledgeBaseEvent[];
+    knowledgeTreePills?: KnowledgeTreePill[];
+    knowledgeCrossTreeConnections?: KnowledgeCrossTreeConnection[];
+    knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];
+    playbackAt?: Date | string | null;
+    onPlaybackAtChange?: (value: string | null) => void;
     designStudyEvents: DesignStudyEvent[];
     blueprintEvents?: BlueprintEvent[];
     connectedBlueprintComponentNodeIds?: string[];
@@ -43,6 +54,12 @@ export const TimelineDock = memo(function TimelineDock({
     projectName,
     projectGoal,
     codebaseEvents,
+    knowledgeBaseEvents = [],
+    knowledgeTreePills = [],
+    knowledgeCrossTreeConnections = [],
+    knowledgeBlueprintLinks = [],
+    playbackAt = null,
+    onPlaybackAtChange,
     designStudyEvents,
     blueprintEvents = [],
     connectedBlueprintComponentNodeIds = [],
@@ -102,9 +119,14 @@ export const TimelineDock = memo(function TimelineDock({
                     projectName={projectName}
                     projectGoal={projectGoal}
                     codebaseEvents={codebaseEvents}
-                    knowledgeBaseEvents={KNOWLEDGE_BASE_EVENTS}
+                    knowledgeBaseEvents={knowledgeBaseEvents}
                     designStudyEvents={designStudyEvents}
                     blueprintEvents={blueprintEvents}
+                    knowledgeTreePills={knowledgeTreePills}
+                    knowledgeCrossTreeConnections={knowledgeCrossTreeConnections}
+                    knowledgeBlueprintLinks={knowledgeBlueprintLinks}
+                    playbackAt={playbackAt}
+                    onPlaybackAtChange={onPlaybackAtChange}
                     connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}
                     stages={stages}
                     defaultStages={defaultStages}

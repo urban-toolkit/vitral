@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useSelector, useDispatch } from 'react-redux';
 import { setNodes, setEdges, setTitle } from "@/store/flowSlice";
-import { listFiles, loadDocument, saveDocument } from "@/api/stateApi";
+import { appendDocumentRevisionSnapshot, listFiles, loadDocument, saveDocument } from "@/api/stateApi";
 import { debounce } from "@/utils/debounce";
 
 import type { RootState } from '@/store';
@@ -16,9 +16,13 @@ import {
     selectAllStages,
     selectAllSubStages,
     selectCodebaseSubtracks,
+    selectKnowledgePillTrackAssignments,
+    selectKnowledgeSubtracks,
     selectDefaultStages,
     selectTimelineStartEnd,
     setCodebaseSubtracks,
+    setKnowledgePillTrackAssignments,
+    setKnowledgeSubtracks,
     setBlueprintCodebaseLinks,
     setSystemScreenshotMarkers,
     setBlueprintEvents,
@@ -51,6 +55,8 @@ export function useDocumentSync(projectId: string) {
     const blueprintCodebaseLinks = useSelector(selectBlueprintCodebaseLinks);
     const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
     const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
+    const knowledgeSubtracks = useSelector(selectKnowledgeSubtracks);
+    const knowledgePillTrackAssignments = useSelector(selectKnowledgePillTrackAssignments);
     const participants = useSelector(selectParticipants);
     const defaultStages = useSelector(selectDefaultStages);
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
@@ -60,6 +66,7 @@ export function useDocumentSync(projectId: string) {
     const [reviewOnly, setReviewOnly] = useState(false);
 
     const lastSavedHashRef = useRef<string>("");
+    const lastRevisionHashRef = useRef<string>("");
     const hasLoadedRef = useRef(false); // Blocks autosave until loading is done
     const activeProjectIdRef = useRef<string>(projectId);
 
@@ -76,11 +83,13 @@ export function useDocumentSync(projectId: string) {
             blueprintCodebaseLinks: blueprintCodebaseLinks,
             systemScreenshotMarkers: systemScreenshotMarkers,
             codebaseSubtracks: codebaseSubtracks,
+            knowledgeSubtracks: knowledgeSubtracks,
+            knowledgePillTrackAssignments: knowledgePillTrackAssignments,
             participants: participants,
             defaultStages: defaultStages,
             timelineStartEnd: timelineStartEnd
         });
-    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, codebaseSubtracks, participants]);
+    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
@@ -97,6 +106,8 @@ export function useDocumentSync(projectId: string) {
                 systemScreenshotMarkers: SystemScreenshotMarker[],
                 subStages: SubStage[],
                 codebaseSubtracks: CodebaseSubtrack[],
+                knowledgeSubtracks: CodebaseSubtrack[],
+                knowledgePillTrackAssignments: Record<string, string | null>,
                 participants: Array<{ id: string; name: string; role: string }>,
                 defaultStages: string[],
                 timelineStartEnd: {start: string, end: string},  
@@ -119,6 +130,8 @@ export function useDocumentSync(projectId: string) {
                         systemScreenshotMarkers,
                         subStages,
                         codebaseSubtracks,
+                        knowledgeSubtracks,
+                        knowledgePillTrackAssignments,
                         participants,
                         defaultStages,
                         timelineStartEnd
@@ -134,11 +147,63 @@ export function useDocumentSync(projectId: string) {
         []
     );
 
+    const debouncedRevision = useMemo(
+        () =>
+            debounce(async (
+                id: string,
+                hash: string,
+                nodes: any[],
+                edges: any[],
+                stages: Stage[],
+                designStudyEvents: DesignStudyEvent[],
+                blueprintEvents: BlueprintEvent[],
+                blueprintCodebaseLinks: BlueprintCodebaseLink[],
+                systemScreenshotMarkers: SystemScreenshotMarker[],
+                subStages: SubStage[],
+                codebaseSubtracks: CodebaseSubtrack[],
+                knowledgeSubtracks: CodebaseSubtrack[],
+                knowledgePillTrackAssignments: Record<string, string | null>,
+                participants: Array<{ id: string; name: string; role: string }>,
+                defaultStages: string[],
+                timelineStartEnd: { start: string; end: string },
+            ) => {
+                if (activeProjectIdRef.current !== id) return;
+                if (!hasLoadedRef.current) return;
+
+                try {
+                    await appendDocumentRevisionSnapshot(id, {
+                        flow: { nodes, edges },
+                    }, {
+                        stages,
+                        designStudyEvents,
+                        blueprintEvents,
+                        blueprintCodebaseLinks,
+                        systemScreenshotMarkers,
+                        subStages,
+                        codebaseSubtracks,
+                        knowledgeSubtracks,
+                        knowledgePillTrackAssignments,
+                        participants,
+                        defaultStages,
+                        timelineStartEnd,
+                    });
+
+                    lastRevisionHashRef.current = hash;
+                } catch (e: any) {
+                    // Keep autosave independent from lightweight revision snapshots.
+                    // eslint-disable-next-line no-console
+                    console.warn(e?.message ?? "Failed to append revision snapshot");
+                }
+            }, 140),
+        []
+    );
+
     // Load whenever projectId changes
     useEffect(() => {
         activeProjectIdRef.current = projectId;
         hasLoadedRef.current = false;
         debouncedSave.cancel(); // cancel any pending save from previous page/project
+        debouncedRevision.cancel();
 
         const ac = new AbortController();
 
@@ -174,6 +239,8 @@ export function useDocumentSync(projectId: string) {
                 const systemScreenshotMarkers = timeline?.systemScreenshotMarkers ?? [];
                 const subStages = timeline?.subStages ?? [];
                 const codebaseSubtracks = timeline?.codebaseSubtracks ?? [];
+                const knowledgeSubtracks = timeline?.knowledgeSubtracks ?? [];
+                const knowledgePillTrackAssignments = timeline?.knowledgePillTrackAssignments ?? {};
                 const participants = timeline?.participants ?? [];
                 const defaultStages = timeline?.defaultStages ?? [];
                 const timelineStartEnd = timeline?.timelineStartEnd ?? {start: "June 15, 2023 03:24:00", end: "December 04, 2023 00:24:00"};
@@ -185,6 +252,8 @@ export function useDocumentSync(projectId: string) {
                 dispatch(setSystemScreenshotMarkers(systemScreenshotMarkers));
                 dispatch(setSubStages(subStages));
                 dispatch(setCodebaseSubtracks(codebaseSubtracks));
+                dispatch(setKnowledgeSubtracks(knowledgeSubtracks));
+                dispatch(setKnowledgePillTrackAssignments(knowledgePillTrackAssignments));
                 dispatch(setParticipants(participants));
                 dispatch(setDefaultStages(defaultStages));
                 dispatch(setTimelineStartEnd(timelineStartEnd));
@@ -200,9 +269,12 @@ export function useDocumentSync(projectId: string) {
                     systemScreenshotMarkers,
                     subStages,
                     codebaseSubtracks,
+                    knowledgeSubtracks,
+                    knowledgePillTrackAssignments,
                     participants,
                     defaultStages,
                     timelineStartEnd });
+                lastRevisionHashRef.current = lastSavedHashRef.current;
                 hasLoadedRef.current = true;
                 setStatus("ready");
             } catch (e: any) {
@@ -218,8 +290,9 @@ export function useDocumentSync(projectId: string) {
         return () => {
             ac.abort();
             debouncedSave.cancel();
+            debouncedRevision.cancel();
         };
-    }, [projectId, dispatch, debouncedSave]);
+    }, [projectId, dispatch, debouncedSave, debouncedRevision]);
 
     // Trigger autosave on flow changes (once loaded)
     useEffect(() => {
@@ -229,8 +302,29 @@ export function useDocumentSync(projectId: string) {
 
         if (currentHash === lastSavedHashRef.current) return;
 
-        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, participants, defaultStages, timelineStartEnd, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, reviewOnly, debouncedSave, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, defaultStages, timelineStartEnd, participants]);
+        if (currentHash !== lastRevisionHashRef.current) {
+            debouncedRevision(
+                projectId,
+                currentHash,
+                flow.nodes,
+                flow.edges,
+                stages,
+                designStudyEvents,
+                blueprintEvents,
+                blueprintCodebaseLinks,
+                systemScreenshotMarkers,
+                subStages,
+                codebaseSubtracks,
+                knowledgeSubtracks,
+                knowledgePillTrackAssignments,
+                participants,
+                defaultStages,
+                timelineStartEnd,
+            );
+        }
+
+        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants, defaultStages, timelineStartEnd, flow.title);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, reviewOnly, debouncedSave, debouncedRevision, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, defaultStages, timelineStartEnd, participants]);
 
     return { status, error, reviewOnly };
 }

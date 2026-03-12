@@ -205,6 +205,12 @@ function toTimelinePayload(
         designStudyEvents,
         blueprintEvents: Array.isArray(existingTimeline?.blueprintEvents) ? existingTimeline.blueprintEvents : [],
         codebaseSubtracks: Array.isArray(existingTimeline?.codebaseSubtracks) ? existingTimeline.codebaseSubtracks : [],
+        knowledgeSubtracks: Array.isArray(existingTimeline?.knowledgeSubtracks) ? existingTimeline.knowledgeSubtracks : [],
+        knowledgePillTrackAssignments:
+            existingTimeline?.knowledgePillTrackAssignments &&
+                typeof existingTimeline.knowledgePillTrackAssignments === "object"
+                ? existingTimeline.knowledgePillTrackAssignments
+                : {},
         blueprintCodebaseLinks: Array.isArray(existingTimeline?.blueprintCodebaseLinks)
             ? existingTimeline.blueprintCodebaseLinks
             : [],

@@ -27,7 +27,22 @@ import {
     requestSystemScreenshotZonesLLM,
 } from "@/func/LLMRequest";
 import type { LlmProjectSettingsContext } from "@/func/LLMRequest";
-import { deleteFile, exportProjectVi, loadDocument, queryCanvasChat, queryDocumentNodes, querySystemPapers, updateDocumentMeta, type QuerySystemPapersResult } from "@/api/stateApi";
+import {
+    deleteFile,
+    exportProjectVi,
+    loadDocument,
+    loadDocumentStateAt,
+    loadKnowledgeProvenance,
+    queryCanvasChat,
+    queryDocumentNodes,
+    querySystemPapers,
+    updateDocumentMeta,
+    type KnowledgeBlueprintLink,
+    type KnowledgeCrossTreeConnection,
+    type KnowledgePillEvent,
+    type KnowledgePill,
+    type QuerySystemPapersResult,
+} from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { getGitHubEvents } from "@/api/eventsApi";
 
@@ -96,6 +111,7 @@ import {
     TIMELINE_DOCK_HEIGHT,
     TIMELINE_DOCK_TOGGLE_HEIGHT,
 } from "@/pages/projectEditor/TimelineDock";
+import type { KnowledgeBaseEvent } from "@/components/timeline/timelineTypes";
 import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttachmentProcessing";
 import { SystemScreenshotPanel } from "@/pages/projectEditor/SystemScreenshotPanel";
 
@@ -697,6 +713,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [hoveredAssetFileId, setHoveredAssetFileId] = useState<string | null>(null);
     const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
     const [processingSystemScreenshot, setProcessingSystemScreenshot] = useState(false);
+    const [knowledgePills, setKnowledgePills] = useState<KnowledgePill[]>([]);
+    const [knowledgeCreationEvents, setKnowledgeCreationEvents] = useState<KnowledgePillEvent[]>([]);
+    const [knowledgeCrossTreeConnections, setKnowledgeCrossTreeConnections] = useState<KnowledgeCrossTreeConnection[]>([]);
+    const [knowledgeBlueprintLinks, setKnowledgeBlueprintLinks] = useState<KnowledgeBlueprintLink[]>([]);
+    const [playbackAt, setPlaybackAt] = useState<string | null>(null);
+    const [playbackSnapshot, setPlaybackSnapshot] = useState<{ nodes: nodeType[]; edges: edgeType[] } | null>(null);
     const [projectGoal, setProjectGoal] = useState("");
     const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
     const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
@@ -766,6 +788,123 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         return latest;
     }, [systemScreenshotMarkers]);
+    const playbackAwareSystemScreenshotMarker = useMemo(() => {
+        if (systemScreenshotMarkers.length === 0) return null;
+        if (!playbackAt) return mostRecentSystemScreenshotMarker;
+
+        const cutoffTime = new Date(playbackAt).getTime();
+        if (Number.isNaN(cutoffTime)) return mostRecentSystemScreenshotMarker;
+
+        let latest: typeof systemScreenshotMarkers[number] | null = null;
+        let latestTime = Number.NEGATIVE_INFINITY;
+        for (const marker of systemScreenshotMarkers) {
+            const markerTime = new Date(marker.occurredAt).getTime();
+            if (Number.isNaN(markerTime)) continue;
+            if (markerTime > cutoffTime) continue;
+            if (markerTime >= latestTime) {
+                latest = marker;
+                latestTime = markerTime;
+            }
+        }
+        return latest;
+    }, [mostRecentSystemScreenshotMarker, playbackAt, systemScreenshotMarkers]);
+    const isPlaybackMode = playbackAt !== null;
+    const interactionLocked = reviewOnly || isPlaybackMode;
+
+    useEffect(() => {
+        if (status === "loading") return;
+        let active = true;
+        const timers: number[] = [];
+        const loadKnowledgeProvenanceSnapshot = async () => {
+            const at = new Date().toISOString();
+            try {
+                const provenance = await loadKnowledgeProvenance(projectId, at);
+                if (!active) return;
+                setKnowledgePills(Array.isArray(provenance.pills) ? provenance.pills : []);
+                setKnowledgeCreationEvents(Array.isArray(provenance.events) ? provenance.events : []);
+                setKnowledgeCrossTreeConnections(Array.isArray(provenance.crossTreeConnections) ? provenance.crossTreeConnections : []);
+                setKnowledgeBlueprintLinks(Array.isArray(provenance.blueprintLinks) ? provenance.blueprintLinks : []);
+            } catch (error) {
+                if (!active) return;
+                console.warn("Failed to load knowledge provenance timeline payload.", error);
+                setKnowledgePills([]);
+                setKnowledgeCreationEvents([]);
+                setKnowledgeCrossTreeConnections([]);
+                setKnowledgeBlueprintLinks([]);
+            }
+        };
+
+        timers.push(window.setTimeout(() => {
+            void loadKnowledgeProvenanceSnapshot();
+        }, 280));
+        // Second fetch catches just-persisted revisions without requiring another canvas action.
+        timers.push(window.setTimeout(() => {
+            void loadKnowledgeProvenanceSnapshot();
+        }, 1100));
+
+        return () => {
+            active = false;
+            for (const timerId of timers) {
+                window.clearTimeout(timerId);
+            }
+        };
+    }, [blueprintEvents, edges, nodes, projectId, status]);
+
+    useEffect(() => {
+        if (!playbackAt) {
+            setPlaybackSnapshot(null);
+            return;
+        }
+        let active = true;
+
+        void (async () => {
+            try {
+                const snapshot = await loadDocumentStateAt(projectId, playbackAt);
+                if (!active) return;
+                const flow = snapshot.state?.flow as { nodes?: unknown; edges?: unknown } | undefined;
+                const snapshotNodes = Array.isArray(flow?.nodes) ? flow.nodes as nodeType[] : [];
+                const snapshotEdges = Array.isArray(flow?.edges) ? flow.edges as edgeType[] : [];
+                setPlaybackSnapshot({
+                    nodes: snapshotNodes,
+                    edges: snapshotEdges,
+                });
+            } catch (error) {
+                if (!active) return;
+                console.warn("Failed to load state snapshot for timeline playback.", error);
+                setPlaybackSnapshot(null);
+                setPlaybackAt(null);
+            }
+        })();
+
+        return () => {
+            active = false;
+        };
+    }, [playbackAt, projectId]);
+
+    const knowledgeBaseEvents = useMemo<KnowledgeBaseEvent[]>(() => {
+        return knowledgeCreationEvents.map((eventData) => ({
+            id: eventData.id,
+            occurredAt: eventData.occurredAt,
+            kind: "knowledge",
+            subtype: eventData.eventType,
+            isDeleted: eventData.isDeleted === true,
+            label: eventData.cardTitle || "Untitled",
+            description: `Card label: ${eventData.cardLabel}`,
+            treeId: eventData.treeId ?? undefined,
+            treeTitle: eventData.treeTitle ?? undefined,
+            events: [{
+                id: eventData.id,
+                occurredAt: eventData.occurredAt,
+                eventType: eventData.eventType,
+                isDeleted: eventData.isDeleted,
+                nodeId: eventData.nodeId,
+                cardLabel: eventData.cardLabel,
+                cardTitle: eventData.cardTitle,
+                cardDescription: eventData.cardDescription,
+                metadata: eventData.metadata,
+            }],
+        }));
+    }, [knowledgeCreationEvents]);
 
     const {
         onAttachFile,
@@ -786,18 +925,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     });
 
     const onAttachFileForNode = useCallback((nodeId: string, file: File) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         void onAttachFile(nodeId, file);
-    }, [onAttachFile, reviewOnly]);
+    }, [interactionLocked, onAttachFile]);
 
     const onAttachFileForCanvas = useCallback(async (file: File, dropPosition: { x: number; y: number }) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         await onAttachFileToCanvas(file, dropPosition);
-    }, [onAttachFileToCanvas, reviewOnly]);
+    }, [interactionLocked, onAttachFileToCanvas]);
 
     const flushQueuedPositionChanges = useCallback(() => {
         nodeChangeRafRef.current = null;
-        if (reviewOnly) {
+        if (interactionLocked) {
             queuedPositionChangesRef.current = [];
             return;
         }
@@ -810,10 +949,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const queuedChanges = queuedPositionChangesRef.current;
         queuedPositionChangesRef.current = [];
         dispatch(onNodesChange(queuedChanges));
-    }, [dispatch, reviewOnly, viewMode]);
+    }, [dispatch, interactionLocked, viewMode]);
 
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         if (viewMode !== "explore") return;
 
         const immediateChanges = changes.filter((change) => change.type !== "position");
@@ -829,12 +968,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 nodeChangeRafRef.current = window.requestAnimationFrame(flushQueuedPositionChanges);
             }
         }
-    }, [dispatch, reviewOnly, viewMode, flushQueuedPositionChanges]);
+    }, [dispatch, interactionLocked, viewMode, flushQueuedPositionChanges]);
 
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         dispatch(onEdgesChange(changes));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const resetFiltersForCanvasCreation = useCallback(() => {
         setViewMode("explore");
@@ -848,7 +987,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         sourceLabel: string,
         targetLabel: string,
     ) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         const sourceIsTaskOrRequirement = sourceLabel === "requirement";
         const targetIsTaskOrRequirement = targetLabel === "requirement";
         const sourceIsBlueprintComponent = sourceLabel === "blueprint_component";
@@ -899,10 +1038,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 ? componentData.blueprintFileName
                 : undefined,
         }));
-    }, [dispatch, blueprintEvents, reviewOnly]);
+    }, [dispatch, blueprintEvents, interactionLocked]);
 
     const handleConnectSelection = useCallback((option: EdgeConnectOption) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         setPendingConnectionMenu((pending) => {
             if (!pending) return null;
 
@@ -945,10 +1084,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
             return null;
         });
-    }, [dispatch, reviewOnly, edges, nodes, maybeCreateBlueprintEventFromConnection]);
+    }, [dispatch, interactionLocked, edges, nodes, maybeCreateBlueprintEventFromConnection]);
 
     const handleConnect = useCallback((connection: Connection) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         if (!connection.source || !connection.target) return;
         if (viewMode !== "explore") return;
 
@@ -977,10 +1116,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             x,
             y,
         });
-    }, [nodes, reviewOnly, viewMode]);
+    }, [nodes, interactionLocked, viewMode]);
 
     const onDataPropertyChange = useCallback((nodeProps: nodeType, value: unknown, propertyName: string) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         const data = { ...nodeProps.data } as Record<string, unknown> & nodeType["data"];
         if (propertyName === "label" && typeof value === "string") {
             let resolvedType: cardType = "social";
@@ -996,17 +1135,17 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             ...nodeProps,
             data: data as nodeType["data"],
         }));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const onDeleteNode = useCallback((nodeId: string) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         dispatch(removeNode(nodeId));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const onDetachFile = useCallback((nodeId: string, fileId: string) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         dispatch(detachFileIdFromNode({ nodeId, fileId }));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const participantNames = useMemo(() => {
         const seen = new Set<string>();
@@ -1404,13 +1543,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [viewMode, filteredNodes, compactBlueprintNodes, featureViewNodes]);
 
     const displayedNodes = useMemo(() => {
+        if (isPlaybackMode && playbackSnapshot) {
+            return playbackSnapshot.nodes;
+        }
         if (viewMode === "evolution") {
             return buildEvolutionLayoutNodes(evolutionBaseNodes, filteredEdges);
         }
         return evolutionBaseNodes;
-    }, [viewMode, evolutionBaseNodes, filteredEdges]);
+    }, [isPlaybackMode, playbackSnapshot, viewMode, evolutionBaseNodes, filteredEdges]);
 
     const displayedEdges = useMemo(() => {
+        if (isPlaybackMode && playbackSnapshot) {
+            return playbackSnapshot.edges;
+        }
         if (viewMode === "blueprintComponents" || viewMode === "features") {
             const visibleNodeIds = new Set(displayedNodes.map((node) => node.id));
             return edges.filter((edge) => (
@@ -1421,7 +1566,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return filteredEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
         ));
-    }, [viewMode, edges, filteredEdges, displayedNodes]);
+    }, [isPlaybackMode, playbackSnapshot, viewMode, edges, filteredEdges, displayedNodes]);
 
     const isInsideSystemBlueprintParentBox = useCallback((position: { x: number; y: number }) => {
         const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -1467,7 +1612,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [nodes]);
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         if (viewMode !== "explore") return;
         if (cursorMode !== "node" && cursorMode !== "blueprint_component") return;
 
@@ -1517,10 +1662,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 relevant: true,
             },
         }));
-    }, [dispatch, reviewOnly, viewMode, cursorMode, screenToFlowPosition, isInsideSystemBlueprintParentBox, resetFiltersForCanvasCreation]);
+    }, [dispatch, interactionLocked, viewMode, cursorMode, screenToFlowPosition, isInsideSystemBlueprintParentBox, resetFiltersForCanvasCreation]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         const dragTypes = Array.from(e.dataTransfer?.types ?? []);
         const hasFiles = dragTypes.includes("Files");
         const hasBlueprint = dragTypes.includes(BLUEPRINT_DRAG_MIME);
@@ -1531,10 +1676,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         e.dataTransfer.dropEffect = viewMode === "explore" ? "copy" : "none";
 
         if (viewMode !== "explore") return;
-    }, [reviewOnly, viewMode]);
+    }, [interactionLocked, viewMode]);
 
     const handleCanvasDrop = useCallback((e: React.DragEvent) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         const blueprintRaw = e.dataTransfer?.getData(BLUEPRINT_DRAG_MIME);
         if (blueprintRaw) {
             e.preventDefault();
@@ -1575,10 +1720,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 });
             }
         })();
-    }, [dispatch, onAttachFileForCanvas, reviewOnly, screenToFlowPosition, viewMode]);
+    }, [dispatch, onAttachFileForCanvas, interactionLocked, screenToFlowPosition, viewMode]);
 
     const onFreeInputSubmit = useCallback(async (x: number, y: number, userText: string) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         setCursorMode("");
         setLoading(true);
 
@@ -1604,7 +1749,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setLoading(false);
         }
-    }, [dispatch, reviewOnly, screenToFlowPosition]);
+    }, [dispatch, interactionLocked, screenToFlowPosition]);
 
     const fetchGithubEvents = useCallback(async (connected: boolean) => {
         if (!reviewOnly && !connected) return;
@@ -1633,7 +1778,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [fetchGithubEvents]);
 
     useEffect(() => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         const normalizePath = (path: string) => path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
         const pairKey = (blueprintEventId: string, codebaseSubtrackId: string) =>
             `${blueprintEventId}::${codebaseSubtrackId}`;
@@ -1775,7 +1920,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         dispatch(reconcileBlueprintCodebaseAutoLinks(requiredAutoLinks));
-    }, [dispatch, reviewOnly, nodes, blueprintEvents, codebaseSubtracks]);
+    }, [dispatch, interactionLocked, nodes, blueprintEvents, codebaseSubtracks]);
 
     useEffect(() => {
         dispatch(setGithubEvents([]));
@@ -1831,11 +1976,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [pendingConnectionMenu]);
 
     useEffect(() => {
-        if (!reviewOnly) return;
+        if (!interactionLocked) return;
         if (cursorMode !== "") {
             setCursorMode("");
         }
-    }, [cursorMode, reviewOnly]);
+    }, [cursorMode, interactionLocked]);
 
     useEffect(() => {
         switch (cursorMode) {
@@ -2358,9 +2503,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, []);
 
     const handleSetTitle = useCallback((newTitle: string) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         void updateDocumentMeta(projectId, { title: newTitle });
-    }, [projectId, reviewOnly]);
+    }, [interactionLocked, projectId]);
 
     const handleOpenSettings = useCallback(() => {
         navigate(`/project/${projectId}/setup`);
@@ -2371,70 +2516,71 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [navigate]);
 
     const handleFreeInputClicked = useCallback(() => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         setCursorMode("text");
-    }, [reviewOnly]);
+    }, [interactionLocked]);
 
     const handleNodeInputClicked = useCallback(() => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         setCursorMode("node");
-    }, [reviewOnly]);
+    }, [interactionLocked]);
 
     const handleBlueprintComponentInputClicked = useCallback(() => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         setCursorMode("blueprint_component");
-    }, [reviewOnly]);
+    }, [interactionLocked]);
 
     const handlePointerClicked = useCallback(() => {
         setCursorMode("");
     }, []);
 
     const handleStageUpdate = useCallback((stage: Stage) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         dispatch(updateStage({
             ...stage,
             start: fromDate(stage.start),
             end: fromDate(stage.end),
         }));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const handleStageCreation = useCallback((name: string) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         dispatch(addDefaultStage(name));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const handleStageLaneCreation = useCallback((name: string) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         dispatch(addStage(name));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const handleStageLaneDeletion = useCallback((id: string) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         dispatch(deleteStage(id));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const handleStageBoundaryChange = useCallback((prevId: string, nextId: string, date: Date) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         dispatch(changeStageBoundary({
             prevId,
             nextId,
             date: fromDate(date),
         }));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, interactionLocked]);
 
     const handleSyncCodebaseEvents = useCallback(async () => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         await checkGitStatus();
-    }, [checkGitStatus, reviewOnly]);
+    }, [checkGitStatus, interactionLocked]);
 
     const handleAddSystemScreenshotMarker = useCallback(() => {
         if (reviewOnly) return;
+        const markerOccurredAt = playbackAt ?? new Date().toISOString();
         dispatch(addSystemScreenshotMarker({
             id: crypto.randomUUID(),
-            occurredAt: new Date().toISOString(),
+            occurredAt: markerOccurredAt,
             imageDataUrl: "",
         }));
-    }, [dispatch, reviewOnly]);
+    }, [dispatch, playbackAt, reviewOnly]);
 
     const handleUploadSystemScreenshotForLatestMarker = useCallback(async (file: File) => {
         if (reviewOnly) return;
@@ -2443,12 +2589,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const imageDataUrl = await readImageFileAsDataUrl(file);
             const { width: imageWidth, height: imageHeight } = await readImageDimensionsFromDataUrl(imageDataUrl);
 
-            let markerId = mostRecentSystemScreenshotMarker?.id;
+            const markerOccurredAt = playbackAt ?? new Date().toISOString();
+            let markerId = playbackAwareSystemScreenshotMarker?.id;
             if (!markerId) {
                 markerId = crypto.randomUUID();
                 dispatch(addSystemScreenshotMarker({
                     id: markerId,
-                    occurredAt: new Date().toISOString(),
+                    occurredAt: markerOccurredAt,
                     imageDataUrl,
                     imageWidth,
                     imageHeight,
@@ -2488,10 +2635,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setProcessingSystemScreenshot(false);
         }
-    }, [codebaseSubtracks, dispatch, mostRecentSystemScreenshotMarker?.id, projectGoal, projectId, reviewOnly, title]);
+    }, [codebaseSubtracks, dispatch, playbackAt, playbackAwareSystemScreenshotMarker?.id, projectGoal, projectId, reviewOnly, title]);
 
     const handleDeleteAsset = useCallback(async (file: { id: string; name: string }) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         setDeletingAssetId(file.id);
         try {
             await deleteFile(projectId, file.id);
@@ -2506,7 +2653,20 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setDeletingAssetId((current) => (current === file.id ? null : current));
         }
-    }, [dispatch, hoveredAssetFileId, projectId, reviewOnly]);
+    }, [dispatch, hoveredAssetFileId, interactionLocked, projectId]);
+
+    const handlePlaybackAtChange = useCallback((value: string | null) => {
+        if (!value) {
+            setPlaybackAt(null);
+            setPlaybackSnapshot(null);
+            return;
+        }
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return;
+        const now = new Date();
+        const clamped = parsed.getTime() > now.getTime() ? now : parsed;
+        setPlaybackAt(clamped.toISOString());
+    }, []);
 
     if (status === "loading") return <div>Loading...</div>;
     if (status === "error") return <div>Error: {error}</div>;
@@ -2523,7 +2683,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 edges={displayedEdges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
-                nodesDraggable={viewMode === "explore" && !reviewOnly}
+                nodesDraggable={viewMode === "explore" && !interactionLocked}
                 cursorMode={cursorMode}
                 onNodesChange={handleNodesChange}
                 onEdgesChange={handleEdgesChange}
@@ -2537,7 +2697,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 x={pendingConnectionMenu?.x ?? 0}
                 y={pendingConnectionMenu?.y ?? 0}
                 defaultLabel={pendingConnectionMenu?.defaultLabel ?? "related to"}
-                open={!reviewOnly && pendingConnectionMenu !== null}
+                open={!interactionLocked && pendingConnectionMenu !== null}
                 onClose={() => setPendingConnectionMenu(null)}
                 onSelect={handleConnectSelection}
             />
@@ -2591,7 +2751,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 <img src="/vitral/cta_drag_and_drop.png" alt="Drag and Drop file to instantiate cards." />
             </div> */}
 
-            {!reviewOnly ? (
+            {!interactionLocked ? (
                 <Toolbar
                     onFreeInputClicked={handleFreeInputClicked}
                     onNodeInputClicked={handleNodeInputClicked}
@@ -2605,7 +2765,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             {!reviewOnly ? (
                 <SystemScreenshotPanel
                     rightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX + 12}
-                    latestImageDataUrl={mostRecentSystemScreenshotMarker?.imageDataUrl ?? ""}
+                    latestImageDataUrl={playbackAwareSystemScreenshotMarker?.imageDataUrl ?? ""}
                     processing={processingSystemScreenshot}
                     onAddMarker={handleAddSystemScreenshotMarker}
                     onUploadForLatestMarker={handleUploadSystemScreenshotForLatestMarker}
@@ -2620,7 +2780,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 bottomOffsetPx={canvasSidebarBottomOffset}
                 onAssetHover={setHoveredAssetFileId}
                 deletingAssetId={deletingAssetId}
-                onDeleteAsset={reviewOnly ? undefined : handleDeleteAsset}
+                onDeleteAsset={interactionLocked ? undefined : handleDeleteAsset}
             />
 
             <CanvasChatOverlay
@@ -2636,13 +2796,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onClearFilter={clearCanvasFilter}
             />
 
-            {cursorMode === "text" && !reviewOnly ? (
+            {cursorMode === "text" && !interactionLocked ? (
                 <FreeInputZone onInputSubmit={onFreeInputSubmit} />
             ) : null}
 
             <LoadSpinner loading={loading} />
 
-            {!reviewOnly ? (
+            {!interactionLocked ? (
                 <PendingFileModal
                     pendingDrop={pendingDrop}
                     generatedAtInput={generatedAtInput}
@@ -2656,12 +2816,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 projectId={projectId}
                 open={timelineOpen}
                 onToggleOpen={handleToggleTimeline}
-                readOnly={reviewOnly}
+                readOnly={interactionLocked}
                 startMarker={timelineStartEnd.start}
                 endMarker={timelineStartEnd.end}
                 projectName={title}
                 projectGoal={projectGoal}
                 codebaseEvents={gitEvents}
+                knowledgeBaseEvents={knowledgeBaseEvents}
+                knowledgeTreePills={knowledgePills}
+                knowledgeCrossTreeConnections={knowledgeCrossTreeConnections}
+                knowledgeBlueprintLinks={knowledgeBlueprintLinks}
+                playbackAt={playbackAt}
+                onPlaybackAtChange={handlePlaybackAtChange}
                 designStudyEvents={designStudyEvents}
                 blueprintEvents={blueprintEvents}
                 connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}

@@ -78,6 +78,73 @@ export type QueryCanvasChatResponse = {
     usedVectorSearch: boolean;
 };
 
+export type DocumentStateAtResponse = {
+    state: FlowStatePayload;
+    timeline: TimelineStatePayload;
+    capturedAt: string;
+    version: number;
+};
+
+export type KnowledgePillEvent = {
+    id: string;
+    occurredAt: string;
+    eventType: "created";
+    isDeleted?: boolean;
+    nodeId: string;
+    cardLabel: string;
+    cardTitle: string;
+    cardDescription: string;
+    treeId?: string | null;
+    treeTitle?: string | null;
+    metadata?: unknown;
+};
+
+export type KnowledgePill = {
+    treeId: string;
+    treeTitle: string;
+    occurredAt: string;
+    events: KnowledgePillEvent[];
+};
+
+export type KnowledgeCrossTreeConnection = {
+    id: string;
+    occurredAt: string;
+    label: string;
+    kind: "regular" | "referenced_by" | "iteration_of";
+    sourceNodeId: string;
+    targetNodeId: string;
+    sourceCardTitle: string;
+    sourceCardLabel: string;
+    targetCardTitle: string;
+    targetCardLabel: string;
+    sourceTreeId: string;
+    targetTreeId: string;
+};
+
+export type KnowledgeBlueprintLink = {
+    id: string;
+    kind: "regular" | "referenced_by" | "iteration_of";
+    label: string;
+    cardNodeId: string;
+    cardLabel: string;
+    cardTitle: string;
+    cardCreatedAt: string;
+    blueprintEventId: string;
+    blueprintEventName: string;
+    blueprintOccurredAt: string;
+    componentNodeId: string;
+};
+
+export type KnowledgeProvenanceResponse = {
+    at: string;
+    minAt: string;
+    maxAt: string;
+    pills: KnowledgePill[];
+    events: KnowledgePillEvent[];
+    crossTreeConnections: KnowledgeCrossTreeConnection[];
+    blueprintLinks: KnowledgeBlueprintLink[];
+};
+
 export type SimilarityCardInput = {
     id: string;
     label: string;
@@ -338,6 +405,23 @@ export async function saveDocument(
     return res.json();
 }
 
+export async function appendDocumentRevisionSnapshot(
+    docId: string,
+    state: FlowStatePayload,
+    timeline: TimelineStatePayload,
+): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/state/${docId}/revision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state, timeline }),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Revision snapshot failed: ${res.status}`);
+    }
+}
+
 export async function deleteDocument(docId: string) {
     const res = await fetch(`${API_BASE}/api/state/${docId}`, {
         method: "DELETE",
@@ -415,6 +499,40 @@ export async function queryCanvasChat(
     if (!res.ok) {
         const text = await res.text();
         throw new Error(text || `Query failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function loadDocumentStateAt(
+    docId: string,
+    at: string,
+): Promise<DocumentStateAtResponse> {
+    const query = encodeURIComponent(at);
+    const res = await fetch(`${API_BASE}/api/state/${docId}/state-at?at=${query}`, {
+        method: "GET",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Load state-at failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function loadKnowledgeProvenance(
+    docId: string,
+    at: string,
+): Promise<KnowledgeProvenanceResponse> {
+    const query = encodeURIComponent(at);
+    const res = await fetch(`${API_BASE}/api/state/${docId}/knowledge/provenance?at=${query}`, {
+        method: "GET",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Load provenance failed: ${res.status}`);
     }
 
     return res.json();

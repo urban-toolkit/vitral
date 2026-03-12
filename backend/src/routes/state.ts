@@ -6,17 +6,29 @@ import path from "node:path";
 import OpenAI from "openai";
 import { fileURLToPath } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
-import { streamToBuffer, streamToString } from "../utils/streams.ts";
-import { safeFilename } from "../utils/files.ts";
-import { computeNodeEmbeddingDelta, createNodeEmbeddingQueue } from "../services/nodeEmbeddings.ts";
-import { applyStructuredFilters, extractCardNodesForSearch, parseNaturalLanguageNodeQuery, type CardNodeForSearch } from "../services/nodeSearch.ts";
-import { decodeProjectVi, encodeProjectVi, type ProjectViBundleV1 } from "../utils/projectVi.ts";
+import { streamToBuffer, streamToString } from "../utils/streams.js";
+import { safeFilename } from "../utils/files.js";
+import { computeNodeEmbeddingDelta, createNodeEmbeddingQueue } from "../services/nodeEmbeddings.js";
+import { applyStructuredFilters, extractCardNodesForSearch, parseNaturalLanguageNodeQuery, type CardNodeForSearch } from "../services/nodeSearch.js";
+import {
+    diffProvenanceSnapshots,
+    extractProvenanceSnapshot,
+    resolveTreeForCard,
+    type ProvenanceConnection,
+    type ProvenanceSnapshot,
+} from "../services/canvasProvenance.js";
+import { decodeProjectVi, encodeProjectVi, type ProjectViBundleV1 } from "../utils/projectVi.js";
 
 type SaveBody = {
     title?: string;
     description?: string | null;
     state: unknown;
-    timeline: unknown;
+    timeline?: unknown;
+};
+
+type RevisionBody = {
+    state: unknown;
+    timeline?: unknown;
 };
 
 type QueryNodesBody = {
@@ -263,6 +275,706 @@ function remapStateFileReferences(state: unknown, fileIdMap: Map<string, string>
     };
 }
 
+type DocumentSnapshotRow = {
+    state: unknown;
+    timeline: unknown;
+    updated_at: string;
+    version: number;
+};
+
+type LoadedSnapshot = {
+    state: unknown;
+    timeline: unknown;
+    capturedAt: string;
+    version: number;
+};
+
+type QueryablePg = {
+    query<T = unknown>(text: string, params?: unknown[]): Promise<{ rows: T[] }>;
+};
+
+async function insertStateRevision(
+    pg: QueryablePg,
+    docId: string,
+    version: number,
+    state: unknown,
+    timeline: unknown,
+): Promise<void> {
+    await pg.query(
+        `
+        INSERT INTO document_state_revisions (document_id, version, state, timeline)
+        VALUES ($1, $2, $3::jsonb, $4::jsonb)
+        `,
+        [docId, version, JSON.stringify(state ?? {}), JSON.stringify(timeline ?? {})],
+    );
+}
+
+async function loadSnapshotAt(
+    pg: QueryablePg,
+    docId: string,
+    at?: Date | null,
+): Promise<LoadedSnapshot | null> {
+    const parsedAt = at && !Number.isNaN(at.getTime()) ? at : null;
+    if (parsedAt) {
+        const latestAtOrBefore = await pg.query<{
+            state: unknown;
+            timeline: unknown;
+            captured_at: string;
+            version: number;
+        }>(
+            `
+            SELECT state, timeline, captured_at, version
+            FROM document_state_revisions
+            WHERE document_id = $1
+              AND captured_at <= $2
+            ORDER BY captured_at DESC
+            LIMIT 1
+            `,
+            [docId, parsedAt.toISOString()],
+        );
+        if (latestAtOrBefore.rows.length > 0) {
+            const row = latestAtOrBefore.rows[0];
+            return {
+                state: row.state,
+                timeline: row.timeline,
+                capturedAt: row.captured_at,
+                version: row.version,
+            };
+        }
+
+        const earliest = await pg.query<{
+            state: unknown;
+            timeline: unknown;
+            captured_at: string;
+            version: number;
+        }>(
+            `
+            SELECT state, timeline, captured_at, version
+            FROM document_state_revisions
+            WHERE document_id = $1
+            ORDER BY captured_at ASC
+            LIMIT 1
+            `,
+            [docId],
+        );
+        if (earliest.rows.length > 0) {
+            const row = earliest.rows[0];
+            return {
+                state: row.state,
+                timeline: row.timeline,
+                capturedAt: row.captured_at,
+                version: row.version,
+            };
+        }
+    }
+
+    const current = await pg.query<DocumentSnapshotRow>(
+        `
+        SELECT state, timeline, updated_at, version
+        FROM documents
+        WHERE id = $1
+        `,
+        [docId],
+    );
+    if (current.rows.length === 0) return null;
+    const row = current.rows[0];
+    return {
+        state: row.state,
+        timeline: row.timeline,
+        capturedAt: row.updated_at,
+        version: row.version,
+    };
+}
+
+async function refreshProvenanceGraph(
+    pg: QueryablePg,
+    docId: string,
+    snapshot: ProvenanceSnapshot,
+): Promise<void> {
+    await pg.query(
+        `
+        DELETE FROM prov_object_activity WHERE document_id = $1;
+        DELETE FROM prov_user_activity WHERE document_id = $1;
+        DELETE FROM prov_requirement_activity WHERE document_id = $1;
+        DELETE FROM prov_concept_activity WHERE document_id = $1;
+        DELETE FROM prov_component_requirement WHERE document_id = $1;
+        DELETE FROM prov_card_connection WHERE document_id = $1;
+        DELETE FROM prov_object WHERE document_id = $1;
+        DELETE FROM prov_activity WHERE document_id = $1;
+        DELETE FROM prov_user WHERE document_id = $1;
+        DELETE FROM prov_requirement WHERE document_id = $1;
+        DELETE FROM prov_concept WHERE document_id = $1;
+        DELETE FROM prov_insight WHERE document_id = $1;
+        DELETE FROM prov_component WHERE document_id = $1;
+        `,
+        [docId],
+    );
+
+    for (const card of snapshot.cards.values()) {
+        if (card.label === "object") {
+            await pg.query(
+                `
+                INSERT INTO prov_object (document_id, node_id)
+                VALUES ($1, $2)
+                ON CONFLICT (document_id, node_id) DO NOTHING
+                `,
+                [docId, card.nodeId],
+            );
+            continue;
+        }
+        if (card.label === "activity") {
+            await pg.query(
+                `
+                INSERT INTO prov_activity (document_id, node_id)
+                VALUES ($1, $2)
+                ON CONFLICT (document_id, node_id) DO NOTHING
+                `,
+                [docId, card.nodeId],
+            );
+            continue;
+        }
+        if (card.label === "person") {
+            await pg.query(
+                `
+                INSERT INTO prov_user (document_id, node_id)
+                VALUES ($1, $2)
+                ON CONFLICT (document_id, node_id) DO NOTHING
+                `,
+                [docId, card.nodeId],
+            );
+            continue;
+        }
+        if (card.label === "requirement") {
+            await pg.query(
+                `
+                INSERT INTO prov_requirement (document_id, node_id)
+                VALUES ($1, $2)
+                ON CONFLICT (document_id, node_id) DO NOTHING
+                `,
+                [docId, card.nodeId],
+            );
+            continue;
+        }
+        if (card.label === "concept") {
+            await pg.query(
+                `
+                INSERT INTO prov_concept (document_id, node_id)
+                VALUES ($1, $2)
+                ON CONFLICT (document_id, node_id) DO NOTHING
+                `,
+                [docId, card.nodeId],
+            );
+            continue;
+        }
+        if (card.label === "insight") {
+            await pg.query(
+                `
+                INSERT INTO prov_insight (document_id, node_id)
+                VALUES ($1, $2)
+                ON CONFLICT (document_id, node_id) DO NOTHING
+                `,
+                [docId, card.nodeId],
+            );
+        }
+    }
+
+    for (const component of snapshot.components.values()) {
+        await pg.query(
+            `
+            INSERT INTO prov_component (document_id, node_id)
+            VALUES ($1, $2)
+            ON CONFLICT (document_id, node_id) DO NOTHING
+            `,
+            [docId, component.nodeId],
+        );
+    }
+
+    const insertConnection = async (
+        connection: ProvenanceConnection,
+    ) => {
+        await pg.query(
+            `
+            INSERT INTO prov_card_connection (
+                document_id,
+                edge_id,
+                source_node_id,
+                target_node_id,
+                source_label,
+                target_label,
+                source_title,
+                target_title,
+                connection_label,
+                connection_kind,
+                updated_at,
+                deleted_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::provenance_connection_kind, now(), NULL)
+            ON CONFLICT (document_id, edge_id) DO UPDATE
+            SET
+                source_node_id = EXCLUDED.source_node_id,
+                target_node_id = EXCLUDED.target_node_id,
+                source_label = EXCLUDED.source_label,
+                target_label = EXCLUDED.target_label,
+                source_title = EXCLUDED.source_title,
+                target_title = EXCLUDED.target_title,
+                connection_label = EXCLUDED.connection_label,
+                connection_kind = EXCLUDED.connection_kind,
+                updated_at = now(),
+                deleted_at = NULL
+            `,
+            [
+                docId,
+                connection.edgeId,
+                connection.sourceNodeId,
+                connection.targetNodeId,
+                connection.sourceLabel,
+                connection.targetLabel,
+                connection.sourceTitle,
+                connection.targetTitle,
+                connection.label || null,
+                connection.kind,
+            ],
+        );
+    };
+
+    for (const connection of snapshot.connections.values()) {
+        await insertConnection(connection);
+        const sourceLabel = connection.sourceLabel;
+        const targetLabel = connection.targetLabel;
+
+        const addObjectActivity = async (objectNodeId: string, activityNodeId: string) => {
+            await pg.query(
+                `
+                INSERT INTO prov_object_activity (document_id, object_node_id, activity_node_id, connection_kind)
+                VALUES ($1, $2, $3, $4::provenance_connection_kind)
+                ON CONFLICT (document_id, object_node_id, activity_node_id)
+                DO UPDATE SET connection_kind = EXCLUDED.connection_kind
+                `,
+                [docId, objectNodeId, activityNodeId, connection.kind],
+            );
+        };
+
+        const addUserActivity = async (userNodeId: string, activityNodeId: string) => {
+            await pg.query(
+                `
+                INSERT INTO prov_user_activity (document_id, user_node_id, activity_node_id, connection_kind)
+                VALUES ($1, $2, $3, $4::provenance_connection_kind)
+                ON CONFLICT (document_id, user_node_id, activity_node_id)
+                DO UPDATE SET connection_kind = EXCLUDED.connection_kind
+                `,
+                [docId, userNodeId, activityNodeId, connection.kind],
+            );
+        };
+
+        const addRequirementActivity = async (requirementNodeId: string, activityNodeId: string) => {
+            await pg.query(
+                `
+                INSERT INTO prov_requirement_activity (document_id, requirement_node_id, activity_node_id, connection_kind)
+                VALUES ($1, $2, $3, $4::provenance_connection_kind)
+                ON CONFLICT (document_id, requirement_node_id, activity_node_id)
+                DO UPDATE SET connection_kind = EXCLUDED.connection_kind
+                `,
+                [docId, requirementNodeId, activityNodeId, connection.kind],
+            );
+        };
+
+        const addConceptActivity = async (conceptNodeId: string, activityNodeId: string) => {
+            await pg.query(
+                `
+                INSERT INTO prov_concept_activity (document_id, concept_node_id, activity_node_id, connection_kind)
+                VALUES ($1, $2, $3, $4::provenance_connection_kind)
+                ON CONFLICT (document_id, concept_node_id, activity_node_id)
+                DO UPDATE SET connection_kind = EXCLUDED.connection_kind
+                `,
+                [docId, conceptNodeId, activityNodeId, connection.kind],
+            );
+        };
+
+        const addComponentRequirement = async (componentNodeId: string, requirementNodeId: string) => {
+            await pg.query(
+                `
+                INSERT INTO prov_component_requirement (document_id, component_node_id, requirement_node_id, connection_kind)
+                VALUES ($1, $2, $3, $4::provenance_connection_kind)
+                ON CONFLICT (document_id, component_node_id, requirement_node_id)
+                DO UPDATE SET connection_kind = EXCLUDED.connection_kind
+                `,
+                [docId, componentNodeId, requirementNodeId, connection.kind],
+            );
+        };
+
+        if (sourceLabel === "object" && targetLabel === "activity") {
+            await addObjectActivity(connection.sourceNodeId, connection.targetNodeId);
+        } else if (targetLabel === "object" && sourceLabel === "activity") {
+            await addObjectActivity(connection.targetNodeId, connection.sourceNodeId);
+        } else if (sourceLabel === "person" && targetLabel === "activity") {
+            await addUserActivity(connection.sourceNodeId, connection.targetNodeId);
+        } else if (targetLabel === "person" && sourceLabel === "activity") {
+            await addUserActivity(connection.targetNodeId, connection.sourceNodeId);
+        } else if (sourceLabel === "requirement" && targetLabel === "activity") {
+            await addRequirementActivity(connection.sourceNodeId, connection.targetNodeId);
+        } else if (targetLabel === "requirement" && sourceLabel === "activity") {
+            await addRequirementActivity(connection.targetNodeId, connection.sourceNodeId);
+        } else if (sourceLabel === "concept" && targetLabel === "activity") {
+            await addConceptActivity(connection.sourceNodeId, connection.targetNodeId);
+        } else if (targetLabel === "concept" && sourceLabel === "activity") {
+            await addConceptActivity(connection.targetNodeId, connection.sourceNodeId);
+        } else if (sourceLabel === "blueprint_component" && targetLabel === "requirement") {
+            await addComponentRequirement(connection.sourceNodeId, connection.targetNodeId);
+        } else if (targetLabel === "blueprint_component" && sourceLabel === "requirement") {
+            await addComponentRequirement(connection.targetNodeId, connection.sourceNodeId);
+        }
+    }
+}
+
+async function insertCardEvent(
+    pg: QueryablePg,
+    params: {
+        docId: string;
+        occurredAt: string;
+        nodeId: string;
+        cardLabel: string;
+        cardTitle: string;
+        cardDescription: string;
+        eventType: "created" | "updated" | "deleted" | "tree_changed";
+        treeId: string | null;
+        treeTitle: string | null;
+        metadata?: Record<string, unknown>;
+    },
+) {
+    await pg.query(
+        `
+        INSERT INTO prov_card_event (
+            document_id,
+            occurred_at,
+            node_id,
+            card_label,
+            card_title,
+            card_description,
+            event_type,
+            tree_activity_node_id,
+            tree_activity_title,
+            metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::provenance_event_type, $8, $9, $10::jsonb)
+        `,
+        [
+            params.docId,
+            params.occurredAt,
+            params.nodeId,
+            params.cardLabel,
+            params.cardTitle,
+            params.cardDescription,
+            params.eventType,
+            params.treeId,
+            params.treeTitle,
+            JSON.stringify(params.metadata ?? {}),
+        ],
+    );
+}
+
+async function insertConnectionEvent(
+    pg: QueryablePg,
+    params: {
+        docId: string;
+        occurredAt: string;
+        edgeId: string;
+        sourceNodeId: string;
+        targetNodeId: string;
+        sourceLabel: string;
+        targetLabel: string;
+        sourceTitle: string;
+        targetTitle: string;
+        connectionLabel: string;
+        connectionKind: "regular" | "referenced_by" | "iteration_of";
+        eventType: "created" | "updated" | "deleted";
+        metadata?: Record<string, unknown>;
+    },
+) {
+    await pg.query(
+        `
+        INSERT INTO prov_connection_event (
+            document_id,
+            occurred_at,
+            edge_id,
+            source_node_id,
+            target_node_id,
+            source_label,
+            target_label,
+            source_title,
+            target_title,
+            connection_label,
+            connection_kind,
+            event_type,
+            metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::provenance_connection_kind, $12::provenance_event_type, $13::jsonb)
+        `,
+        [
+            params.docId,
+            params.occurredAt,
+            params.edgeId,
+            params.sourceNodeId,
+            params.targetNodeId,
+            params.sourceLabel,
+            params.targetLabel,
+            params.sourceTitle,
+            params.targetTitle,
+            params.connectionLabel || null,
+            params.connectionKind,
+            params.eventType,
+            JSON.stringify(params.metadata ?? {}),
+        ],
+    );
+}
+
+async function upsertCardCreationEventState(
+    pg: QueryablePg,
+    params: {
+        docId: string;
+        occurredAt: string;
+        nodeId: string;
+        cardLabel: string;
+        cardTitle: string;
+        cardDescription: string;
+        treeId: string | null;
+        treeTitle: string | null;
+        metadata?: Record<string, unknown>;
+    },
+): Promise<void> {
+    const updated = await pg.query<{ id: string }>(
+        `
+        WITH target AS (
+            SELECT id
+            FROM prov_card_event
+            WHERE document_id = $1
+              AND node_id = $2
+              AND event_type = 'created'::provenance_event_type
+            ORDER BY occurred_at ASC, id ASC
+            LIMIT 1
+        )
+        UPDATE prov_card_event AS p
+        SET
+            card_label = $3,
+            card_title = $4,
+            card_description = $5,
+            tree_activity_node_id = $6,
+            tree_activity_title = $7,
+            metadata = $8::jsonb
+        FROM target
+        WHERE p.id = target.id
+        RETURNING p.id
+        `,
+        [
+            params.docId,
+            params.nodeId,
+            params.cardLabel,
+            params.cardTitle,
+            params.cardDescription,
+            params.treeId,
+            params.treeTitle,
+            JSON.stringify(params.metadata ?? {}),
+        ],
+    );
+
+    if (updated.rows.length > 0) return;
+
+    await insertCardEvent(pg, {
+        docId: params.docId,
+        occurredAt: params.occurredAt,
+        nodeId: params.nodeId,
+        cardLabel: params.cardLabel,
+        cardTitle: params.cardTitle,
+        cardDescription: params.cardDescription,
+        eventType: "created",
+        treeId: params.treeId,
+        treeTitle: params.treeTitle,
+        metadata: params.metadata ?? {},
+    });
+}
+
+async function persistProvenanceEvolution(
+    pg: QueryablePg,
+    docId: string,
+    previousState: unknown,
+    currentState: unknown,
+    occurredAt: string,
+): Promise<void> {
+    const previousSnapshot = extractProvenanceSnapshot(previousState);
+    const currentSnapshot = extractProvenanceSnapshot(currentState);
+    const diff = diffProvenanceSnapshots(previousSnapshot, currentSnapshot);
+
+    for (const card of diff.cardCreated) {
+        const tree = resolveTreeForCard(currentSnapshot, card.nodeId);
+        await insertCardEvent(pg, {
+            docId,
+            occurredAt,
+            nodeId: card.nodeId,
+            cardLabel: card.label,
+            cardTitle: card.title,
+            cardDescription: card.description,
+            eventType: "created",
+            treeId: tree.treeId,
+            treeTitle: tree.treeTitle,
+            metadata: { relevant: card.relevant, deleted: false },
+        });
+    }
+
+    for (const item of diff.cardUpdated) {
+        const card = item.current;
+        const tree = resolveTreeForCard(currentSnapshot, card.nodeId);
+        await upsertCardCreationEventState(pg, {
+            docId,
+            occurredAt,
+            nodeId: card.nodeId,
+            cardLabel: card.label,
+            cardTitle: card.title,
+            cardDescription: card.description,
+            treeId: tree.treeId,
+            treeTitle: tree.treeTitle,
+            metadata: {
+                relevant: card.relevant,
+                deleted: false,
+            },
+        });
+    }
+
+    for (const card of diff.cardDeleted) {
+        await upsertCardCreationEventState(pg, {
+            docId,
+            occurredAt,
+            nodeId: card.nodeId,
+            cardLabel: card.label,
+            cardTitle: card.title,
+            cardDescription: card.description,
+            treeId: null,
+            treeTitle: null,
+            metadata: { relevant: card.relevant, deleted: true },
+        });
+    }
+
+    for (const connection of diff.connectionCreated) {
+        await insertConnectionEvent(pg, {
+            docId,
+            occurredAt,
+            edgeId: connection.edgeId,
+            sourceNodeId: connection.sourceNodeId,
+            targetNodeId: connection.targetNodeId,
+            sourceLabel: connection.sourceLabel,
+            targetLabel: connection.targetLabel,
+            sourceTitle: connection.sourceTitle,
+            targetTitle: connection.targetTitle,
+            connectionLabel: connection.label,
+            connectionKind: connection.kind,
+            eventType: "created",
+        });
+    }
+
+    for (const item of diff.connectionUpdated) {
+        const connection = item.current;
+        await insertConnectionEvent(pg, {
+            docId,
+            occurredAt,
+            edgeId: connection.edgeId,
+            sourceNodeId: connection.sourceNodeId,
+            targetNodeId: connection.targetNodeId,
+            sourceLabel: connection.sourceLabel,
+            targetLabel: connection.targetLabel,
+            sourceTitle: connection.sourceTitle,
+            targetTitle: connection.targetTitle,
+            connectionLabel: connection.label,
+            connectionKind: connection.kind,
+            eventType: "updated",
+            metadata: {
+                previous: {
+                    sourceNodeId: item.previous.sourceNodeId,
+                    targetNodeId: item.previous.targetNodeId,
+                    label: item.previous.label,
+                    kind: item.previous.kind,
+                },
+                current: {
+                    sourceNodeId: connection.sourceNodeId,
+                    targetNodeId: connection.targetNodeId,
+                    label: connection.label,
+                    kind: connection.kind,
+                },
+            },
+        });
+    }
+
+    for (const connection of diff.connectionDeleted) {
+        await insertConnectionEvent(pg, {
+            docId,
+            occurredAt,
+            edgeId: connection.edgeId,
+            sourceNodeId: connection.sourceNodeId,
+            targetNodeId: connection.targetNodeId,
+            sourceLabel: connection.sourceLabel,
+            targetLabel: connection.targetLabel,
+            sourceTitle: connection.sourceTitle,
+            targetTitle: connection.targetTitle,
+            connectionLabel: connection.label,
+            connectionKind: connection.kind,
+            eventType: "deleted",
+        });
+    }
+
+    await refreshProvenanceGraph(pg, docId, currentSnapshot);
+}
+
+type TimelineBlueprintEventSnapshot = {
+    id: string;
+    componentNodeId: string;
+    occurredAt: string;
+    name: string;
+};
+
+function extractBlueprintEventsFromTimeline(timeline: unknown): TimelineBlueprintEventSnapshot[] {
+    if (!isRecord(timeline)) return [];
+
+    const fromArray = Array.isArray(timeline.blueprintEvents)
+        ? timeline.blueprintEvents
+        : null;
+
+    if (fromArray) {
+        return fromArray
+            .filter(isRecord)
+            .map((event) => ({
+                id: typeof event.id === "string" ? event.id : "",
+                componentNodeId: typeof event.componentNodeId === "string" ? event.componentNodeId : "",
+                occurredAt: typeof event.occurredAt === "string" ? event.occurredAt : "",
+                name: typeof event.name === "string" ? event.name : "",
+            }))
+            .filter((event) => event.id && event.componentNodeId);
+    }
+
+    const blueprintEvents = isRecord(timeline.blueprintEvents) ? timeline.blueprintEvents : null;
+    const byId = blueprintEvents && isRecord(blueprintEvents.byId)
+        ? blueprintEvents.byId
+        : null;
+    const allIds = blueprintEvents && Array.isArray(blueprintEvents.allIds)
+        ? blueprintEvents.allIds
+        : null;
+    if (!byId || !allIds) return [];
+
+    const events: TimelineBlueprintEventSnapshot[] = [];
+    for (const rawId of allIds) {
+        if (typeof rawId !== "string") continue;
+        const candidate = byId[rawId];
+        if (!isRecord(candidate)) continue;
+        const componentNodeId = typeof candidate.componentNodeId === "string"
+            ? candidate.componentNodeId
+            : "";
+        if (!componentNodeId) continue;
+        events.push({
+            id: typeof candidate.id === "string" ? candidate.id : rawId,
+            componentNodeId,
+            occurredAt: typeof candidate.occurredAt === "string" ? candidate.occurredAt : "",
+            name: typeof candidate.name === "string" ? candidate.name : "",
+        });
+    }
+    return events;
+}
+
 async function loadLiteratureTemplatesFromDisk(): Promise<SetupTemplateResponse[]> {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const defaultTemplatesDir = path.resolve(here, "../../setupTemplates/literature");
@@ -361,19 +1073,24 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const title = (body.title && body.title.trim()) || "Untitled";
         const description = body.description ?? null;
+        const timeline = body.timeline ?? {};
 
         const { rows } = await app.pg.query(
             `
-            INSERT INTO documents (title, description, state)
-            VALUES ($1, $2, $3::jsonb)
+            INSERT INTO documents (title, description, state, timeline)
+            VALUES ($1, $2, $3::jsonb, $4::jsonb)
             RETURNING id, title, description, version, updated_at, review_only
             `,
-            [title, description, JSON.stringify(body.state)]
+            [title, description, JSON.stringify(body.state), JSON.stringify(timeline)]
         );
 
         try {
             const createdDocId = rows[0]?.id as string | undefined;
+            const createdVersion = Number(rows[0]?.version ?? 1);
+            const createdAt = typeof rows[0]?.updated_at === "string" ? rows[0].updated_at : new Date().toISOString();
             if (createdDocId) {
+                await insertStateRevision(app.pg, createdDocId, createdVersion, body.state, timeline);
+                await persistProvenanceEvolution(app.pg, createdDocId, undefined, body.state, createdAt);
                 const { upserts } = computeNodeEmbeddingDelta(undefined, body.state, createdDocId);
                 if (upserts.length > 0) {
                     nodeEmbeddingQueue.enqueue(upserts);
@@ -407,6 +1124,373 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
 
         return rows[0];
+    });
+
+    /**
+     * Load the closest saved canvas snapshot at or before a timestamp.
+     * GET /api/state/:id/state-at?at=ISO
+     */
+    app.get("/state/:id/state-at", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const { at } = request.query as { at?: string };
+
+        if (!isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document id" });
+        }
+
+        let parsedAt: Date | null = null;
+        if (typeof at === "string" && at.trim() !== "") {
+            parsedAt = new Date(at);
+            if (Number.isNaN(parsedAt.getTime())) {
+                return reply.status(400).send({ error: "Invalid at timestamp" });
+            }
+        }
+
+        const snapshot = await loadSnapshotAt(app.pg, id, parsedAt);
+        if (!snapshot) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return reply.send({
+            state: snapshot.state,
+            timeline: snapshot.timeline,
+            capturedAt: snapshot.capturedAt,
+            version: snapshot.version,
+        });
+    });
+
+    /**
+     * Load knowledge-base provenance payload for timeline rendering.
+     * GET /api/state/:id/knowledge/provenance?at=ISO
+     */
+    app.get("/state/:id/knowledge/provenance", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const { at } = request.query as { at?: string };
+
+        if (!isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document id" });
+        }
+
+        let parsedAt: Date | null = null;
+        if (typeof at === "string" && at.trim() !== "") {
+            parsedAt = new Date(at);
+            if (Number.isNaN(parsedAt.getTime())) {
+                return reply.status(400).send({ error: "Invalid at timestamp" });
+            }
+        }
+
+        const effectiveAt = parsedAt ?? new Date();
+        const snapshot = await loadSnapshotAt(app.pg, id, effectiveAt);
+        if (!snapshot) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        const snapshotGraph = extractProvenanceSnapshot(snapshot.state);
+        const createdCardEventsRes = await app.pg.query<{
+            id: string;
+            occurred_at: string;
+            node_id: string;
+            card_label: string;
+            card_title: string;
+            card_description: string;
+            tree_activity_node_id: string | null;
+            tree_activity_title: string | null;
+            metadata: unknown;
+        }>(
+            `
+            SELECT DISTINCT ON (node_id)
+                id,
+                occurred_at,
+                node_id,
+                card_label,
+                card_title,
+                card_description,
+                tree_activity_node_id,
+                tree_activity_title,
+                metadata
+            FROM prov_card_event
+            WHERE document_id = $1
+              AND event_type = 'created'::provenance_event_type
+              AND occurred_at <= $2
+            ORDER BY node_id ASC, occurred_at ASC, id ASC
+            `,
+            [id, effectiveAt.toISOString()],
+        );
+
+        const connectionEventsRes = await app.pg.query<{
+            id: string;
+            occurred_at: string;
+            edge_id: string;
+            source_node_id: string;
+            target_node_id: string;
+            source_label: string;
+            target_label: string;
+            source_title: string;
+            target_title: string;
+            connection_label: string | null;
+            connection_kind: "regular" | "referenced_by" | "iteration_of";
+            event_type: "created" | "updated" | "deleted" | "tree_changed";
+            metadata: unknown;
+        }>(
+            `
+            SELECT
+                id,
+                occurred_at,
+                edge_id,
+                source_node_id,
+                target_node_id,
+                source_label,
+                target_label,
+                source_title,
+                target_title,
+                connection_label,
+                connection_kind,
+                event_type,
+                metadata
+            FROM prov_connection_event
+            WHERE document_id = $1
+              AND occurred_at <= $2
+            ORDER BY occurred_at ASC, id ASC
+            `,
+            [id, effectiveAt.toISOString()],
+        );
+
+        const creationEvents = createdCardEventsRes.rows
+            .map((row: typeof createdCardEventsRes.rows[number]) => {
+                const snapshotCard = snapshotGraph.cards.get(row.node_id);
+                const snapshotLabel = snapshotCard?.label ?? null;
+                const snapshotTitle = snapshotCard?.title ?? null;
+                const snapshotDescription = snapshotCard?.description ?? null;
+                const snapshotRelevant = snapshotCard?.relevant;
+                const metadata = isRecord(row.metadata) ? row.metadata : {};
+                const isDeleted = !snapshotCard;
+                const resolvedLabel = snapshotLabel ?? row.card_label;
+                const resolvedTitle = snapshotTitle ?? row.card_title;
+                const resolvedDescription = snapshotDescription ?? row.card_description;
+                const resolvedTreeId = snapshotCard
+                    ? (
+                        snapshotGraph.treeByCardId.get(row.node_id) ??
+                        (resolvedLabel === "activity" ? row.node_id : null)
+                    )
+                    : null;
+                const resolvedTreeTitle = resolvedTreeId
+                    ? (
+                        snapshotGraph.treeTitleByActivityId.get(resolvedTreeId) ??
+                        (resolvedLabel === "activity" && resolvedTreeId === row.node_id
+                            ? resolvedTitle
+                            : row.tree_activity_title) ??
+                        "Activity"
+                    )
+                    : null;
+
+                return {
+                    id: row.id,
+                    occurredAt: row.occurred_at,
+                    eventType: "created" as const,
+                    isDeleted,
+                    nodeId: row.node_id,
+                    cardLabel: resolvedLabel,
+                    cardTitle: resolvedTitle,
+                    cardDescription: resolvedDescription,
+                    treeId: resolvedTreeId,
+                    treeTitle: resolvedTreeTitle,
+                    metadata: {
+                        ...metadata,
+                        relevant: snapshotRelevant ?? metadata.relevant ?? true,
+                        deleted: isDeleted,
+                    },
+                };
+            })
+            .sort((a: {
+                id: string;
+                occurredAt: string;
+            }, b: {
+                id: string;
+                occurredAt: string;
+            }) => {
+                const delta = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+                if (delta !== 0) return delta;
+                return a.id.localeCompare(b.id);
+            });
+
+        const cardCreatedAtByNodeId = new Map<string, string>();
+        for (const eventData of creationEvents) {
+            if (!cardCreatedAtByNodeId.has(eventData.nodeId)) {
+                cardCreatedAtByNodeId.set(eventData.nodeId, eventData.occurredAt);
+            }
+        }
+
+        const pillsByTreeId = new Map<string, {
+            treeId: string;
+            treeTitle: string;
+            occurredAt: string;
+            events: Array<{
+                id: string;
+                occurredAt: string;
+                eventType: "created";
+                isDeleted: boolean;
+                nodeId: string;
+                cardLabel: string;
+                cardTitle: string;
+                cardDescription: string;
+                metadata: unknown;
+            }>;
+        }>();
+
+        for (const eventData of creationEvents) {
+            const resolvedTreeId = eventData.treeId;
+            if (!resolvedTreeId) continue;
+            const resolvedTreeTitle = eventData.treeTitle ?? "Activity";
+
+            const existing = pillsByTreeId.get(resolvedTreeId);
+            if (!existing) {
+                pillsByTreeId.set(resolvedTreeId, {
+                    treeId: resolvedTreeId,
+                    treeTitle: resolvedTreeTitle || "Tree",
+                    occurredAt: eventData.occurredAt,
+                    events: [{
+                        id: eventData.id,
+                        occurredAt: eventData.occurredAt,
+                        eventType: eventData.eventType,
+                        isDeleted: eventData.isDeleted,
+                        nodeId: eventData.nodeId,
+                        cardLabel: eventData.cardLabel,
+                        cardTitle: eventData.cardTitle,
+                        cardDescription: eventData.cardDescription,
+                        metadata: eventData.metadata,
+                    }],
+                });
+                continue;
+            }
+
+            if (new Date(eventData.occurredAt).getTime() < new Date(existing.occurredAt).getTime()) {
+                existing.occurredAt = eventData.occurredAt;
+            }
+            existing.events.push({
+                id: eventData.id,
+                occurredAt: eventData.occurredAt,
+                eventType: eventData.eventType,
+                isDeleted: eventData.isDeleted,
+                nodeId: eventData.nodeId,
+                cardLabel: eventData.cardLabel,
+                cardTitle: eventData.cardTitle,
+                cardDescription: eventData.cardDescription,
+                metadata: eventData.metadata,
+            });
+        }
+
+        const activeConnectionsByEdgeId = new Map<string, typeof connectionEventsRes.rows[number]>();
+        for (const row of connectionEventsRes.rows) {
+            if (row.event_type === "deleted") {
+                activeConnectionsByEdgeId.delete(row.edge_id);
+                continue;
+            }
+            activeConnectionsByEdgeId.set(row.edge_id, row);
+        }
+
+        const treeOfCard = (cardNodeId: string, cardLabel: string): string | null => {
+            const fromSnapshot = snapshotGraph.treeByCardId.get(cardNodeId);
+            if (typeof fromSnapshot === "string" && fromSnapshot.trim() !== "") return fromSnapshot;
+            if (cardLabel === "activity") return cardNodeId;
+            return null;
+        };
+
+        const crossTreeConnections = Array.from(activeConnectionsByEdgeId.values())
+            .map((row) => {
+                const sourceTreeId = treeOfCard(row.source_node_id, row.source_label);
+                const targetTreeId = treeOfCard(row.target_node_id, row.target_label);
+                return {
+                    id: row.edge_id,
+                    occurredAt: row.occurred_at,
+                    label: row.connection_label ?? "",
+                    kind: row.connection_kind,
+                    sourceNodeId: row.source_node_id,
+                    targetNodeId: row.target_node_id,
+                    sourceCardTitle: row.source_title,
+                    sourceCardLabel: row.source_label,
+                    targetCardTitle: row.target_title,
+                    targetCardLabel: row.target_label,
+                    sourceTreeId,
+                    targetTreeId,
+                };
+            })
+            .filter((connection) => {
+                if (connection.sourceCardLabel === "blueprint_component") return false;
+                if (connection.targetCardLabel === "blueprint_component") return false;
+                if (!connection.sourceTreeId || !connection.targetTreeId) return false;
+                return connection.sourceTreeId !== connection.targetTreeId;
+            });
+
+        const timelineBlueprintEvents = extractBlueprintEventsFromTimeline(snapshot.timeline);
+        const blueprintByComponentNodeId = new Map(
+            timelineBlueprintEvents.map((event) => [event.componentNodeId, event] as const),
+        );
+
+        const blueprintLinks = Array.from(activeConnectionsByEdgeId.values())
+            .map((row) => {
+                const sourceIsBlueprint = row.source_label === "blueprint_component";
+                const targetIsBlueprint = row.target_label === "blueprint_component";
+                if (!sourceIsBlueprint && !targetIsBlueprint) return null;
+
+                const componentNodeId = sourceIsBlueprint ? row.source_node_id : row.target_node_id;
+                const cardNodeId = sourceIsBlueprint ? row.target_node_id : row.source_node_id;
+                const cardLabel = sourceIsBlueprint ? row.target_label : row.source_label;
+                const cardTitle = sourceIsBlueprint ? row.target_title : row.source_title;
+                const blueprintEvent = blueprintByComponentNodeId.get(componentNodeId);
+                if (!blueprintEvent) return null;
+                const cardCreatedAt = cardCreatedAtByNodeId.get(cardNodeId) ?? row.occurred_at;
+
+                return {
+                    id: row.edge_id,
+                    kind: row.connection_kind,
+                    label: row.connection_label ?? "",
+                    cardNodeId,
+                    cardLabel,
+                    cardTitle,
+                    cardCreatedAt,
+                    blueprintEventId: blueprintEvent.id,
+                    blueprintEventName: blueprintEvent.name,
+                    blueprintOccurredAt: blueprintEvent.occurredAt,
+                    componentNodeId,
+                };
+            })
+            .filter((link): link is NonNullable<typeof link> => link !== null);
+
+        const boundsRes = await app.pg.query<{ min_at: string | null; max_at: string | null }>(
+            `
+            SELECT
+                MIN(captured_at) AS min_at,
+                MAX(captured_at) AS max_at
+            FROM document_state_revisions
+            WHERE document_id = $1
+            `,
+            [id],
+        );
+
+        const bounds = boundsRes.rows[0];
+        const minAt = bounds?.min_at ?? snapshot.capturedAt;
+        const maxAt = bounds?.max_at ?? snapshot.capturedAt;
+
+        const pills = Array.from(pillsByTreeId.values())
+            .map((pill) => ({
+                ...pill,
+                events: [...pill.events].sort((a, b) => {
+                    const delta = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+                    if (delta !== 0) return delta;
+                    return a.id.localeCompare(b.id);
+                }),
+            }))
+            .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
+
+        return reply.send({
+            at: effectiveAt.toISOString(),
+            minAt,
+            maxAt,
+            pills,
+            events: creationEvents,
+            crossTreeConnections,
+            blueprintLinks,
+        });
     });
 
     /**
@@ -1023,7 +2107,22 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             [id],
         );
 
-        const githubEvents: ProjectViBundleV1["githubEvents"] = githubEventRows.rows.map((row) => ({
+        const githubEvents: ProjectViBundleV1["githubEvents"] = githubEventRows.rows.map((row: {
+            repo_owner: string;
+            repo_name: string;
+            event_type: string;
+            event_key: string;
+            actor_login: string | null;
+            title: string | null;
+            url: string | null;
+            occurred_at: string;
+            issue_number: number | null;
+            pr_number: number | null;
+            commit_sha: string | null;
+            branch_name: string | null;
+            payload: unknown;
+            inserted_at: string;
+        }) => ({
             repoOwner: row.repo_owner,
             repoName: row.repo_name,
             eventType: row.event_type,
@@ -1439,10 +2538,17 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 version = documents.version + 1
             RETURNING id, title, description, version, updated_at, review_only
             `,
-            [id, title, description, JSON.stringify(body.state), JSON.stringify(body.timeline)]
+            [id, title, description, JSON.stringify(body.state), JSON.stringify(body.timeline ?? {})]
         );
 
         try {
+            const updatedVersion = Number(rows[0]?.version ?? 1);
+            const updatedAt = typeof rows[0]?.updated_at === "string"
+                ? rows[0].updated_at
+                : new Date().toISOString();
+            await insertStateRevision(app.pg, id, updatedVersion, body.state, body.timeline ?? {});
+            await persistProvenanceEvolution(app.pg, id, previousState, body.state, updatedAt);
+
             const delta = computeNodeEmbeddingDelta(previousState, body.state, id);
 
             if (delta.deletedNodeIds.length > 0) {
@@ -1465,6 +2571,36 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
 
         return reply.status(200).send(rows[0]);
+    });
+
+    /**
+     * Append a lightweight state revision snapshot for timeline playback.
+     * POST /api/state/:id/revision
+     */
+    app.post("/state/:id/revision", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const body = request.body as RevisionBody;
+        if (!await ensureDocumentWritable(id, reply)) return;
+
+        if (!body || typeof body !== "object" || body.state === undefined) {
+            return reply.status(400).send({ error: "Missing state" });
+        }
+
+        const versionRes = await app.pg.query<{ version: number }>(
+            `
+            SELECT version
+            FROM documents
+            WHERE id = $1
+            `,
+            [id],
+        );
+        if (versionRes.rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        const version = Number(versionRes.rows[0]?.version ?? 1);
+        await insertStateRevision(app.pg, id, version, body.state, body.timeline ?? {});
+        return reply.status(204).send();
     });
 
 

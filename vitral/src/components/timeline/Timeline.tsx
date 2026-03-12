@@ -15,6 +15,8 @@ import { useDispatch, useSelector } from "react-redux";
 import {
 	addBlueprintCodebaseLink,
 	addCodebaseSubtrack,
+	addKnowledgeSubtrack,
+	assignKnowledgePillToSubtrack,
 	deleteBlueprintCodebaseLink,
 	selectBlueprintCodebaseLinks,
 	selectHighlightedCodebaseFilePaths,
@@ -22,14 +24,20 @@ import {
 	addDesignStudyEvent,
 	attachFileToCodebaseSubtrack,
 	deleteCodebaseSubtrack,
+	deleteKnowledgeSubtrack,
 	deleteDesignStudyEvent,
+	renameKnowledgeSubtrack,
 	renameCodebaseSubtrack,
 	selectCodebaseSubtracks,
+	selectKnowledgePillTrackAssignments,
+	selectKnowledgeSubtracks,
 	selectHoveredCodebaseFilePath,
 	selectAllSubStages,
 	selectParticipants,
 	selectSystemScreenshotMarkers,
 	setHighlightedCodebaseFilePaths,
+	toggleKnowledgeSubtrackCollapsed,
+	toggleKnowledgeSubtrackInactive,
 	toggleCodebaseSubtrackInactive,
 	toggleCodebaseSubtrackCollapsed,
 	updateDesignStudyEvent,
@@ -43,6 +51,7 @@ import { BlueprintTooltip } from "./BlueprintTooltip";
 import type {
 	SelectedTimelineEvent,
 	TimelineProps,
+	KnowledgeBaseEvent,
 } from "./timelineTypes";
 import { fromDate } from "./timelineUtils";
 import { useParsedTimelineData } from "./useParsedTimelineData";
@@ -51,6 +60,9 @@ import { useTimelineChart } from "./useTimelineChart";
 export type {
 	BlueprintEvent,
 	KnowledgeBaseEvent,
+	KnowledgeBlueprintLink,
+	KnowledgeCrossTreeConnection,
+	KnowledgeTreePill,
 	TimelineEventBase,
 	TimelineProps,
 } from "./timelineTypes";
@@ -67,6 +79,11 @@ export const Timeline = ({
 	knowledgeBaseEvents = [],
 	designStudyEvents = [],
 	blueprintEvents = [],
+	knowledgeTreePills = [],
+	knowledgeCrossTreeConnections = [],
+	knowledgeBlueprintLinks = [],
+	playbackAt = null,
+	onPlaybackAtChange,
 	connectedBlueprintComponentNodeIds = [],
 	defaultStages = [],
 	onStageUpdate,
@@ -128,7 +145,7 @@ export const Timeline = ({
 		id: string;
 		x: number;
 		y: number;
-		key: "designStudyEvent" | "subStage" | "codebaseSubtrack";
+		key: "designStudyEvent" | "subStage" | "codebaseSubtrack" | "knowledgeSubtrack";
 		value: string;
 	} | null>(null);
 
@@ -136,6 +153,7 @@ export const Timeline = ({
 	const endCaretRef = useRef<HTMLSpanElement | null>(null);
 	const todayCaretRef = useRef<HTMLSpanElement | null>(null);
 	const newStageButtonRef = useRef<HTMLSpanElement | null>(null);
+	const newKnowledgeSubtrackButtonRef = useRef<HTMLSpanElement | null>(null);
 	const newCodebaseSubtrackButtonRef = useRef<HTMLSpanElement | null>(null);
 	const syncCodebaseButtonRef = useRef<HTMLSpanElement | null>(null);
 	const llmButtonRef = useRef<HTMLSpanElement | null>(null);
@@ -144,6 +162,8 @@ export const Timeline = ({
 	const [suggestingCodebaseSubtrackIds, setSuggestingCodebaseSubtrackIds] = useState<string[]>([]);
 
 	const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
+	const knowledgeSubtracks = useSelector(selectKnowledgeSubtracks);
+	const knowledgePillTrackAssignments = useSelector(selectKnowledgePillTrackAssignments);
 	const participants = useSelector(selectParticipants);
 	const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
 	const highlightedCodebaseFilePaths = useSelector(selectHighlightedCodebaseFilePaths);
@@ -246,6 +266,7 @@ export const Timeline = ({
 		endCaretRef,
 		todayCaretRef,
 		newStageButtonRef,
+		newKnowledgeSubtrackButtonRef,
 		newCodebaseSubtrackButtonRef,
 		syncCodebaseButtonRef,
 		llmButtonRef,
@@ -255,8 +276,15 @@ export const Timeline = ({
 		defaultStages,
 		parsed,
 		codebaseSubtracks,
+		knowledgeSubtracks,
+		knowledgePillTrackAssignments,
+		knowledgeTreePills,
+		knowledgeCrossTreeConnections,
+		knowledgeBlueprintLinks,
 		blueprintCodebaseLinks,
 		systemScreenshotMarkers,
+		playbackAt,
+		onPlaybackAtChange,
 		pendingBlueprintLinkEventId,
 		hoveredCodebaseFilePath,
 		highlightedCodebaseFilePaths,
@@ -278,9 +306,25 @@ export const Timeline = ({
 			if (readOnly) return;
 			dispatch(toggleCodebaseSubtrackInactive(subtrackId));
 		},
+		onToggleKnowledgeSubtrackCollapsed: (subtrackId) => {
+			if (readOnly) return;
+			dispatch(toggleKnowledgeSubtrackCollapsed(subtrackId));
+		},
+		onToggleKnowledgeSubtrackInactive: (subtrackId) => {
+			if (readOnly) return;
+			dispatch(toggleKnowledgeSubtrackInactive(subtrackId));
+		},
 		onDeleteCodebaseSubtrack: (subtrackId) => {
 			if (readOnly) return;
 			dispatch(deleteCodebaseSubtrack(subtrackId));
+		},
+		onDeleteKnowledgeSubtrack: (subtrackId) => {
+			if (readOnly) return;
+			dispatch(deleteKnowledgeSubtrack(subtrackId));
+		},
+		onAssignKnowledgePillToSubtrack: (treeId, subtrackId) => {
+			if (readOnly) return;
+			dispatch(assignKnowledgePillToSubtrack({ treeId, subtrackId }));
 		},
 		onCreateBlueprintCodebaseLink: (blueprintEventId, codebaseSubtrackId) => {
 			if (readOnly) return;
@@ -385,6 +429,15 @@ export const Timeline = ({
 			);
 		}
 
+		if (nameEdit.key === "knowledgeSubtrack") {
+			dispatch(
+				renameKnowledgeSubtrack({
+					subtrackId: nameEdit.id,
+					name: nextName,
+				})
+			);
+		}
+
 		setNameEdit(null);
 	};
 
@@ -476,6 +529,26 @@ export const Timeline = ({
 		if (selectedEvent?.kind === "blueprint") {
 			return <BlueprintTooltip event={selectedEvent.event as BlueprintEvent} />;
 		}
+		if (selectedEvent?.kind === "knowledge") {
+			const event = selectedEvent.event as KnowledgeBaseEvent;
+			return (
+				<div className={classes.codeBaseTooltip}>
+					<div className={classes.tooltipHeader}>
+						<p style={{ fontWeight: "bold", fontSize: "var(--font-size-md)" }}>
+							{event.label || "Knowledge event"}
+						</p>
+					</div>
+					<p style={{ fontSize: "var(--font-size-xs)", color: "var(--subtitle-color)" }}>
+						{event.occurredAt ? new Date(event.occurredAt).toLocaleString() : ""}
+					</p>
+					{event.description ? (
+						<p style={{ fontSize: "var(--font-size-sm)", whiteSpace: "pre-wrap" }}>
+							{event.description}
+						</p>
+					) : null}
+				</div>
+			);
+		}
 
 		return null;
 	}, [selectedEvent]);
@@ -521,6 +594,27 @@ export const Timeline = ({
 					onClick={() => {
 						if (readOnly) return;
 						onStageLaneCreation("Untitled");
+					}}
+				>
+					<FontAwesomeIcon icon={faPlus} />
+				</span>
+
+				<span
+					ref={newKnowledgeSubtrackButtonRef}
+					className={classes.newStage}
+					style={readOnly ? { display: "none" } : undefined}
+					title="Add knowledge subtrack"
+					onClick={() => {
+						if (readOnly) return;
+						dispatch(
+							addKnowledgeSubtrack({
+								id: crypto.randomUUID(),
+								name: `Knowledge subtrack ${knowledgeSubtracks.length + 1}`,
+								filePaths: [],
+								collapsed: false,
+								inactive: false,
+							})
+						);
 					}}
 				>
 					<FontAwesomeIcon icon={faPlus} />
@@ -643,6 +737,7 @@ export const Timeline = ({
 				style={{
 					left: tooltipPosition.x,
 					top: tooltipPosition.y,
+					pointerEvents: "none",
 					...(showTooltip ? { display: "block" } : { display: "none" }),
 				}}
 			>

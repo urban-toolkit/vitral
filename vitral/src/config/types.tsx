@@ -265,6 +265,8 @@ export type TimelineState = {
         allIds: string[];
     };
     codebaseSubtracks: CodebaseSubtrack[];
+    knowledgeSubtracks: CodebaseSubtrack[];
+    knowledgePillTrackAssignments: Record<string, string | null>;
     blueprintCodebaseLinks: BlueprintCodebaseLink[];
     systemScreenshotMarkers: SystemScreenshotMarker[];
     participants: ProjectParticipant[];
@@ -284,6 +286,8 @@ export type TimelineStatePayload = {
     designStudyEvents: DesignStudyEvent[];
     blueprintEvents: BlueprintEvent[];
     codebaseSubtracks: CodebaseSubtrack[];
+    knowledgeSubtracks?: CodebaseSubtrack[];
+    knowledgePillTrackAssignments?: Record<string, string | null>;
     blueprintCodebaseLinks: BlueprintCodebaseLink[];
     systemScreenshotMarkers?: SystemScreenshotMarker[];
     participants: ProjectParticipant[];

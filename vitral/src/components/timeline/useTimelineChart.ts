@@ -22,6 +22,9 @@ import {
 import classes from "./Timeline.module.css";
 import type {
     CodebaseSubtrack,
+    KnowledgeBlueprintLink,
+    KnowledgeCrossTreeConnection,
+    KnowledgeTreePill,
     ParsedTimelineData,
     SelectedTimelineEvent,
 } from "./timelineTypes";
@@ -53,7 +56,7 @@ type NameEditState = {
     id: string;
     x: number;
     y: number;
-    key: "designStudyEvent" | "subStage" | "codebaseSubtrack";
+    key: "designStudyEvent" | "subStage" | "codebaseSubtrack" | "knowledgeSubtrack";
     value: string;
 } | null;
 
@@ -108,6 +111,7 @@ type UseTimelineChartParams = {
     endCaretRef: RefObject<HTMLSpanElement | null>;
     todayCaretRef: RefObject<HTMLSpanElement | null>;
     newStageButtonRef: RefObject<HTMLSpanElement | null>;
+    newKnowledgeSubtrackButtonRef: RefObject<HTMLSpanElement | null>;
     newCodebaseSubtrackButtonRef: RefObject<HTMLSpanElement | null>;
     syncCodebaseButtonRef: RefObject<HTMLSpanElement | null>;
     llmButtonRef: RefObject<HTMLSpanElement | null>;
@@ -117,8 +121,15 @@ type UseTimelineChartParams = {
     defaultStages: string[];
     parsed: ParsedTimelineData;
     codebaseSubtracks: CodebaseSubtrack[];
+    knowledgeSubtracks: CodebaseSubtrack[];
+    knowledgePillTrackAssignments: Record<string, string | null>;
+    knowledgeTreePills: KnowledgeTreePill[];
+    knowledgeCrossTreeConnections: KnowledgeCrossTreeConnection[];
+    knowledgeBlueprintLinks: KnowledgeBlueprintLink[];
     blueprintCodebaseLinks: BlueprintCodebaseLink[];
     systemScreenshotMarkers: SystemScreenshotMarker[];
+    playbackAt: Date | string | null;
+    onPlaybackAtChange?: (value: string | null) => void;
     pendingBlueprintLinkEventId: string | null;
     hoveredCodebaseFilePath: string | null;
     highlightedCodebaseFilePaths: string[];
@@ -131,7 +142,11 @@ type UseTimelineChartParams = {
     onAttachFileToCodebaseSubtrack: (subtrackId: string, filePath: string) => void;
     onToggleCodebaseSubtrackCollapsed: (subtrackId: string) => void;
     onToggleCodebaseSubtrackInactive: (subtrackId: string) => void;
+    onToggleKnowledgeSubtrackCollapsed: (subtrackId: string) => void;
+    onToggleKnowledgeSubtrackInactive: (subtrackId: string) => void;
     onDeleteCodebaseSubtrack: (subtrackId: string) => void;
+    onDeleteKnowledgeSubtrack: (subtrackId: string) => void;
+    onAssignKnowledgePillToSubtrack: (treeId: string, subtrackId: string | null) => void;
     onCreateBlueprintCodebaseLink: (blueprintEventId: string, codebaseSubtrackId: string) => void;
     onDeleteSystemScreenshotMarker: (markerId: string) => void;
     onSuggestCodebaseSubtrackFiles: (subtrackId: string) => void;
@@ -157,6 +172,7 @@ export function useTimelineChart({
     endCaretRef,
     todayCaretRef,
     newStageButtonRef,
+    newKnowledgeSubtrackButtonRef,
     newCodebaseSubtrackButtonRef,
     syncCodebaseButtonRef,
     llmButtonRef,
@@ -166,8 +182,15 @@ export function useTimelineChart({
     defaultStages,
     parsed,
     codebaseSubtracks,
+    knowledgeSubtracks,
+    knowledgePillTrackAssignments,
+    knowledgeTreePills,
+    knowledgeCrossTreeConnections,
+    knowledgeBlueprintLinks,
     blueprintCodebaseLinks,
     systemScreenshotMarkers,
+    playbackAt,
+    onPlaybackAtChange,
     pendingBlueprintLinkEventId,
     hoveredCodebaseFilePath,
     highlightedCodebaseFilePaths,
@@ -180,7 +203,11 @@ export function useTimelineChart({
     onAttachFileToCodebaseSubtrack,
     onToggleCodebaseSubtrackCollapsed,
     onToggleCodebaseSubtrackInactive,
+    onToggleKnowledgeSubtrackCollapsed,
+    onToggleKnowledgeSubtrackInactive,
     onDeleteCodebaseSubtrack,
+    onDeleteKnowledgeSubtrack,
+    onAssignKnowledgePillToSubtrack,
     onCreateBlueprintCodebaseLink,
     onDeleteSystemScreenshotMarker,
     onSuggestCodebaseSubtrackFiles,
@@ -221,11 +248,42 @@ export function useTimelineChart({
         const laneH = 65;
         const laneGap = 6;
 
+        const designStudyLaneTop = lanesTop + laneH / 2;
+        const knowledgeLaneTop = designStudyLaneTop + laneH + laneGap;
+        const knowledgeSubtrackCollapsedHeight = 24;
+        const knowledgeSubtrackExpandedHeight = laneH;
+        const knowledgeSubtrackRows = knowledgeSubtracks.map((subtrack, index) => {
+            let top = knowledgeLaneTop + laneH + laneGap;
+
+            for (let i = 0; i < index; i++) {
+                const previous = knowledgeSubtracks[i];
+                top += (previous.collapsed ? knowledgeSubtrackCollapsedHeight : knowledgeSubtrackExpandedHeight) + laneGap;
+            }
+
+            const heightForRow = subtrack.collapsed
+                ? knowledgeSubtrackCollapsedHeight
+                : knowledgeSubtrackExpandedHeight;
+
+            return {
+                ...subtrack,
+                top,
+                height: heightForRow,
+                center: top + heightForRow / 2,
+            };
+        });
+        const knowledgeSubtracksBottom =
+            knowledgeSubtrackRows.length > 0
+                ? knowledgeSubtrackRows[knowledgeSubtrackRows.length - 1].top +
+                knowledgeSubtrackRows[knowledgeSubtrackRows.length - 1].height
+                : knowledgeLaneTop + laneH;
+        const blueprintLaneTop = knowledgeSubtracksBottom + laneGap;
+        const codebaseLaneTop = blueprintLaneTop + laneH + laneGap;
+
         const laneY = {
-            designStudy: lanesTop + laneH / 2,
-            knowledge: lanesTop + laneH + laneGap + laneH / 2,
-            blueprint: lanesTop + 2 * (laneH + laneGap) + laneH / 2,
-            codebase: lanesTop + 3 * (laneH + laneGap) + laneH / 2,
+            designStudy: designStudyLaneTop,
+            knowledge: knowledgeLaneTop,
+            blueprint: blueprintLaneTop,
+            codebase: codebaseLaneTop,
         };
 
         const laneTop = (lane: LaneType) => laneY[lane];
@@ -257,6 +315,40 @@ export function useTimelineChart({
             })
             .filter((marker): marker is SystemScreenshotMarker & { date: Date } => marker !== null)
             .sort((a, b) => +a.date - +b.date);
+        const parsedKnowledgeTreePills = knowledgeTreePills
+            .map((pill) => {
+                const parsedDate = toDate(pill.occurredAt);
+                if (Number.isNaN(parsedDate.getTime())) return null;
+                const parsedEvents = Array.isArray(pill.events)
+                    ? pill.events
+                        .map((eventData) => {
+                            const eventDate = toDate(eventData.occurredAt);
+                            if (Number.isNaN(eventDate.getTime())) return null;
+                            return {
+                                ...eventData,
+                                date: eventDate,
+                            };
+                        })
+                        .filter((eventData): eventData is (typeof pill.events[number] & { date: Date }) => eventData !== null)
+                    : [];
+                const events = [...parsedEvents].sort((a, b) => +a.date - +b.date);
+                const startDate = events[0]?.date ?? parsedDate;
+                const endDate = events[events.length - 1]?.date ?? parsedDate;
+                return {
+                    ...pill,
+                    date: parsedDate,
+                    startDate,
+                    endDate,
+                    events,
+                };
+            })
+            .filter((pill): pill is (KnowledgeTreePill & {
+                date: Date;
+                startDate: Date;
+                endDate: Date;
+                events: Array<KnowledgeTreePill["events"][number] & { date: Date }>;
+            }) => pill !== null)
+            .sort((a, b) => +a.startDate - +b.startDate);
 
         if (highlightedCodebasePathSet.size > 0) {
             const highlightedSubtrackIdsFromFileHover = new Set(
@@ -338,6 +430,18 @@ export function useTimelineChart({
             .attr("d", "M 0 0 L 10 5 L 0 10 z")
             .attr("fill", "rgba(45, 125, 210, 0.8)");
 
+        defs.append("marker")
+            .attr("id", "knowledge-blueprint-arrow-head")
+            .attr("viewBox", "0 0 10 10")
+            .attr("refX", 5)
+            .attr("refY", 5)
+            .attr("markerWidth", 6)
+            .attr("markerHeight", 6)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M 0 0 L 10 5 L 0 10 z")
+            .attr("fill", "rgba(204, 80, 80, 0.9)");
+
         const x0 = d3
             .scaleTime()
             .domain(parsed.domain)
@@ -360,6 +464,9 @@ export function useTimelineChart({
         const lanesG = svg.append("g");
         const brushG = svg.append("g").style("display", "none");
         const subStagesG = svg.append("g");
+        const knowledgeConnectionsG = svg.append("g");
+        const knowledgeEventsG = svg.append("g");
+        const knowledgeBlueprintLinksG = svg.append("g");
         const blueprintCodebaseLinksG = svg.append("g");
         const eventsG = svg.append("g");
         const screenshotOverlayG = svg.append("g");
@@ -383,6 +490,11 @@ export function useTimelineChart({
                 lane: laneDef.lane,
                 top: laneDef.top,
                 height: laneH,
+            })),
+            ...knowledgeSubtrackRows.map((row) => ({
+                lane: "knowledgeSubtrack" as const,
+                top: row.top,
+                height: row.height,
             })),
             ...codebaseSubtrackRows.map((row) => ({
                 lane: "codebaseSubtrack" as const,
@@ -430,6 +542,142 @@ export function useTimelineChart({
 
         const hierarchyTrunkX = margin.left + 14;
 
+        if (knowledgeSubtrackRows.length > 0) {
+            lanesG
+                .append("line")
+                .attr("class", classes.codebaseHierarchyLine)
+                .attr("x1", hierarchyTrunkX)
+                .attr("x2", hierarchyTrunkX)
+                .attr("y1", laneY.knowledge + laneH)
+                .attr("y2", knowledgeSubtracksBottom)
+                .style("pointer-events", "none");
+        }
+
+        const knowledgeSubtrackGroups = lanesG
+            .selectAll("g.knowledge-subtrack")
+            .data(knowledgeSubtrackRows)
+            .enter()
+            .append("g")
+            .attr("class", "knowledge-subtrack");
+
+        laneBackgroundG
+            .selectAll("rect.knowledge-subtrack-lane-line")
+            .data(knowledgeSubtrackRows)
+            .enter()
+            .append("rect")
+            .attr("class", `${classes.laneLine} knowledge-subtrack-lane-line`)
+            .attr("x", margin.left)
+            .attr("y", (row: any) => row.top)
+            .attr("width", totalTrackWidth)
+            .attr("height", (row: any) => row.height)
+            .style("pointer-events", "none");
+
+        knowledgeSubtrackGroups
+            .append("line")
+            .attr("class", classes.codebaseHierarchyLine)
+            .attr("x1", hierarchyTrunkX)
+            .attr("x2", subtrackContentX - 4)
+            .attr("y1", (row: any) => row.top + 12)
+            .attr("y2", (row: any) => row.top + 12)
+            .style("pointer-events", "none");
+
+        knowledgeSubtrackGroups
+            .append("rect")
+            .attr("x", margin.left)
+            .attr("y", (row: any) => row.top)
+            .attr("width", laneHeaderWidth)
+            .attr("height", (row: any) => row.height)
+            .attr("class", classes.codebaseDropZone)
+            .style("fill", "transparent")
+            .style("pointer-events", "none");
+
+        knowledgeSubtrackGroups
+            .append("line")
+            .attr("class", classes.headerZoneDivider)
+            .attr("x1", timelineLeft)
+            .attr("x2", timelineLeft)
+            .attr("y1", (row: any) => row.top)
+            .attr("y2", (row: any) => row.top + row.height)
+            .style("pointer-events", "none");
+
+        const knowledgeSubtrackStatusIcon = knowledgeSubtrackGroups
+            .append("g")
+            .attr("data-timeline-interactive", "true")
+            .attr("transform", (row: any) => `translate(${timelineLeft - 12}, ${row.top + 12})`)
+            .style("cursor", readOnly ? "default" : "pointer")
+            .on("click", (event: any, row: any) => {
+                if (readOnly) return;
+                event.stopPropagation();
+                onToggleKnowledgeSubtrackInactive(row.id);
+            });
+
+        knowledgeSubtrackStatusIcon
+            .append("circle")
+            .attr("r", 12)
+            .attr("fill", "transparent");
+
+        knowledgeSubtrackStatusIcon
+            .append("path")
+            .attr("d", (row: any) => (row.inactive ? faCheckPath : faCirclePath))
+            .attr("transform", "scale(0.022) translate(-256 -256)")
+            .attr("fill", (row: any) => (row.inactive ? "#9b9b9b" : "black"));
+
+        knowledgeSubtrackStatusIcon
+            .append("title")
+            .text((row: any) => (row.inactive ? "Mark as active" : "Mark as no longer being worked on"));
+
+        knowledgeSubtrackGroups
+            .append("text")
+            .attr("class", classes.laneLabel)
+            .attr("x", subtrackContentX + 2)
+            .attr("y", (row: any) => row.top + 16)
+            .attr("data-timeline-interactive", "true")
+            .style("cursor", readOnly ? "default" : "pointer")
+            .text((row: any) => (row.collapsed ? ">" : "V"))
+            .on("click", (event: any, row: any) => {
+                if (readOnly) return;
+                event.stopPropagation();
+                onToggleKnowledgeSubtrackCollapsed(row.id);
+            });
+
+        knowledgeSubtrackGroups
+            .append("text")
+            .attr("class", classes.laneLabel)
+            .attr("x", subtrackContentX + 16)
+            .attr("y", (row: any) => row.top + 16)
+            .attr("data-timeline-interactive", "true")
+            .style("cursor", readOnly ? "default" : "text")
+            .text((row: any) => row.name)
+            .on("click", (event: any, row: any) => {
+                if (readOnly) return;
+                event.stopPropagation();
+                const [sx, sy] = d3.pointer(event, containerRef.current);
+                setNameEdit({
+                    id: row.id,
+                    x: sx,
+                    y: sy,
+                    value: row.name,
+                    key: "knowledgeSubtrack",
+                });
+            });
+
+        knowledgeSubtrackGroups
+            .append("text")
+            .attr("class", classes.subStageDelete)
+            .attr("x", timelineLeft + innerW - 14)
+            .attr("y", (row: any) => row.top + 16)
+            .attr("data-timeline-interactive", "true")
+            .style("cursor", readOnly ? "default" : "pointer")
+            .text("X")
+            .on("click", (event: any, row: any) => {
+                if (readOnly) return;
+                event.stopPropagation();
+                onDeleteKnowledgeSubtrack(row.id);
+            });
+
+        knowledgeSubtrackGroups
+            .style("opacity", (row: any) => (row.inactive ? 0.45 : 1));
+
         if (codebaseSubtrackRows.length > 0) {
             lanesG
                 .append("line")
@@ -455,9 +703,9 @@ export function useTimelineChart({
             .append("rect")
             .attr("class", `${classes.laneLine} codebase-subtrack-lane-line`)
             .attr("x", margin.left)
-            .attr("y", (row) => row.top)
+            .attr("y", (row: any) => row.top)
             .attr("width", totalTrackWidth)
-            .attr("height", (row) => row.height)
+            .attr("height", (row: any) => row.height)
             .style("fill", (row: any) => (row.isHighlighted ? "rgba(0, 199, 255, 0.14)" : "transparent"))
             .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "#E3E3E3"))
             .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : 1))
@@ -478,9 +726,9 @@ export function useTimelineChart({
             .append("rect")
             .attr("class", classes.codebaseSubtrackLinkTarget)
             .attr("x", timelineLeft)
-            .attr("y", (row) => row.top)
+            .attr("y", (row: any) => row.top)
             .attr("width", innerW)
-            .attr("height", (row) => row.height)
+            .attr("height", (row: any) => row.height)
             .attr("data-timeline-interactive", pendingBlueprintLinkEventId ? "true" : null)
             .style("fill", pendingBlueprintLinkEventId ? "rgba(45, 125, 210, 0.10)" : "transparent")
             .style("stroke", pendingBlueprintLinkEventId ? "rgba(45, 125, 210, 0.45)" : "none")
@@ -498,9 +746,9 @@ export function useTimelineChart({
         codebaseSubtrackGroups
             .append("rect")
             .attr("x", margin.left)
-            .attr("y", (row) => row.top)
+            .attr("y", (row: any) => row.top)
             .attr("width", laneHeaderWidth)
-            .attr("height", (row) => row.height)
+            .attr("height", (row: any) => row.height)
             .attr("class", classes.codebaseDropZone)
             .style("fill", (row: any) => (row.isHighlighted ? "rgba(0, 199, 255, 0.14)" : "transparent"))
             .style("stroke", (row: any) => (row.isHighlighted ? "#00A8DB" : "none"))
@@ -583,7 +831,7 @@ export function useTimelineChart({
             .attr("data-timeline-interactive", "true")
             .attr("fill", (row: any) => (row.isHighlighted ? "#00A8DB" : null))
             .style("cursor", readOnly ? "default" : "pointer")
-            .text((row: any) => (row.collapsed ? "❯" : "V"))
+            .text((row: any) => (row.collapsed ? ">" : "V"))
             .on("click", (event: any, row: any) => {
                 if (readOnly) return;
                 event.stopPropagation();
@@ -675,7 +923,7 @@ export function useTimelineChart({
                     .join(", ");
                 return preview.length > 20 ? `${preview.slice(0, 20)}...` : preview;
             })
-            .attr("display", (row) => (row.collapsed ? "none" : "block"));
+            .attr("display", (row: any) => (row.collapsed ? "none" : "block"));
 
         const subtrackFilesTooltip = svg
             .append("g")
@@ -713,7 +961,7 @@ export function useTimelineChart({
             subtrackFilesTooltipText.selectAll("*").remove();
             subtrackFilesTooltip.style("display", "block");
 
-            lines.forEach((line, index) => {
+            lines.forEach((line: string, index: number) => {
                 subtrackFilesTooltipText
                     .append("tspan")
                     .attr("dy", index === 0 ? 0 : 14)
@@ -721,7 +969,7 @@ export function useTimelineChart({
             });
 
             const tspans = subtrackFilesTooltipText.selectAll<SVGTSpanElement, unknown>("tspan").nodes();
-            const maxLineWidth = tspans.reduce((maxWidth, node) => {
+            const maxLineWidth = tspans.reduce((maxWidth: number, node: SVGTSpanElement) => {
                 return Math.max(maxWidth, node.getComputedTextLength());
             }, 0);
 
@@ -825,6 +1073,13 @@ export function useTimelineChart({
                 });
         };
 
+        let hoveredKnowledgePillTreeId: string | null = null;
+        const hideKnowledgePillTooltip = () => {
+            if (hoveredKnowledgePillTreeId === null) return;
+            hoveredKnowledgePillTreeId = null;
+            setShowTooltip(false);
+        };
+
         const draw = (x: d3.ScaleTime<number, number>) => {
             const axis = d3.axisBottom<Date>(x).ticks(Math.max(3, Math.floor(innerW / 120)));
             axisG.call(axis);
@@ -840,6 +1095,7 @@ export function useTimelineChart({
                 .attr("height", 30);
             axisBackground.lower();
             axisG.raise();
+            markerG.raise();
 
             const dividerDrag = d3
                 .drag<SVGLineElement, any>()
@@ -868,7 +1124,7 @@ export function useTimelineChart({
                 .enter()
                 .append("g")
                 .attr("class", "stage")
-                .each(function stageRow(stageData: any) {
+                .each(function stageRow(this: SVGGElement, stageData: any) {
                     const group = d3.select(this);
 
                     group
@@ -916,12 +1172,12 @@ export function useTimelineChart({
                         .append("rect")
                         .attr("class", "stageFill")
                         .attr("x", x(stageData.start))
-                        .attr("y", (fillRow) => Math.round(fillRow.top))
+                        .attr("y", (fillRow: any) => Math.round(fillRow.top))
                         .attr("width", x(stageData.end) - x(stageData.start))
-                        .attr("height", (fillRow) => fillRow.height)
+                        .attr("height", (fillRow: any) => fillRow.height)
                         .attr("fill", stageColor(stageData.name))
                         .attr("opacity", 0.5)
-                        .on("contextmenu", function (event: any, fillRow: { lane: LaneType | "codebaseSubtrack" }) {
+                        .on("contextmenu", function (event: any, fillRow: { lane: LaneType | "codebaseSubtrack" | "knowledgeSubtrack" }) {
                             if (readOnly) return;
                             if (fillRow.lane !== "designStudy") return;
 
@@ -965,6 +1221,11 @@ export function useTimelineChart({
                 setRefPos(newStageButtonRef.current, x(parsed.start) + 3, margin.top + 45);
             }
 
+            setRefPos(
+                newKnowledgeSubtrackButtonRef.current,
+                margin.left + 8,
+                laneY.knowledge + 40
+            );
             setRefPos(
                 newCodebaseSubtrackButtonRef.current,
                 margin.left + 8,
@@ -1122,7 +1383,7 @@ export function useTimelineChart({
                 .data(laneDefs)
                 .enter()
                 .append("g")
-                .each(function attachBrush(laneDef: any) {
+                .each(function attachBrush(this: SVGGElement, laneDef: any) {
                     if (readOnly) return;
                     d3.select(this).call(brush(laneDef.lane, laneDef.top) as any);
                 });
@@ -1158,6 +1419,390 @@ export function useTimelineChart({
                 todayCaretRef.current.style.display = "none";
             }
 
+            const connectionColorForKind = (kind: string) => {
+                if (kind === "referenced_by") return "#90b1e9";
+                if (kind === "iteration_of") return "#dda788";
+                return "#cccccc";
+            };
+
+            const timelineDomainStart = parsed.domain[0];
+            const timelineDomainEnd = parsed.domain[1];
+            const maxPlayableDate = today < timelineDomainStart
+                ? timelineDomainStart
+                : (today > timelineDomainEnd ? timelineDomainEnd : today);
+            const playbackCandidate = playbackAt ? toDate(playbackAt) : maxPlayableDate;
+            const clampedPlaybackDate = new Date(
+                Math.min(
+                    maxPlayableDate.getTime(),
+                    Math.max(timelineDomainStart.getTime(), playbackCandidate.getTime()),
+                ),
+            );
+            const maxPlayableX = x(maxPlayableDate);
+            const minPlayableX = timelineLeft;
+            const playheadX = Math.max(minPlayableX, Math.min(maxPlayableX, x(clampedPlaybackDate)));
+
+            markerG
+                .append("line")
+                .attr("x1", playheadX)
+                .attr("x2", playheadX)
+                .attr("y1", margin.top + 14)
+                .attr("y2", svgHeight)
+                .attr("stroke", "#d63b3b")
+                .attr("stroke-width", 2.2)
+                .attr("stroke-dasharray", "5 4")
+                .attr("opacity", 0.95);
+
+            const handlePlaybackMove = (event: any) => {
+                if (!onPlaybackAtChange) return;
+                const [pointerX] = d3.pointer(event, currentSvg);
+                const clampedX = Math.max(minPlayableX, Math.min(maxPlayableX, pointerX));
+                const nextDate = x.invert(clampedX);
+                const deltaToNow = Math.abs(nextDate.getTime() - today.getTime());
+                if (deltaToNow < 60_000) {
+                    onPlaybackAtChange(null);
+                    return;
+                }
+                onPlaybackAtChange(nextDate.toISOString());
+            };
+
+            const playheadHandle = markerG
+                .append("g")
+                .attr("data-timeline-interactive", "true")
+                .attr("transform", `translate(${playheadX}, ${margin.top + 14})`)
+                .style("cursor", onPlaybackAtChange ? "ew-resize" : "default");
+
+            playheadHandle
+                .append("circle")
+                .attr("r", 6)
+                .attr("fill", "#d63b3b")
+                .attr("stroke", "#ffffff")
+                .attr("stroke-width", 1.5);
+
+            playheadHandle
+                .append("title")
+                .text("Playback time (drag left to inspect past canvas states)");
+
+            if (onPlaybackAtChange) {
+                playheadHandle.call(
+                    d3.drag<SVGGElement, unknown>()
+                        .on("start", handlePlaybackMove)
+                        .on("drag", handlePlaybackMove)
+                        .on("end", handlePlaybackMove) as any,
+                );
+            }
+
+            knowledgeConnectionsG.selectAll("*").remove();
+            knowledgeEventsG.selectAll("*").remove();
+            knowledgeBlueprintLinksG.selectAll("*").remove();
+
+            const pillPositionByTreeId = new Map<string, { x: number; y: number }>();
+            const cardCreatedPositionByNodeId = new Map<string, { x: number; y: number }>();
+            const knowledgePillHeight = 36;
+            const knowledgeEventRadius = 10;
+            const knowledgePillHorizontalPadding = 12;
+            const minimumPillWidth = (knowledgePillHorizontalPadding * 2) + (knowledgeEventRadius * 2);
+            const knowledgeEventColor = "#2d7dd2";
+            const knowledgeMainTrackRow = {
+                id: null as string | null,
+                top: laneY.knowledge,
+                height: laneH,
+                center: laneY.knowledge + laneH / 2,
+            };
+            const knowledgeTrackRows = [knowledgeMainTrackRow, ...knowledgeSubtrackRows];
+            const knowledgeSubtrackRowById = new Map(knowledgeSubtrackRows.map((row) => [row.id, row]));
+            const resolveKnowledgeSubtrackIdForTree = (treeId: string): string | null => {
+                const assigned = knowledgePillTrackAssignments?.[treeId];
+                if (typeof assigned !== "string") return null;
+                return knowledgeSubtrackRowById.has(assigned) ? assigned : null;
+            };
+            const knowledgeTrackRowForTree = (treeId: string) => {
+                const assignedSubtrackId = resolveKnowledgeSubtrackIdForTree(treeId);
+                if (!assignedSubtrackId) return knowledgeMainTrackRow;
+                return knowledgeSubtrackRowById.get(assignedSubtrackId) ?? knowledgeMainTrackRow;
+            };
+            const knowledgePillLayoutFor = (pillData: any) => {
+                const startXTime = x(pillData.startDate ?? pillData.date);
+                const endXTime = x(pillData.endDate ?? pillData.date);
+                const naturalSpan = Math.max(0, endXTime - startXTime);
+                const baseWidth = naturalSpan + (knowledgePillHorizontalPadding * 2);
+                const width = Math.max(minimumPillWidth, baseWidth);
+                const extraWidth = width - baseWidth;
+                const startX = startXTime - knowledgePillHorizontalPadding - (extraWidth / 2);
+                const centerX = startX + (width / 2);
+                const trackRow = knowledgeTrackRowForTree(pillData.treeId);
+                const startY = trackRow.center - (knowledgePillHeight / 2);
+                return { startX, width, centerX, trackRow, startY };
+            };
+            const showKnowledgePillTooltip = (event: MouseEvent, pillData: any) => {
+                hoveredKnowledgePillTreeId = pillData.treeId;
+                const heightOffset = containerRef.current
+                    ? containerRef.current.getBoundingClientRect().top
+                    : 0;
+                const clampedX = Math.min(Math.max(event.clientX + 14, 0), window.innerWidth - 300);
+                const clampedY = Math.min(Math.max(event.clientY + 14, 0), window.innerHeight - 180) - heightOffset;
+                const events = Array.isArray(pillData.events) ? pillData.events : [];
+                const lines = events.map((eventData: any) =>
+                    `${eventData.eventType}: ${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
+                );
+                setSelectedEvent({
+                    kind: "knowledge",
+                    event: {
+                        id: `knowledge-pill:${pillData.treeId}`,
+                        occurredAt: pillData.occurredAt,
+                        kind: "knowledge",
+                        subtype: "tree",
+                        label: pillData.treeTitle || "Knowledge tree",
+                        description: lines.join("\n"),
+                    },
+                });
+                setTooltipPosition({ x: clampedX, y: clampedY });
+                setShowTooltip(true);
+            };
+
+            const pillGroups = knowledgeEventsG
+                .selectAll("g.knowledge-tree-pill")
+                .data(parsedKnowledgeTreePills, (pillData: any) => pillData.treeId)
+                .join("g")
+                .attr("class", "knowledge-tree-pill")
+                .attr("data-timeline-interactive", "true")
+                .attr("transform", (pillData: any) => {
+                    const layout = knowledgePillLayoutFor(pillData);
+                    pillPositionByTreeId.set(pillData.treeId, {
+                        x: layout.centerX,
+                        y: layout.trackRow.center,
+                    });
+                    return `translate(${layout.startX}, ${layout.startY})`;
+                })
+                .on("mouseleave", () => {
+                    hideKnowledgePillTooltip();
+                });
+
+            const pillRects = pillGroups
+                .append("rect")
+                .attr("width", (pillData: any) => knowledgePillLayoutFor(pillData).width)
+                .attr("height", knowledgePillHeight)
+                .attr("rx", 16)
+                .attr("ry", 16)
+                .attr("fill", "rgba(45, 125, 210, 0.12)")
+                .attr("stroke", "rgba(45, 125, 210, 0.55)")
+                .attr("stroke-width", 1.2)
+                .attr("data-timeline-interactive", "true")
+                .style("cursor", readOnly ? "help" : "ns-resize")
+                .on("mouseenter", (event: any, pillData: any) => {
+                    showKnowledgePillTooltip(event, pillData);
+                })
+                .on("mousemove", (event: any, pillData: any) => {
+                    showKnowledgePillTooltip(event, pillData);
+                })
+                .on("mouseleave", () => {
+                    hideKnowledgePillTooltip();
+                });
+
+            pillRects.append("title")
+                .text((pillData: any) => {
+                    const lines = pillData.events.map((eventData: any) =>
+                        `${eventData.eventType}: ${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
+                    );
+                    return `${pillData.treeTitle}\n${lines.join("\n")}`;
+                });
+
+            const clampPillY = (value: number) => {
+                const minY = knowledgeMainTrackRow.top;
+                const maxY = knowledgeSubtracksBottom - knowledgePillHeight;
+                return Math.max(minY, Math.min(maxY, value));
+            };
+            const resolveKnowledgeTrackRowByPointerY = (pointerY: number) => {
+                const containingRow = knowledgeTrackRows.find(
+                    (row) => pointerY >= row.top && pointerY <= (row.top + row.height)
+                );
+                if (containingRow) return containingRow;
+                let closestRow = knowledgeTrackRows[0];
+                let closestDistance = Math.abs(pointerY - knowledgeTrackRows[0].center);
+                for (let i = 1; i < knowledgeTrackRows.length; i++) {
+                    const row = knowledgeTrackRows[i];
+                    const distance = Math.abs(pointerY - row.center);
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        closestRow = row;
+                    }
+                }
+                return closestRow;
+            };
+            if (!readOnly) {
+                pillGroups.call(
+                    d3.drag<SVGGElement, any>()
+                        .on("start", () => {
+                            hideKnowledgePillTooltip();
+                        })
+                        .on("drag", function onPillDrag(this: SVGGElement, event: any, pillData: any) {
+                            const layout = knowledgePillLayoutFor(pillData);
+                            const [, pointerY] = d3.pointer(event, currentSvg);
+                            const nextY = clampPillY(pointerY - (knowledgePillHeight / 2));
+                            d3.select(this).attr("transform", `translate(${layout.startX}, ${nextY})`);
+                        })
+                        .on("end", function onPillDragEnd(this: SVGGElement, event: any, pillData: any) {
+                            const [, pointerY] = d3.pointer(event, currentSvg);
+                            const targetRow = resolveKnowledgeTrackRowByPointerY(pointerY);
+                            const nextSubtrackId = targetRow.id;
+                            const previousSubtrackId = resolveKnowledgeSubtrackIdForTree(pillData.treeId);
+                            const layout = knowledgePillLayoutFor(pillData);
+                            const snappedY = targetRow.center - (knowledgePillHeight / 2);
+                            d3.select(this).attr("transform", `translate(${layout.startX}, ${snappedY})`);
+                            if (nextSubtrackId !== previousSubtrackId) {
+                                onAssignKnowledgePillToSubtrack(pillData.treeId, nextSubtrackId);
+                            }
+                        }) as any,
+                );
+            }
+
+            pillGroups.each(function eachPill(this: SVGGElement, pillData: any) {
+                const group = d3.select(this);
+                const events = Array.isArray(pillData.events) ? pillData.events : [];
+                if (events.length === 0) return;
+                const layout = knowledgePillLayoutFor(pillData);
+                const centerY = knowledgePillHeight / 2;
+                const dots = group
+                    .selectAll("circle.knowledge-pill-event")
+                    .data(events)
+                    .join("circle")
+                    .attr("class", "knowledge-pill-event")
+                    .attr("cx", (eventData: any) => x(eventData.date) - layout.startX)
+                    .attr("cy", centerY)
+                    .attr("r", knowledgeEventRadius)
+                    .attr("fill", knowledgeEventColor)
+                    .attr("stroke", "#ffffff")
+                    .attr("stroke-width", 1.3)
+                    .attr("stroke-dasharray", (eventData: any) => (eventData.isDeleted ? "2 1.4" : null))
+                    .style("opacity", (eventData: any) => (eventData.isDeleted ? 0.45 : 1))
+                    .attr("data-timeline-interactive", "true")
+                    .style("cursor", "pointer")
+                    .on("click", (event: any, eventData: any) => {
+                        hoveredKnowledgePillTreeId = null;
+                        const heightOffset = containerRef.current
+                            ? containerRef.current.getBoundingClientRect().top
+                            : 0;
+                        const clampedX = Math.min(Math.max(event.clientX, 0), window.innerWidth - 300);
+                        const clampedY =
+                            Math.min(Math.max(event.clientY, 0), window.innerHeight - 160) - heightOffset;
+                        hoveredKnowledgePillTreeId = null;
+                        setSelectedEvent({
+                            kind: "knowledge",
+                            event: {
+                                id: eventData.id,
+                            occurredAt: eventData.occurredAt,
+                            kind: "knowledge",
+                            subtype: eventData.eventType,
+                            label: `${eventData.eventType.toUpperCase()} - ${eventData.cardTitle || "Untitled"}`,
+                            description: `Card label: ${eventData.cardLabel}\nCard title: ${eventData.cardTitle || "Untitled"}\n${eventData.cardDescription || ""}`.trim(),
+                        },
+                    });
+                        setTooltipPosition({ x: clampedX, y: clampedY });
+                        setShowTooltip(true);
+                    });
+
+                dots.append("title").text((eventData: any) =>
+                    `${eventData.eventType}: ${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
+                );
+
+                for (const eventData of events) {
+                    if (eventData.eventType === "created" && typeof eventData.nodeId === "string") {
+                        cardCreatedPositionByNodeId.set(eventData.nodeId, {
+                            x: x(eventData.date),
+                            y: layout.trackRow.center,
+                        });
+                    }
+                }
+            });
+
+            const arcIndexByPair = new Map<string, number>();
+            const crossTreeConnectionPaths = knowledgeConnectionsG
+                .selectAll("path.knowledge-cross-tree-connection")
+                .data(knowledgeCrossTreeConnections)
+                .join("path")
+                .attr("class", "knowledge-cross-tree-connection")
+                .attr("data-timeline-interactive", "true")
+                .attr("fill", "none")
+                .attr("stroke", (connectionData: any) => connectionColorForKind(connectionData.kind))
+                .attr("stroke-width", 2)
+                .attr("opacity", 0.9)
+                .style("cursor", "pointer")
+                .attr("d", (connectionData: any) => {
+                    const source = pillPositionByTreeId.get(connectionData.sourceTreeId);
+                    const target = pillPositionByTreeId.get(connectionData.targetTreeId);
+                    if (!source || !target) return "";
+                    const fromX = source.x;
+                    const fromY = source.y;
+                    const toX = target.x;
+                    const toY = target.y;
+                    const minX = Math.min(fromX, toX);
+                    const maxX = Math.max(fromX, toX);
+                    const pairKey = `${connectionData.sourceTreeId}::${connectionData.targetTreeId}::${minX}:${maxX}`;
+                    const arcIndex = arcIndexByPair.get(pairKey) ?? 0;
+                    arcIndexByPair.set(pairKey, arcIndex + 1);
+                    const midX = (fromX + toX) / 2;
+                    const arcHeight = 26 + arcIndex * 18;
+                    const controlY = Math.min(fromY, toY) - arcHeight;
+                    return `M ${fromX} ${fromY} Q ${midX} ${controlY} ${toX} ${toY}`;
+                })
+                .on("click", (event: any, connectionData: any) => {
+                    const heightOffset = containerRef.current
+                        ? containerRef.current.getBoundingClientRect().top
+                        : 0;
+                    const clampedX = Math.min(Math.max(event.clientX, 0), window.innerWidth - 300);
+                    const clampedY =
+                        Math.min(Math.max(event.clientY, 0), window.innerHeight - 160) - heightOffset;
+                    setSelectedEvent({
+                        kind: "knowledge",
+                        event: {
+                            id: connectionData.id,
+                            occurredAt: connectionData.occurredAt,
+                            kind: "knowledge",
+                            subtype: connectionData.kind,
+                            label: `Connection: ${connectionData.label || connectionData.kind}`,
+                            description:
+                                `${connectionData.sourceCardTitle} (${connectionData.sourceCardLabel})\n` +
+                                `${connectionData.targetCardTitle} (${connectionData.targetCardLabel})`,
+                        },
+                    });
+                    setTooltipPosition({ x: clampedX, y: clampedY });
+                    setShowTooltip(true);
+                });
+
+            crossTreeConnectionPaths
+                .append("title")
+                .text((connectionData: any) =>
+                    `${connectionData.sourceCardTitle} (${connectionData.sourceCardLabel})\n` +
+                    `${connectionData.targetCardTitle} (${connectionData.targetCardLabel})\n` +
+                    `Label: ${connectionData.label || connectionData.kind}`
+                );
+
+            knowledgeBlueprintLinksG
+                .selectAll("path.knowledge-blueprint-link")
+                .data(knowledgeBlueprintLinks)
+                .join("path")
+                .attr("class", "knowledge-blueprint-link")
+                .attr("data-timeline-interactive", "true")
+                .attr("fill", "none")
+                .attr("stroke", (linkData: any) => connectionColorForKind(linkData.kind))
+                .attr("stroke-width", 1.8)
+                .attr("opacity", 0.85)
+                .attr("marker-end", "url(#knowledge-blueprint-arrow-head)")
+                .style("cursor", "pointer")
+                .attr("d", (linkData: any) => {
+                    const createdPosition = cardCreatedPositionByNodeId.get(linkData.cardNodeId);
+                    const startX = createdPosition?.x ?? x(toDate(linkData.cardCreatedAt));
+                    const endX = x(toDate(linkData.blueprintOccurredAt));
+                    const startY = createdPosition?.y ?? (laneY.knowledge + laneH / 2);
+                    const endY = laneY.blueprint + laneH / 2;
+                    const midY = (startY + endY) / 2;
+                    return `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`;
+                })
+                .append("title")
+                .text((linkData: any) =>
+                    `${linkData.cardTitle} (${linkData.cardLabel}) -> ${linkData.blueprintEventName}\n` +
+                    `Label: ${linkData.label || linkData.kind}`
+                );
+
             const screenshotMarkerTopY = margin.top + 18;
             const screenshotLineBottomY = codebaseSubtracksBottom;
             const clampTimelineX = (value: number) =>
@@ -1168,7 +1813,7 @@ export function useTimelineChart({
             const screenshotMarkerGroups = screenshotOverlayG
                 .selectAll("g.systemScreenshotMarker")
                 .data(parsedSystemScreenshotMarkers, (markerData: any) => markerData.id)
-                .join((enter) =>
+                .join((enter: any) =>
                     enter
                         .append("g")
                         .attr("class", "systemScreenshotMarker")
@@ -1323,7 +1968,7 @@ export function useTimelineChart({
             const plot = (
                 events: any[],
                 kind: LaneType,
-                centerY: number,
+                centerY: number | ((eventData: any) => number),
                 icon: (
                     g: d3.Selection<SVGGElement, unknown, null, undefined>,
                     eventData: any
@@ -1343,6 +1988,9 @@ export function useTimelineChart({
                     )
                     .style("opacity", opacity)
                     .attr("transform", (eventData: any) => {
+                        const resolvedCenterY = typeof centerY === "function"
+                            ? centerY(eventData)
+                            : centerY;
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
@@ -1352,9 +2000,9 @@ export function useTimelineChart({
                             highlightedBlueprintEventIdsFromFileHover.has(eventData.id);
                         const isHighlightedBlueprintEvent = isHoveredBlueprintComponentEvent || isHighlightedByFileHover;
                         const scale = isHighlightedBlueprintEvent ? 1.35 : 1;
-                        return `translate(${x(toDate(eventData.date))}, ${centerY}) scale(${scale})`;
+                        return `translate(${x(toDate(eventData.date))}, ${resolvedCenterY}) scale(${scale})`;
                     })
-                    .each(function drawIcon(eventData: any) {
+                    .each(function drawIcon(this: SVGGElement, eventData: any) {
                         icon(d3.select(this), eventData);
                     })
                     .selectAll("rect, circle, path")
@@ -1362,6 +2010,9 @@ export function useTimelineChart({
                     .style("fill", (eventData: any) => {
                         if (kind === "designStudy") {
                             return eventData.generatedBy === "llm" ? "rgb(110, 176, 238)" : "rgb(238, 168, 110)";
+                        }
+                        if (kind === "knowledge") {
+                            return "#2d7dd2";
                         }
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
@@ -1376,6 +2027,9 @@ export function useTimelineChart({
                     .style("stroke", (eventData: any) => {
                         if (kind === "designStudy") {
                             return eventData.generatedBy === "llm" ? "rgb(67, 132, 192)" : "rgb(188, 115, 56)";
+                        }
+                        if (kind === "knowledge") {
+                            return "#1d5fa8";
                         }
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
@@ -1395,6 +2049,7 @@ export function useTimelineChart({
                     })
                     .style("stroke-width", (eventData: any) => {
                         if (kind === "designStudy") return 1.4;
+                        if (kind === "knowledge") return 1.5;
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
@@ -1412,6 +2067,9 @@ export function useTimelineChart({
                         return isHighlightedBlueprintEvent ? 2.2 : null;
                     })
                     .style("opacity", (eventData: any) => {
+                        if (kind === "knowledge") {
+                            return eventData.isDeleted ? 0.45 : 1;
+                        }
                         const isHoveredBlueprintComponentEvent =
                             kind === "blueprint" &&
                             hoveredBlueprintComponentNodeId &&
@@ -1429,6 +2087,9 @@ export function useTimelineChart({
                         return isDisconnectedBlueprintEvent ? 0.45 : 1;
                     })
                     .style("stroke-dasharray", (eventData: any) => {
+                        if (kind === "knowledge") {
+                            return eventData.isDeleted ? "4 3" : null;
+                        }
                         const isDisconnectedBlueprintEvent =
                             kind === "blueprint" &&
                             typeof eventData.componentNodeId === "string" &&
@@ -1451,6 +2112,7 @@ export function useTimelineChart({
                     })
                     .on("click", (event: any, eventData: any) => {
                         if (kind !== "codebase" && kind !== "blueprint") return;
+                        hoveredKnowledgePillTreeId = null;
 
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
@@ -1506,7 +2168,15 @@ export function useTimelineChart({
             };
 
             plot(parsed.ds, "designStudy", laneY.designStudy + laneH / 2, drawDiamond);
-            plot(parsed.kb, "knowledge", laneY.knowledge + laneH / 2, drawCircle);
+            plot(
+                parsed.kb,
+                "knowledge",
+                (eventData: any) => {
+                    if (!eventData?.treeId) return knowledgeMainTrackRow.center;
+                    return knowledgeTrackRowForTree(eventData.treeId).center;
+                },
+                drawCircle
+            );
             plot(parsed.bp, "blueprint", laneY.blueprint + laneH / 2, drawTriangle);
             plot(parsed.cb, "codebase", laneY.codebase + laneH / 2, drawSquare);
 
@@ -1516,6 +2186,28 @@ export function useTimelineChart({
                 const rowEvents = eventsByCodebaseSubtrack.get(row.id) ?? [];
                 plot(rowEvents, "codebase", row.center, drawSquare, row.inactive ? 0.35 : 1);
             }
+
+            svg.on("mousemove.knowledge-pill-hover-guard", (event: MouseEvent) => {
+                if (hoveredKnowledgePillTreeId === null) return;
+                const target = event.target;
+                if (!(target instanceof Element)) {
+                    hideKnowledgePillTooltip();
+                    return;
+                }
+                if (!target.closest("g.knowledge-tree-pill")) {
+                    hideKnowledgePillTooltip();
+                }
+            });
+            svg.on("mousedown.knowledge-pill-hover-guard", (event: MouseEvent) => {
+                if (hoveredKnowledgePillTreeId === null) return;
+                const target = event.target;
+                if (!(target instanceof Element) || !target.closest("g.knowledge-tree-pill")) {
+                    hideKnowledgePillTooltip();
+                }
+            });
+            svg.on("wheel.knowledge-pill-hover-guard", () => {
+                hideKnowledgePillTooltip();
+            });
         };
 
         draw(zoomTransformRef.current.rescaleX(x0));
@@ -1586,12 +2278,20 @@ export function useTimelineChart({
         endCaretRef,
         todayCaretRef,
         newStageButtonRef,
+        newKnowledgeSubtrackButtonRef,
         newCodebaseSubtrackButtonRef,
         syncCodebaseButtonRef,
         llmButtonRef,
         codebaseSubtracks,
+        knowledgeSubtracks,
+        knowledgePillTrackAssignments,
+        knowledgeTreePills,
+        knowledgeCrossTreeConnections,
+        knowledgeBlueprintLinks,
         blueprintCodebaseLinks,
         systemScreenshotMarkers,
+        playbackAt,
+        onPlaybackAtChange,
         pendingBlueprintLinkEventId,
         hoveredCodebaseFilePath,
         highlightedCodebaseFilePaths,
@@ -1604,7 +2304,11 @@ export function useTimelineChart({
         onAttachFileToCodebaseSubtrack,
         onToggleCodebaseSubtrackCollapsed,
         onToggleCodebaseSubtrackInactive,
+        onToggleKnowledgeSubtrackCollapsed,
+        onToggleKnowledgeSubtrackInactive,
         onDeleteCodebaseSubtrack,
+        onDeleteKnowledgeSubtrack,
+        onAssignKnowledgePillToSubtrack,
         onCreateBlueprintCodebaseLink,
         onDeleteSystemScreenshotMarker,
         onSuggestCodebaseSubtrackFiles,
