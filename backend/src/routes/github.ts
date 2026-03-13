@@ -15,13 +15,23 @@ type GhRepo = {
 };
 
 export const githubRoutes: FastifyPluginAsync = async (app) => {
+    const secureCookies = process.env.COOKIE_SECURE === "true";
+
+    const normalizeReturnToPath = (value: unknown): string => {
+        if (typeof value !== "string") return "/projects";
+        const trimmed = value.trim();
+        if (!trimmed.startsWith("/")) return "/projects";
+        if (trimmed.startsWith("//")) return "/projects";
+        return trimmed;
+    };
+
     app.get("/start", async (request, reply) => {
 
         const { returnTo } = request.query as { returnTo?: string };
 
         const statePayload = {
             csrf: crypto.randomBytes(16).toString("hex"),
-            returnTo: returnTo ?? "/vitral/projects",
+            returnTo: normalizeReturnToPath(returnTo),
         };
 
         const state = Buffer.from(JSON.stringify(statePayload)).toString("base64url");
@@ -29,7 +39,7 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
         reply.setCookie("gh_oauth_state", state, {
             httpOnly: true,
             sameSite: "lax",
-            secure: false, // true in prod (https)
+            secure: secureCookies,
             path: "/",
             maxAge: 10 * 60, // 10 minutes
         });
@@ -107,28 +117,26 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
         reply.setCookie("gh_access_token", accessToken, {
             httpOnly: true,
             sameSite: "lax",
-            secure: false, // true in prod (https)
+            secure: secureCookies,
             path: "/",
             maxAge: 7 * 24 * 60 * 60, // 7 days 
         });
 
         reply.setCookie("gh_user", JSON.stringify({ id: ghUser.id, login: ghUser.login }), {
-            httpOnly: false, // so frontend can show "Connected as ..."
+            httpOnly: true,
             sameSite: "lax",
-            secure: false,
+            secure: secureCookies,
             path: "/",
             maxAge: 7 * 24 * 60 * 60,
         });
 
         // Decode state
-        let returnTo = "/vitral/projects";
+        let returnTo = "/projects";
         try {
             const decoded = JSON.parse(
                 Buffer.from(state, "base64url").toString("utf8")
             );
-            if (typeof decoded.returnTo === "string") {
-                returnTo = decoded.returnTo;
-            }
+            returnTo = normalizeReturnToPath((decoded as { returnTo?: unknown }).returnTo);
         } catch {
             // fallback stays /projects
         }

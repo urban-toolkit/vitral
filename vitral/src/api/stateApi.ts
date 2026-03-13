@@ -224,7 +224,11 @@ export type QuerySystemPapersResponse = {
     results: QuerySystemPapersResult[];
 };
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
+const API_BASE = (() => {
+    const configured = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
+    if (configured) return configured;
+    return import.meta.env.DEV ? "http://localhost:3000" : "";
+})();
 
 function normalizeFileRecord(raw: unknown, fallbackDocId: string): fileRecord | null {
     if (!raw || typeof raw !== "object") return null;

@@ -4,7 +4,7 @@ services:
       context: ./vitral
       dockerfile: ./Dockerfile
       args:
-        VITE_BACKEND_URL: http://localhost:${PORT:-3000}
+        VITE_BACKEND_URL: ""
     environment:
       NODE_ENV: production
       PORT: ${PORT:-3000}
@@ -25,9 +25,10 @@ services:
       DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
-      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:9898/api/auth/github/callback}
       COOKIE_SECRET: ${COOKIE_SECRET}
-      FRONTEND_URL: ${FRONTEND_URL}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:9898}
       DOCLING_URL: ${DOCLING_URL}
       S3_REGION: ${S3_REGION}
       S3_ENDPOINT: ${S3_ENDPOINT}
@@ -37,8 +38,6 @@ services:
       S3_BUCKET: ${S3_BUCKET}
     expose:
       - "${PORT:-3000}"
-    ports:
-      - 127.0.0.1:${PORT:-3000}:${PORT:-3000}
     depends_on:
       - postgres
       - minio
@@ -65,7 +64,7 @@ services:
       DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
     depends_on:
       - postgres
-    command: node dist/db/migrate.js
+    command: sh -lc "node /app/dist/db/migrate.js || node /app/dist/src/db/migrate.js"
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"

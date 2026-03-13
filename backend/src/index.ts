@@ -15,10 +15,25 @@ import { doclingRoutes } from './routes/docling.js';
 
 const app = Fastify({ 
     logger: true,
-    bodyLimit: 20 * 1024 * 1024 // 10MB
+    bodyLimit: 20 * 1024 * 1024 // 20MB
  });
 
-await app.register(cors, { origin: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], credentials: true });
+const isProduction = process.env.NODE_ENV === "production";
+const frontendOrigin = (() => {
+    const raw = process.env.FRONTEND_URL;
+    if (!raw) return undefined;
+    try {
+        return new URL(raw).origin;
+    } catch {
+        return undefined;
+    }
+})();
+
+await app.register(cors, {
+    origin: isProduction ? (frontendOrigin ?? false) : true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true,
+});
 await app.register(dbPlugin);
 await app.register(s3Plugin);
 app.register(multipart, {

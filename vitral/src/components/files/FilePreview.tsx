@@ -18,7 +18,11 @@ import { FilePreviewCard } from "@/components/files/FilePreviewCard";
 import { LoadSpinner } from "@/components/project/LoadSpinner";
 import { getFileContent } from "@/api/stateApi";
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
+const API_BASE = (() => {
+    const configured = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
+    if (configured) return configured;
+    return import.meta.env.DEV ? "http://localhost:3000" : "";
+})();
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 

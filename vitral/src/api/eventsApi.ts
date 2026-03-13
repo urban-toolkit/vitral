@@ -1,6 +1,10 @@
 import type { GitHubEvent } from "@/config/types";
 
-const API_BASE = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
+const API_BASE = (() => {
+    const configured = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
+    if (configured) return configured;
+    return import.meta.env.DEV ? "http://localhost:3000" : "";
+})();
 
 export async function getGitHubEvents(
     projectId: string,

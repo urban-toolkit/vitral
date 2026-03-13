@@ -14,7 +14,11 @@ import type { filePendingUpload } from '@/config/types';
 import { readAsDataURL } from './FileParser';
 import { getGitHubContents, type GitHubContentItem } from '@/api/githubApi';
 
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL;
+const API_BASE_URL = (() => {
+    const configured = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
+    if (configured) return configured;
+    return import.meta.env.DEV ? "http://localhost:3000" : "";
+})();
 
 async function resizeAndCompressImageToJpeg(
     file: File,

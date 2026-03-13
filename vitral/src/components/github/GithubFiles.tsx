@@ -132,7 +132,9 @@ export const GitHubFiles = memo(function GitHubFiles({
                     <button
                         className={classes.linkButton}
                         onClick={() => {
-                            window.location.href = `${import.meta.env.VITE_BACKEND_URL}/api/auth/github/start?returnTo=/vitral/project/${encodeURIComponent(projectId)}`;
+                            const configuredApiBase = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
+                            const apiBase = configuredApiBase || (import.meta.env.DEV ? "http://localhost:3000" : "");
+                            window.location.href = `${apiBase}/api/auth/github/start?returnTo=/project/${encodeURIComponent(projectId)}`;
                         }}
                     >
                         Connect GitHub
