@@ -1,7 +1,7 @@
 import classes from './Toolbar.module.css'
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faSquare, faFont, faDiagramProject, faCircleNodes, faWandSparkles, faArrowPointer, faCircle } from '@fortawesome/free-solid-svg-icons'
+import { faSquare, faArrowPointer, faCircle } from '@fortawesome/free-solid-svg-icons'
 import type { CursorMode } from '@/pages/projectEditor/types';
 
 type ToolbarProps = {
@@ -21,6 +21,8 @@ export function Toolbar({
     activeMode,
     shifted,
 }: ToolbarProps) {
+    void onFreeInputClicked;
+
     const isActive = (mode: CursorMode) => activeMode === mode;
 
     return (

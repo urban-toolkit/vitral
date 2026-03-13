@@ -7,6 +7,10 @@ type BlueprintTooltipProps = {
 };
 
 export function BlueprintTooltip({ event }: BlueprintTooltipProps) {
+  const occurredAt = typeof event.occurredAt === "string"
+    ? event.occurredAt
+    : event.occurredAt.toISOString();
+
   return (
     <div className={classes.codeBaseTooltip}>
       <div className={classes.tooltipHeader}>
@@ -16,7 +20,7 @@ export function BlueprintTooltip({ event }: BlueprintTooltipProps) {
       </div>
 
       <p style={{ fontSize: "var(--font-size-xs)", color: "var(--subtitle-color)" }}>
-        {formatDate(event.occurredAt)}
+        {formatDate(occurredAt)}
       </p>
 
       {event.paperTitle ? (

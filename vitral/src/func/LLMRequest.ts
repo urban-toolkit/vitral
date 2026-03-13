@@ -75,7 +75,7 @@ async function resizeAndCompressImageToJpeg(
     }
 }
 
-function downloadDebugImage(file: File) {
+export function downloadDebugImage(file: File) {
     if (!(import.meta as any).env?.DEV) return;
 
     try {
@@ -589,7 +589,7 @@ export async function requestCardsLLMTextInput(userText: string): Promise<{ card
     }
 }
 
-function computeHorizontalTreeLayout(
+export function computeHorizontalTreeLayout(
     llmCards: llmCardData[],
     llmConnections: llmConnectionData[],
     anchor: { x: number; y: number }

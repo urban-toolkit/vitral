@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import path from "path"
 
 export default defineConfig({
-    base: "/vitral/",
+    base: process.env.VITE_BASE_PATH ?? "/",
     plugins: [react()],
     preview: {
     port: 5173,

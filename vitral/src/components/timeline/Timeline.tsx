@@ -443,7 +443,7 @@ export const Timeline = ({
 			dispatch(
 				updateDesignStudyEvent({
 					...eventToUpdate,
-					date: fromDate(eventToUpdate.date),
+					occurredAt: fromDate(eventToUpdate.date),
 					name: nextName,
 				})
 			);

@@ -763,7 +763,7 @@ export function useTimelineChart({
             .style("stroke-width", (row: any) => (row.isHighlighted ? 3 : null))
             .style("pointer-events", "none");
 
-        codebaseSubtrackGroups
+        const codebaseSubtrackLinkTargets = codebaseSubtrackGroups
             .append("rect")
             .attr("class", classes.codebaseSubtrackLinkTarget)
             .attr("x", timelineLeft)
@@ -773,7 +773,6 @@ export function useTimelineChart({
             .attr("data-timeline-interactive", pendingBlueprintLinkEventId ? "true" : null)
             .style("fill", pendingBlueprintLinkEventId ? "rgba(45, 125, 210, 0.10)" : "transparent")
             .style("stroke", pendingBlueprintLinkEventId ? "rgba(45, 125, 210, 0.45)" : "none")
-            .style("stroke-dasharray", pendingBlueprintLinkEventId ? "4 3" : null)
             .style("pointer-events", readOnly ? "none" : (pendingBlueprintLinkEventId ? "all" : "none"))
             .style("cursor", readOnly ? "default" : (pendingBlueprintLinkEventId ? "crosshair" : "default"))
             .on("click", (event: any, row: any) => {
@@ -783,6 +782,12 @@ export function useTimelineChart({
                 event.stopPropagation();
                 onCreateBlueprintCodebaseLink(pendingBlueprintLinkEventId, row.id);
             });
+
+        if (pendingBlueprintLinkEventId) {
+            codebaseSubtrackLinkTargets.style("stroke-dasharray", "4 3");
+        } else {
+            codebaseSubtrackLinkTargets.style("stroke-dasharray", null);
+        }
 
         codebaseSubtrackGroups
             .append("rect")
@@ -1703,8 +1708,8 @@ export function useTimelineChart({
                 );
             }
 
-            pillGroups.each(function eachPill(this: SVGGElement, pillData: any) {
-                const group = d3.select(this);
+            pillGroups.each(function eachPill(this: d3.BaseType, pillData: any) {
+                const group = d3.select(this as SVGGElement);
                 const events = Array.isArray(pillData.events) ? pillData.events : [];
                 if (events.length === 0) return;
                 const layout = knowledgePillLayoutFor(pillData);

@@ -302,7 +302,7 @@ export const timelineSlice = createSlice({
 
         // Design Study Events
         setDesignStudyEvents: (state, action: PayloadAction<DesignStudyEvent[]>) => {
-            let designStudyEvents = action.payload.map((designStudyEvent) => {
+            const designStudyEvents: DesignStudyEvent[] = action.payload.map((designStudyEvent): DesignStudyEvent => {
                 return {
                     ...designStudyEvent,
                     occurredAt: fromDate(designStudyEvent.occurredAt),

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { useNavigate, useParams } from "react-router-dom";
-import { ReactFlowProvider, useReactFlow, type Connection, type EdgeChange, type NodeChange, type NodeProps } from "@xyflow/react";
+import { ReactFlowProvider, useReactFlow, type Connection, type EdgeChange, type NodeChange, type NodeProps, type NodeTypes } from "@xyflow/react";
 
 import type { AppDispatch, RootState } from "@/store";
 import type {
@@ -1208,7 +1208,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return names;
     }, [participants]);
 
-    const nodeTypes = useMemo(() => ({
+    const nodeTypes = useMemo<NodeTypes>(() => ({
         card: (nodeProps: NodeProps) => {
             const cardProps = {
                 ...(nodeProps as unknown as CardProps),
@@ -1221,9 +1221,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
             return <Card {...cardProps} />;
         },
-        blueprint: BlueprintNode,
-        blueprintGroup: BlueprintGroupNode,
-        blueprintComponent: BlueprintComponentNode,
+        blueprint: BlueprintNode as unknown as NodeTypes[string],
+        blueprintGroup: BlueprintGroupNode as unknown as NodeTypes[string],
+        blueprintComponent: BlueprintComponentNode as unknown as NodeTypes[string],
     }), [onAttachFileForNode, onDetachFile, onDataPropertyChange, onDeleteNode, participantNames]);
 
     const edgeTypes = useMemo(() => ({
@@ -1361,7 +1361,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         highlightedKnowledgeNodeIdSet,
     ]);
 
-    const compactBlueprintNodes = useMemo(() => {
+    const compactBlueprintNodes = useMemo<nodeType[] | null>(() => {
         if (viewMode !== "blueprintComponents") return null;
 
         const absoluteById = resolveAbsoluteNodePositions(timelineContextNodes);
@@ -1447,7 +1447,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             rowMaxHeight = Math.max(rowMaxHeight, root.height);
         }
 
-        return visibleBlueprintNodes.map((node) => {
+        return visibleBlueprintNodes.map<nodeType>((node) => {
             const nodeLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
             const nodeData = node.data as Record<string, unknown>;
             const attachedCodebasePaths = Array.isArray(nodeData.codebaseFilePaths)
@@ -1458,38 +1458,30 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const isHoveredByFile = normalizedHoveredCodebasePath !== "" &&
                 attachedCodebasePaths.includes(normalizedHoveredCodebasePath);
             const isEmphasized = emphasizedBlueprintComponentIds.has(node.id) || isHoveredByFile;
-            const opacityStyle = nodeLabel === "blueprint_component"
-                ? { opacity: isEmphasized ? 1 : 0.5 }
-                : {};
+            const nextStyle: Record<string, string | number> = { ...(node.style ?? {}) };
+            if (nodeLabel === "blueprint_component") {
+                nextStyle.opacity = isEmphasized ? 1 : 0.5;
+            }
 
             const newRootAbsolute = newRootAbsolutePositions.get(node.id);
             if (!newRootAbsolute) {
                 return {
                     ...node,
-                    style: {
-                        ...(node.style ?? {}),
-                        ...opacityStyle,
-                    },
+                    style: nextStyle,
                 };
             }
 
             if (node.parentId && visibleById.has(node.parentId)) {
                 return {
                     ...node,
-                    style: {
-                        ...(node.style ?? {}),
-                        ...opacityStyle,
-                    },
+                    style: nextStyle,
                 };
             }
 
             return {
                 ...node,
                 position: newRootAbsolute,
-                style: {
-                    ...(node.style ?? {}),
-                    ...opacityStyle,
-                },
+                style: nextStyle,
             };
         });
     }, [timelineContextNodes, viewMode, emphasizedBlueprintComponentIds, normalizedHoveredCodebasePath]);
@@ -1501,7 +1493,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         ));
     }, [timelineContextEdges, filteredNodes]);
 
-    const featureViewNodes = useMemo(() => {
+    const featureViewNodes = useMemo<nodeType[] | null>(() => {
         if (viewMode !== "features") return null;
 
         const nodeById = new Map(timelineContextNodes.map((node) => [node.id, node]));
@@ -1602,7 +1594,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return timelineContextNodes.filter((node) => includedNodeIds.has(node.id));
     }, [viewMode, timelineContextNodes, timelineContextEdges]);
 
-    const evolutionBaseNodes = useMemo(() => {
+    const evolutionBaseNodes = useMemo<nodeType[]>(() => {
         if (viewMode === "blueprintComponents") {
             return compactBlueprintNodes ?? [];
         }
@@ -1616,7 +1608,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         });
     }, [viewMode, filteredNodes, compactBlueprintNodes, featureViewNodes]);
 
-    const displayedNodes = useMemo(() => {
+    const displayedNodes = useMemo<nodeType[]>(() => {
         if (viewMode === "evolution") {
             return buildEvolutionLayoutNodes(evolutionBaseNodes, filteredEdges);
         }

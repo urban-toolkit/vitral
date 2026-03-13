@@ -3,10 +3,11 @@ services:
     build:
       context: ./vitral
       dockerfile: ./Dockerfile
+      args:
+        VITE_BACKEND_URL: http://localhost:${PORT:-3000}
     environment:
       NODE_ENV: production
-      PORT: ${PORT}
-      VITE_BACKEND_URL: http://backend:${PORT}
+      PORT: ${PORT:-3000}
     ports:
       #- 127.0.0.1:9898:5173
       - 127.0.0.1:9898:80
@@ -19,7 +20,7 @@ services:
       dockerfile: ./Dockerfile
     environment:
       NODE_ENV: production
-      PORT: ${PORT}
+      PORT: ${PORT:-3000}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
@@ -35,7 +36,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
       S3_BUCKET: ${S3_BUCKET}
     expose:
-      - "${PORT}"
+      - "${PORT:-3000}"
+    ports:
+      - 127.0.0.1:${PORT:-3000}:${PORT:-3000}
     depends_on:
       - postgres
       - minio
@@ -62,8 +65,7 @@ services:
       DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
     depends_on:
       - postgres
-    command: npm run migrate
-    restart: unless-stopped
+    command: node dist/db/migrate.js
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -76,6 +78,11 @@ services:
     volumes:
       - minio_data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -87,7 +94,6 @@ services:
       mc mb -p local/vitral-files || true &&
       mc anonymous set none local/vitral-files || true
       "
-    restart: unless-stopped
   docling-serve:
     image: quay.io/docling-project/docling-serve:latest
     expose:

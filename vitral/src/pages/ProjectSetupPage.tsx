@@ -146,8 +146,8 @@ function normalizeSetup(source: unknown): SetupState {
         }))
         : initial.participants;
 
-    const milestones = Array.isArray(value.timeline?.milestones)
-        ? value.timeline.milestones.map((m) => ({
+    const milestones: MilestoneInput[] = Array.isArray(value.timeline?.milestones)
+        ? value.timeline.milestones.map((m): MilestoneInput => ({
             id: String((m as MilestoneInput).id || crypto.randomUUID()),
             name: String((m as MilestoneInput).name || "Milestone"),
             occurredAt: String((m as MilestoneInput).occurredAt || initial.timeline.expectedStart),
@@ -192,7 +192,7 @@ function toTimelinePayload(
         end: safeIso(stage.end, fallbackEndIso),
     }));
 
-    const designStudyEvents = setup.timeline.milestones.map((milestone, index) => ({
+    const designStudyEvents: DesignStudyEvent[] = setup.timeline.milestones.map((milestone, index): DesignStudyEvent => ({
         id: milestone.id || crypto.randomUUID(),
         name: milestone.name?.trim() || `Milestone ${index + 1}`,
         occurredAt: safeIso(milestone.occurredAt, fallbackStartIso),
@@ -258,8 +258,8 @@ function timelineToSetupTimeline(
     const expectedStart = toDateInputFromUnknown(timeline?.timelineStartEnd?.start, fallbackStart);
     const expectedEnd = toDateInputFromUnknown(timeline?.timelineStartEnd?.end, fallbackEnd);
 
-    const milestones = Array.isArray(timeline?.designStudyEvents) && timeline.designStudyEvents.length > 0
-        ? timeline.designStudyEvents.map((event, index) => ({
+    const milestones: MilestoneInput[] = Array.isArray(timeline?.designStudyEvents) && timeline.designStudyEvents.length > 0
+        ? timeline.designStudyEvents.map((event, index): MilestoneInput => ({
             id: event.id || crypto.randomUUID(),
             name: event.name || `Milestone ${index + 1}`,
             occurredAt: toDateInputFromUnknown(event.occurredAt, expectedStart),
@@ -325,7 +325,7 @@ function buildGoalMilestonesContext(setup: SetupState) {
 }
 
 function milestoneInputsFromEvents(events: DesignStudyEvent[], fallbackDate: string): MilestoneInput[] {
-    return events.map((event, index) => ({
+    return events.map((event, index): MilestoneInput => ({
         id: event.id || crypto.randomUUID(),
         name: event.name?.trim() || `Milestone ${index + 1}`,
         occurredAt: toDateInputFromUnknown(event.occurredAt, fallbackDate),

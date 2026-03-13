@@ -3,9 +3,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 import type {
     BlueprintData,
-    BlueprintHighBlock,
     BlueprintIntermediate,
-    BlueprintComponent,
     nodeType,
 } from "@/config/types";
 import classes from "./BlueprintNode.module.css";

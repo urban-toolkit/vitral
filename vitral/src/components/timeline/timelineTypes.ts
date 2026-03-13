@@ -1,13 +1,10 @@
 import type {
-  BlueprintCodebaseLink,
   BlueprintEvent,
-  CodebaseSubtrack,
   DesignStudyEvent,
   GitHubEvent,
   LaneType,
   Stage,
   SubStage,
-  SystemScreenshotMarker,
 } from "@/config/types";
 
 export type {
