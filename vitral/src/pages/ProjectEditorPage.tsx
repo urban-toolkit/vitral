@@ -1296,8 +1296,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const isKnowledgeHighlighted = isCardNode && highlightedKnowledgeNodeIdSet.has(node.id);
             const knowledgeHighlightStyle = isKnowledgeHighlighted
                 ? {
-                    boxShadow: "0 0 0 3px rgba(231, 127, 35, 0.9)",
-                    borderRadius: 18,
+                    outline: "3px solid #5bbad6", 
+                    outlineOffset: "2px",
+                    borderRadius: "10px"
                 }
                 : null;
             if (nodeLabel === "blueprint_component") {
