@@ -136,7 +136,7 @@ export const GitHubFiles = memo(function GitHubFiles({
                             const apiBase = resolveApiBaseUrl();
                             const appBasePath = resolveAppBasePath();
                             const returnToPath = `${appBasePath}/project/${encodeURIComponent(projectId)}`;
-                            window.location.href = `${apiBase}/api/auth/github/start?returnTo=${encodeURIComponent(returnToPath)}`;
+                            window.location.href = `${apiBase}/auth/github/start?returnTo=${encodeURIComponent(returnToPath)}`;
                         }}
                     >
                         Connect GitHub

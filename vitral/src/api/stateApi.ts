@@ -280,7 +280,7 @@ export async function createDocument(
     state: FlowStatePayload,
     description?: string
 ): Promise<DocumentResponse> {
-    const res = await fetch(`${API_BASE}/api/state`, {
+    const res = await fetch(`${API_BASE}/state`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, state, description }),
@@ -294,7 +294,7 @@ export async function createDocument(
 }
 
 export async function loadDocument(docId: string): Promise<DocumentResponse> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}`);
+    const res = await fetch(`${API_BASE}/state/${docId}`);
 
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
@@ -304,7 +304,7 @@ export async function loadDocument(docId: string): Promise<DocumentResponse> {
 }
 
 export async function loadDocuments(): Promise<DocumentResponse[]> {
-    const res = await fetch(`${API_BASE}/api/state`);
+    const res = await fetch(`${API_BASE}/state`);
 
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
@@ -314,7 +314,7 @@ export async function loadDocuments(): Promise<DocumentResponse[]> {
 }
 
 export async function exportProjectVi(docId: string): Promise<Blob> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/export-vi`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/export-vi`, {
         method: "GET",
     });
 
@@ -330,7 +330,7 @@ export async function importProjectVi(file: File): Promise<DocumentResponse> {
     const fd = new FormData();
     fd.append("file", file);
 
-    const res = await fetch(`${API_BASE}/api/state/import-vi`, {
+    const res = await fetch(`${API_BASE}/state/import-vi`, {
         method: "POST",
         body: fd,
     });
@@ -344,7 +344,7 @@ export async function importProjectVi(file: File): Promise<DocumentResponse> {
 }
 
 export async function loadLiteratureSetupTemplates(): Promise<LiteratureSetupTemplate[]> {
-    const res = await fetch(`${API_BASE}/api/setup-templates/literature`);
+    const res = await fetch(`${API_BASE}/setup-templates/literature`);
 
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
@@ -358,7 +358,7 @@ export async function queryDocumentNodes(
     docId: string,
     payload: QueryDocumentNodesRequest,
 ): Promise<QueryDocumentNodesResponse> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/query-nodes`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/query-nodes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -375,7 +375,7 @@ export async function queryDocumentNodes(
 export async function querySystemPapers(
     payload: QuerySystemPapersRequest,
 ): Promise<QuerySystemPapersResponse> {
-    const res = await fetch(`${API_BASE}/api/system-papers/query`, {
+    const res = await fetch(`${API_BASE}/system-papers/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -395,7 +395,7 @@ export async function saveDocument(
     timeline: TimelineStatePayload,
     title?: string
 ): Promise<DocumentResponse> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}`, {
+    const res = await fetch(`${API_BASE}/state/${docId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, state, timeline }),
@@ -413,7 +413,7 @@ export async function appendDocumentRevisionSnapshot(
     state: FlowStatePayload,
     timeline: TimelineStatePayload,
 ): Promise<void> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/revision`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/revision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state, timeline }),
@@ -426,7 +426,7 @@ export async function appendDocumentRevisionSnapshot(
 }
 
 export async function deleteDocument(docId: string) {
-    const res = await fetch(`${API_BASE}/api/state/${docId}`, {
+    const res = await fetch(`${API_BASE}/state/${docId}`, {
         method: "DELETE",
     });
 
@@ -436,7 +436,7 @@ export async function deleteDocument(docId: string) {
 }
 
 export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string | null }) {
-    const res = await fetch(`${API_BASE}/api/state/${docId}`, {
+    const res = await fetch(`${API_BASE}/state/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -457,7 +457,7 @@ export async function createFile(docId: string, pending: filePendingUpload): Pro
     fd.append("mimeType", pending.mimeType);
     fd.append("file", pending.file); // binary
 
-    const res = await fetch(`${API_BASE}/api/state/${docId}/files`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/files`, {
         method: "POST",
         body: fd,
     });
@@ -470,7 +470,7 @@ export async function createFile(docId: string, pending: filePendingUpload): Pro
 }
 
 export async function listFiles(docId: string): Promise<{ files: fileRecord[] }> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/files`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/files`, {
         method: "GET",
         credentials: "include",
     });
@@ -493,7 +493,7 @@ export async function queryCanvasChat(
     docId: string,
     payload: QueryCanvasChatRequest,
 ): Promise<QueryCanvasChatResponse> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/query-chat`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/query-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -512,7 +512,7 @@ export async function loadDocumentStateAt(
     at: string,
 ): Promise<DocumentStateAtResponse> {
     const query = encodeURIComponent(at);
-    const res = await fetch(`${API_BASE}/api/state/${docId}/state-at?at=${query}`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/state-at?at=${query}`, {
         method: "GET",
     });
 
@@ -529,7 +529,7 @@ export async function loadKnowledgeProvenance(
     at: string,
 ): Promise<KnowledgeProvenanceResponse> {
     const query = encodeURIComponent(at);
-    const res = await fetch(`${API_BASE}/api/state/${docId}/knowledge/provenance?at=${query}`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/knowledge/provenance?at=${query}`, {
         method: "GET",
     });
 
@@ -545,7 +545,7 @@ export async function compareCardsSimilarity(
     docId: string,
     payload: CompareCardsSimilarityRequest,
 ): Promise<CompareCardsSimilarityResponse> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/cards/similarity`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/cards/similarity`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -560,7 +560,7 @@ export async function compareCardsSimilarity(
 }
 
 export async function deleteFile(docId: string, fileId: string): Promise<void> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/files/${fileId}`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/files/${fileId}`, {
         method: "DELETE",
         credentials: "include",
     });
@@ -573,7 +573,7 @@ export async function deleteFile(docId: string, fileId: string): Promise<void> {
 
 // Only text
 export async function getFileContent(docId: string, fileId: string): Promise<fileRecord & {content: string}> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/files/${fileId}/content`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/files/${fileId}/content`, {
         method: "GET",
         credentials: "include",
     });

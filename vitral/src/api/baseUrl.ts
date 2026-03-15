@@ -1,12 +1,13 @@
-function trimTrailingSlash(value: string): string {
-    return value.replace(/\/+$/, "");
+export function normalizePathPrefix(path: string): string {
+    if (!path) return "/";
+    let normalized = path.trim();
+    if (!normalized.startsWith("/")) normalized = `/${normalized}`;
+    if (!normalized.endsWith("/")) normalized = `${normalized}/`;
+    return normalized.replace(/\/+/g, "/");
 }
 
-function normalizePathPrefix(value: string): string {
-    const trimmed = value.trim();
-    if (!trimmed || trimmed === "/") return "";
-    const normalized = trimmed.replace(/^\/+|\/+$/g, "");
-    return normalized ? `/${normalized}` : "";
+export function trimTrailingSlash(value: string): string {
+    return value.replace(/\/+$/, "");
 }
 
 export function resolveAppBasePath(): string {
@@ -15,13 +16,18 @@ export function resolveAppBasePath(): string {
 
 export function resolveApiBaseUrl(): string {
     const configured = import.meta.env.VITE_BACKEND_URL;
-    if (typeof configured === "string") {
+
+    if (typeof configured === "string" && configured.trim() !== "") {
         return trimTrailingSlash(configured.trim());
     }
 
+    const appBasePath = resolveAppBasePath();
+
+    // In dev this becomes "/api"
     if (import.meta.env.DEV) {
-        return "http://localhost:3000";
+        return "/api";
     }
 
-    return resolveAppBasePath();
+    // In prod with BASE_URL="/vitral/" this becomes "/vitral/api"
+    return trimTrailingSlash(`${appBasePath}api`);
 }

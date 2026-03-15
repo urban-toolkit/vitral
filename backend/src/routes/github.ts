@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from "fastify";
 import crypto from "node:crypto";
+import { getFrontendUrl } from "../utils/urlResolution.js";
 
 type TokenResponse =
     | { access_token: string; token_type: string; scope: string }
@@ -7,7 +8,7 @@ type TokenResponse =
 
 type GhRepo = {
     name: string;
-    full_name: string;         
+    full_name: string;
     private: boolean;
     owner: { login: string };
     default_branch: string;
@@ -26,7 +27,6 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
     };
 
     app.get("/start", async (request, reply) => {
-
         const { returnTo } = request.query as { returnTo?: string };
 
         const statePayload = {
@@ -41,14 +41,20 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
             sameSite: "lax",
             secure: secureCookies,
             path: "/",
-            maxAge: 10 * 60, // 10 minutes
+            maxAge: 10 * 60,
         });
+
+        const origin = `${request.protocol}://${request.host}`;
+        const redirectUri = new URL(
+            process.env.GITHUB_CALLBACK_PATH!,
+            `${origin}/`
+        ).toString();
 
         const params = new URLSearchParams({
             client_id: process.env.GITHUB_CLIENT_ID!,
-            redirect_uri: process.env.GITHUB_CALLBACK_URL!,
+            redirect_uri: redirectUri,
             scope: "read:user user:email repo",
-            state
+            state,
         });
 
         reply.redirect(`https://github.com/login/oauth/authorize?${params.toString()}`);
@@ -68,6 +74,14 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
         // Clear one-time state cookie
         reply.clearCookie("gh_oauth_state", { path: "/" });
 
+        // Build redirect URI dynamically
+        const origin = `${request.protocol}://${request.host}`;
+
+        const redirectUri = new URL(
+            process.env.GITHUB_CALLBACK_PATH!,
+            `${origin}/`
+        ).toString();
+
         // Exchange code for access token
         const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
             method: "POST",
@@ -79,7 +93,7 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
                 client_id: process.env.GITHUB_CLIENT_ID!,
                 client_secret: process.env.GITHUB_CLIENT_SECRET!,
                 code,
-                redirect_uri: process.env.GITHUB_CALLBACK_URL!,
+                redirect_uri: redirectUri,
             }),
         });
 
@@ -141,8 +155,9 @@ export const githubRoutes: FastifyPluginAsync = async (app) => {
             // fallback stays /projects
         }
 
-        const frontend = process.env.FRONTEND_URL ?? "http://localhost:5173";
-        reply.redirect(`${frontend}${returnTo}?github=connected`);
+        // const frontend = process.env.FRONTEND_URL ?? "http://localhost:5173";
+        // reply.redirect(`${frontend}${returnTo}?github=connected`);
+        reply.redirect(getFrontendUrl(request, normalizeReturnToPath(returnTo)));
     });
 
     app.get("/status", async (request, reply) => {

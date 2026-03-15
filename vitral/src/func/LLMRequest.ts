@@ -277,7 +277,7 @@ export async function docLingFileParse(fileData: filePendingUpload, ext: fileExt
     formData.append("file", fileData.file);
     formData.append("from_formats", JSON.stringify([ext]));
 
-    const response = await fetch(API_BASE_URL + "/api/docling/convert/file", {
+    const response = await fetch(API_BASE_URL + "/docling/convert/file", {
         method: "POST",
         body: formData,
     });
@@ -499,7 +499,7 @@ export async function requestCardsLLM(
         code: "CardsFromCode",
     }, projectSettings);
 
-    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -540,7 +540,7 @@ export async function requestArtifactLLM(
         code: "ArtifactFromCode",
     }, projectSettings);
 
-    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -559,7 +559,7 @@ export async function requestArtifactLLM(
 
 export async function requestCardsLLMTextInput(userText: string): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
 
-    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -872,7 +872,7 @@ function normalizeMilestonesOutput(rawOutput: string, fallbackIso: string): Desi
 }
 
 async function requestMilestonesByPrompt(prompt: string, payload: unknown, fallbackIso: string): Promise<DesignStudyEvent[]> {
-    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -921,7 +921,7 @@ export async function requestMarkdownReportSectionLLM(
     prompt: string,
     payload: unknown
 ): Promise<string> {
-    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -1141,7 +1141,7 @@ export async function requestCodebaseSubtrackFilesLLM(
         repositoryTreeTruncated: repoTree.truncated,
     };
 
-    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -1355,7 +1355,7 @@ export async function requestSystemScreenshotZonesLLM(
         repositoryTreeTruncated: repoTree.truncated,
     };
 
-    const response = await fetch(API_BASE_URL + "/api/llm/chat", {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",

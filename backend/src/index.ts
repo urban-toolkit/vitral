@@ -18,22 +18,50 @@ const app = Fastify({
     bodyLimit: 20 * 1024 * 1024 // 20MB
  });
 
+const allowedOrigins = new Set([
+  "http://localhost:5173",
+  "http://localhost:9898",
+  "http://localhost:3000",
+  "https://arcade.evl.uic.edu",
+]);
+
 const isProduction = process.env.NODE_ENV === "production";
-const frontendOrigin = (() => {
-    const raw = process.env.FRONTEND_URL;
-    if (!raw) return undefined;
-    try {
-        return new URL(raw).origin;
-    } catch {
-        return undefined;
-    }
-})();
+
+// const frontendOrigin = (() => {
+//     const raw = process.env.FRONTEND_URL;
+//     if (!raw) return undefined;
+//     try {
+//         return new URL(raw).origin;
+//     } catch {
+//         return undefined;
+//     }
+// })();
+
+// await app.register(cors, {
+//     origin: isProduction ? (frontendOrigin ?? false) : true,
+//     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+//     credentials: true,
+// });
 
 await app.register(cors, {
-    origin: isProduction ? (frontendOrigin ?? false) : true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    credentials: true,
+  origin: (origin, cb) => {
+    // non-browser or same-origin requests may have no Origin header
+    if (!origin) {
+      cb(null, true);
+      return;
+    }
+
+    if (!isProduction) {
+      cb(null, true);
+      return;
+    }
+
+    cb(null, allowedOrigins.has(origin));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  credentials: true,
 });
+
 await app.register(dbPlugin);
 await app.register(s3Plugin);
 app.register(multipart, {
@@ -58,7 +86,7 @@ app.get("/api/db-health", async () => {
     return { ok: rows[0].ok };
 });
 
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.BACKEND_PORT ?? 3000);
 
 app.listen({ port, host: "0.0.0.0" }, (err) => {
     if (err) app.log.error(err);
