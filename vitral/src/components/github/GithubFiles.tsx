@@ -13,6 +13,7 @@ import {
     type GitHubDocumentResponse,
     type GitHubRepo,
 } from "@/api/githubApi";
+import { resolveApiBaseUrl, resolveAppBasePath } from "@/api/baseUrl";
 import { GitRepoModal } from "@/components/github/GitRepoModal";
 import {
     selectHighlightedCodebaseFilePaths,
@@ -132,9 +133,10 @@ export const GitHubFiles = memo(function GitHubFiles({
                     <button
                         className={classes.linkButton}
                         onClick={() => {
-                            const configuredApiBase = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
-                            const apiBase = configuredApiBase || (import.meta.env.DEV ? "http://localhost:3000" : "");
-                            window.location.href = `${apiBase}/api/auth/github/start?returnTo=/project/${encodeURIComponent(projectId)}`;
+                            const apiBase = resolveApiBaseUrl();
+                            const appBasePath = resolveAppBasePath();
+                            const returnToPath = `${appBasePath}/project/${encodeURIComponent(projectId)}`;
+                            window.location.href = `${apiBase}/api/auth/github/start?returnTo=${encodeURIComponent(returnToPath)}`;
                         }}
                     >
                         Connect GitHub

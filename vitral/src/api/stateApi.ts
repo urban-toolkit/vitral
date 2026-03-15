@@ -1,4 +1,5 @@
 import type { filePendingUpload, fileRecord, TimelineStatePayload } from "@/config/types";
+import { resolveApiBaseUrl } from "@/api/baseUrl";
 
 export type FlowStatePayload = {
     flow: {
@@ -224,11 +225,7 @@ export type QuerySystemPapersResponse = {
     results: QuerySystemPapersResult[];
 };
 
-const API_BASE = (() => {
-    const configured = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
-    if (configured) return configured;
-    return import.meta.env.DEV ? "http://localhost:3000" : "";
-})();
+const API_BASE = resolveApiBaseUrl();
 
 function normalizeFileRecord(raw: unknown, fallbackDocId: string): fileRecord | null {
     if (!raw || typeof raw !== "object") return null;

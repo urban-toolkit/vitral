@@ -1,8 +1,6 @@
-const API_BASE = (() => {
-    const configured = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
-    if (configured) return configured;
-    return import.meta.env.DEV ? "http://localhost:3000" : "";
-})();
+import { resolveApiBaseUrl } from "@/api/baseUrl";
+
+const API_BASE = resolveApiBaseUrl();
 
 export type GitHubDocumentResponse = {
     github_owner?: string,

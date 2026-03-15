@@ -4,7 +4,8 @@ services:
       context: ./vitral
       dockerfile: ./Dockerfile
       args:
-        VITE_BACKEND_URL: ""
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-}
+        VITE_BASE_PATH: ${VITE_BASE_PATH:-/}
     environment:
       NODE_ENV: production
       PORT: ${PORT:-3000}
