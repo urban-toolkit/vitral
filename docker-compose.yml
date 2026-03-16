@@ -31,10 +31,8 @@ services:
     restart: unless-stopped
   postgres:
     image: pgvector/pgvector:pg18
-    environment:
-      POSTGRES_USER: vitral
-      POSTGRES_PASSWORD: vitral
-      POSTGRES_DB: vitral
+    env_file:
+      - .env
     expose:
       - "5432"
     volumes:
@@ -45,17 +43,16 @@ services:
     build:
       context: ./backend
       dockerfile: ./Dockerfile
-    environment:
-      DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
+    env_file:
+      - .env
     depends_on:
       - postgres
     command: sh -lc "node /app/dist/db/migrate.js || node /app/dist/src/db/migrate.js"
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: vitralminio
-      MINIO_ROOT_PASSWORD: vitralminio
+    env_file:
+      - .env
     expose:
       - "9000" # S3 API
       - "9001" # Web console
@@ -69,12 +66,14 @@ services:
       retries: 20
   minio-init:
     image: minio/mc:latest
+    env_file:
+      - .env
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 vitralminio vitralminio &&
+      mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
       mc mb -p local/vitral-files || true &&
       mc anonymous set none local/vitral-files || true
       "
