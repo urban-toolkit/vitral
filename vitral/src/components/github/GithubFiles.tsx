@@ -13,7 +13,8 @@ import {
     type GitHubDocumentResponse,
     type GitHubRepo,
 } from "@/api/githubApi";
-import { resolveApiBaseUrl, resolveAppBasePath } from "@/api/baseUrl";
+// import { resolveApiBaseUrl, resolveAppBasePath } from "@/api/baseUrl";
+import { resolveApiBaseUrl } from "@/api/baseUrl";
 import { GitRepoModal } from "@/components/github/GitRepoModal";
 import {
     selectHighlightedCodebaseFilePaths,
@@ -134,8 +135,8 @@ export const GitHubFiles = memo(function GitHubFiles({
                         className={classes.linkButton}
                         onClick={() => {
                             const apiBase = resolveApiBaseUrl();
-                            const appBasePath = resolveAppBasePath();
-                            const returnToPath = `${appBasePath}/project/${encodeURIComponent(projectId)}`;
+                            // const appBasePath = resolveAppBasePath();
+                            const returnToPath = `/project/${encodeURIComponent(projectId)}`;
                             window.location.href = `${apiBase}/auth/github/start?returnTo=${encodeURIComponent(returnToPath)}`;
                         }}
                     >
