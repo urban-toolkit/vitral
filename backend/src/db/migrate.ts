@@ -3,6 +3,61 @@ import path from "node:path";
 import pg from "pg";
 
 const MIGRATIONS_DIR = path.resolve("db/migrations");
+const DEFAULT_CONNECT_RETRIES = 30;
+const DEFAULT_CONNECT_RETRY_DELAY_MS = 1000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readPositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function isRetryableConnectionError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const code = (err as { code?: unknown }).code;
+  return (
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT" ||
+    code === "ENOTFOUND" ||
+    code === "EHOSTUNREACH" ||
+    code === "57P03"
+  );
+}
+
+async function connectWithRetry(
+  pool: pg.Pool,
+  maxAttempts: number,
+  delayMs: number
+): Promise<pg.PoolClient> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await pool.connect();
+    } catch (err) {
+      lastError = err;
+      if (!isRetryableConnectionError(err) || attempt === maxAttempts) {
+        throw err;
+      }
+
+      const code = typeof err === "object" && err !== null
+        ? String((err as { code?: unknown }).code ?? "unknown")
+        : "unknown";
+      console.warn(
+        `Database not ready yet (attempt ${attempt}/${maxAttempts}, code=${code}). Retrying in ${delayMs}ms...`
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Failed to connect to database");
+}
 
 async function ensureMigrationsTable(client: pg.PoolClient) {
   await client.query(`
@@ -59,8 +114,17 @@ async function main() {
     throw new Error("Missing DATABASE_URL");
   }
 
+  const maxAttempts = readPositiveInt(
+    process.env.MIGRATE_CONNECT_RETRIES,
+    DEFAULT_CONNECT_RETRIES
+  );
+  const delayMs = readPositiveInt(
+    process.env.MIGRATE_CONNECT_RETRY_DELAY_MS,
+    DEFAULT_CONNECT_RETRY_DELAY_MS
+  );
+
   const pool = new pg.Pool({ connectionString });
-  const client = await pool.connect();
+  const client = await connectWithRetry(pool, maxAttempts, delayMs);
 
   try {
     console.log("Running migrations…");

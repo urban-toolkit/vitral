@@ -9,7 +9,7 @@ services:
       - ./vitral/.env.development
       - .env.common
     ports:
-      - "5173"
+      - 5173:5173
     develop:
       watch:
         - action: sync
@@ -29,7 +29,7 @@ services:
       - .env.common
       - .env
     ports:
-      - "3000"
+      - 3000:3000
     depends_on:
       - postgres
       - minio
@@ -50,9 +50,9 @@ services:
     env_file:
       - .env
     ports:
-      - "5432"
+      - 5432:5432
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
       - ./backend/db/init:/docker-entrypoint-initdb.d:ro
   migrate:
     build:
@@ -81,6 +81,8 @@ services:
       retries: 20
   minio-init:
     image: minio/mc:latest
+    env_file:
+      - .env
     depends_on:
       minio:
         condition: service_healthy

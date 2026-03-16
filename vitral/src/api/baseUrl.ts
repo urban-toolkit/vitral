@@ -23,8 +23,7 @@ export function resolveApiBaseUrl(): string {
 
     const appBasePath = resolveAppBasePath();
 
-    // In dev this becomes "/api"
-    if (import.meta.env.DEV) {
+    if (import.meta.env.NODE_ENV == "development") {
         return "/api";
     }
 
