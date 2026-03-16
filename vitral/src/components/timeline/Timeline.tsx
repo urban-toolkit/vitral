@@ -6,10 +6,11 @@ import type {
 	BlueprintEvent,
 	DesignStudyEvent,
 	GitHubEvent,
+	SystemScreenshotMarker,
 	Stage,
 } from "@/config/types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faArrowsRotate, faCaretDown, faPlus, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
+import { faArrowsRotate, faCaretDown, faImages, faPlus, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
 import { StagePicker } from "@/components/timeline/StagePicker";
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -54,7 +55,7 @@ import type {
 	TimelineProps,
 	KnowledgeBaseEvent,
 } from "./timelineTypes";
-import { fromDate } from "./timelineUtils";
+import { formatDate, fromDate } from "./timelineUtils";
 import { useParsedTimelineData } from "./useParsedTimelineData";
 import { useTimelineChart } from "./useTimelineChart";
 
@@ -67,6 +68,118 @@ export type {
 	TimelineEventBase,
 	TimelineProps,
 } from "./timelineTypes";
+
+type VisualEvolutionPanelState = {
+	kind: "codebase" | "codebaseSubtrack";
+	subtrackId?: string;
+} | null;
+
+type ScreenshotCropPreview = {
+	markerId: string;
+	occurredAt: string;
+	imageDataUrl: string;
+	imageWidth: number;
+	imageHeight: number;
+	cropX: number;
+	cropY: number;
+	cropWidth: number;
+	cropHeight: number;
+	scale: number;
+	displayWidth: number;
+	displayHeight: number;
+};
+
+const normalizeCodebasePath = (value: string) =>
+	value.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+
+const toTimestamp = (value: string): number => {
+	const parsed = new Date(value);
+	const time = parsed.getTime();
+	return Number.isNaN(time) ? 0 : time;
+};
+
+const clamp = (value: number, min: number, max: number) =>
+	Math.max(min, Math.min(max, value));
+
+const VISUAL_EVOLUTION_EMPTY_TEXT = "Upload screenshots of your system to see its evolution here";
+
+function buildSubtrackScreenshotCrops(
+	markers: SystemScreenshotMarker[],
+	filePaths: string[]
+): ScreenshotCropPreview[] {
+	const trackedPathSet = new Set(
+		filePaths
+			.filter((path): path is string => typeof path === "string")
+			.map(normalizeCodebasePath)
+			.filter(Boolean)
+	);
+	if (trackedPathSet.size === 0) return [];
+
+	const previews: ScreenshotCropPreview[] = [];
+	const previewMaxWidth = 220;
+	const previewMaxHeight = 140;
+	const cropPadding = 10;
+
+	for (const marker of markers) {
+		const imageDataUrl = String(marker.imageDataUrl ?? "").trim();
+		const imageWidth = Number(marker.imageWidth ?? 0);
+		const imageHeight = Number(marker.imageHeight ?? 0);
+		if (!imageDataUrl || imageWidth <= 0 || imageHeight <= 0) continue;
+		if (!Array.isArray(marker.zones) || marker.zones.length === 0) continue;
+
+		const matchedZones = marker.zones.filter((zone) =>
+			Array.isArray(zone.filePaths) &&
+			zone.filePaths.some((path) => trackedPathSet.has(normalizeCodebasePath(path)))
+		);
+		if (matchedZones.length === 0) continue;
+
+		let minX = Number.POSITIVE_INFINITY;
+		let minY = Number.POSITIVE_INFINITY;
+		let maxX = Number.NEGATIVE_INFINITY;
+		let maxY = Number.NEGATIVE_INFINITY;
+
+		for (const zone of matchedZones) {
+			const zoneX = clamp(Number(zone.x ?? 0), 0, imageWidth);
+			const zoneY = clamp(Number(zone.y ?? 0), 0, imageHeight);
+			const zoneWidth = clamp(Number(zone.width ?? 0), 0, imageWidth - zoneX);
+			const zoneHeight = clamp(Number(zone.height ?? 0), 0, imageHeight - zoneY);
+			if (zoneWidth <= 0 || zoneHeight <= 0) continue;
+			minX = Math.min(minX, zoneX);
+			minY = Math.min(minY, zoneY);
+			maxX = Math.max(maxX, zoneX + zoneWidth);
+			maxY = Math.max(maxY, zoneY + zoneHeight);
+		}
+
+		if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+			continue;
+		}
+
+		const cropX = clamp(minX - cropPadding, 0, imageWidth);
+		const cropY = clamp(minY - cropPadding, 0, imageHeight);
+		const cropWidth = clamp((maxX - minX) + cropPadding * 2, 1, imageWidth - cropX);
+		const cropHeight = clamp((maxY - minY) + cropPadding * 2, 1, imageHeight - cropY);
+
+		const scale = Math.min(previewMaxWidth / cropWidth, previewMaxHeight / cropHeight);
+		if (!Number.isFinite(scale) || scale <= 0) continue;
+
+		previews.push({
+			markerId: marker.id,
+			occurredAt: marker.occurredAt,
+			imageDataUrl,
+			imageWidth,
+			imageHeight,
+			cropX,
+			cropY,
+			cropWidth,
+			cropHeight,
+			scale,
+			displayWidth: Math.max(48, Math.round(cropWidth * scale)),
+			displayHeight: Math.max(48, Math.round(cropHeight * scale)),
+		});
+	}
+
+	return previews;
+}
 
 export const Timeline = ({
 	projectId,
@@ -113,6 +226,7 @@ export const Timeline = ({
 		x: number;
 		y: number;
 	} | null>(null);
+	const [visualEvolutionPanel, setVisualEvolutionPanel] = useState<VisualEvolutionPanelState>(null);
 	const [hoveredScreenshotZoneId, setHoveredScreenshotZoneId] = useState<string | null>(null);
 	const [blueprintLinkMenu, setBlueprintLinkMenu] = useState<{
 		x: number;
@@ -157,6 +271,7 @@ export const Timeline = ({
 	const newStageButtonRef = useRef<HTMLSpanElement | null>(null);
 	const newKnowledgeSubtrackButtonRef = useRef<HTMLSpanElement | null>(null);
 	const newCodebaseSubtrackButtonRef = useRef<HTMLSpanElement | null>(null);
+	const codebaseVisualButtonRef = useRef<HTMLSpanElement | null>(null);
 	const syncCodebaseButtonRef = useRef<HTMLSpanElement | null>(null);
 	const llmButtonRef = useRef<HTMLSpanElement | null>(null);
 	const [isSyncingCodebase, setIsSyncingCodebase] = useState(false);
@@ -184,6 +299,35 @@ export const Timeline = ({
 		() => systemScreenshotTooltipMarker?.zones?.find((zone) => zone.id === hoveredScreenshotZoneId) ?? null,
 		[hoveredScreenshotZoneId, systemScreenshotTooltipMarker]
 	);
+	const orderedScreenshotMarkers = useMemo(
+		() => [...systemScreenshotMarkers].sort((a, b) => toTimestamp(a.occurredAt) - toTimestamp(b.occurredAt)),
+		[systemScreenshotMarkers]
+	);
+	const codebaseVisualScreenshots = useMemo(
+		() => orderedScreenshotMarkers.filter((marker) => String(marker.imageDataUrl ?? "").trim() !== ""),
+		[orderedScreenshotMarkers]
+	);
+	const visualEvolutionSubtrack = useMemo(() => {
+		if (!visualEvolutionPanel || visualEvolutionPanel.kind !== "codebaseSubtrack") return null;
+		const subtrackId = visualEvolutionPanel.subtrackId;
+		if (!subtrackId) return null;
+		return codebaseSubtracks.find((subtrack) => subtrack.id === subtrackId) ?? null;
+	}, [codebaseSubtracks, visualEvolutionPanel]);
+	const visualEvolutionSubtrackCrops = useMemo(() => {
+		if (!visualEvolutionSubtrack) return [];
+		return buildSubtrackScreenshotCrops(
+			orderedScreenshotMarkers,
+			Array.isArray(visualEvolutionSubtrack.filePaths) ? visualEvolutionSubtrack.filePaths : []
+		);
+	}, [orderedScreenshotMarkers, visualEvolutionSubtrack]);
+
+	useEffect(() => {
+		if (!visualEvolutionPanel) return;
+		if (visualEvolutionPanel.kind !== "codebaseSubtrack") return;
+		if (visualEvolutionSubtrack) return;
+		setVisualEvolutionPanel(null);
+	}, [visualEvolutionSubtrack, visualEvolutionPanel]);
+
 	const knowledgeTreeNodeIdsByTreeId = useMemo(() => {
 		const map = new Map<string, string[]>();
 		for (const pill of knowledgeTreePills) {
@@ -232,6 +376,7 @@ export const Timeline = ({
 			setPendingBlueprintLinkEventId(null);
 			setHoveredKnowledgeTreeId(null);
 			setSystemScreenshotTooltip(null);
+			setVisualEvolutionPanel(null);
 			setHoveredScreenshotZoneId(null);
 			dispatch(setHighlightedCodebaseFilePaths([]));
 		};
@@ -295,6 +440,7 @@ export const Timeline = ({
 		newStageButtonRef,
 		newKnowledgeSubtrackButtonRef,
 		newCodebaseSubtrackButtonRef,
+		codebaseVisualButtonRef,
 		syncCodebaseButtonRef,
 		llmButtonRef,
 		width,
@@ -372,6 +518,22 @@ export const Timeline = ({
 		onSuggestCodebaseSubtrackFiles: (subtrackId) => {
 			if (readOnly) return;
 			void handleSuggestCodebaseSubtrackFiles(subtrackId);
+		},
+		onToggleCodebaseSubtrackVisualEvolution: (subtrackId) => {
+			setVisualEvolutionPanel((previous) => {
+				if (
+					previous?.kind === "codebaseSubtrack" &&
+					previous.subtrackId === subtrackId
+				) {
+					return null;
+				}
+				return {
+					kind: "codebaseSubtrack",
+					subtrackId,
+				};
+			});
+			setSystemScreenshotTooltip(null);
+			setHoveredScreenshotZoneId(null);
 		},
 		suggestingCodebaseSubtrackIds,
 		setSystemScreenshotTooltip,
@@ -551,6 +713,28 @@ export const Timeline = ({
 		}
 	};
 
+	const visualEvolutionFloatingStyle = useMemo(() => {
+		if (!visualEvolutionPanel || !containerRef.current || typeof window === "undefined") {
+			return null;
+		}
+
+		const rect = containerRef.current.getBoundingClientRect();
+		const widthPx = Math.max(280, rect.width - 20);
+		const maxWidth = window.innerWidth - 24;
+		const resolvedWidth = Math.min(widthPx, maxWidth);
+		const left = Math.max(
+			12,
+			Math.min(rect.left + (rect.width - resolvedWidth) / 2, window.innerWidth - resolvedWidth - 12)
+		);
+		const bottom = Math.max(8, window.innerHeight - rect.top + 8);
+
+		return {
+			left,
+			bottom,
+			width: resolvedWidth,
+		};
+	}, [visualEvolutionPanel, width, height]);
+
 	const tooltipInner = useMemo(() => {
 		if (selectedEvent?.kind === "codebase") {
 			return <CodebaseTooltip event={selectedEvent.event as GitHubEvent} />;
@@ -595,151 +779,170 @@ export const Timeline = ({
 					setBlueprintCodebaseLinkMenu(null);
 					setHoveredKnowledgeTreeId(null);
 					setSystemScreenshotTooltip(null);
+					setVisualEvolutionPanel(null);
 					setHoveredScreenshotZoneId(null);
 					dispatch(setHighlightedCodebaseFilePaths([]));
 				}}
 			>
 				<svg ref={svgRef} className={classes.svg} />
 
-				<span ref={startCaretRef} className={classes.marker} style={{ left: 0, top: margin.top }}>
-					<FontAwesomeIcon icon={faCaretDown} />
-				</span>
+					<span ref={startCaretRef} className={classes.marker} style={{ left: 0, top: margin.top }}>
+						<FontAwesomeIcon icon={faCaretDown} />
+					</span>
 
-				<span ref={endCaretRef} className={classes.marker} style={{ left: 0, top: margin.top }}>
-					<FontAwesomeIcon icon={faCaretDown} />
-				</span>
+					<span ref={endCaretRef} className={classes.marker} style={{ left: 0, top: margin.top }}>
+						<FontAwesomeIcon icon={faCaretDown} />
+					</span>
 
-				<span
-					ref={todayCaretRef}
-					className={classes.marker}
-					style={{ left: 0, top: margin.top, display: "none" }}
-				>
-					<FontAwesomeIcon icon={faCaretDown} />
-				</span>
-
-				<span
-					ref={newStageButtonRef}
-					className={classes.newStage}
-					style={readOnly ? { display: "none" } : undefined}
-					onClick={() => {
-						if (readOnly) return;
-						onStageLaneCreation("Untitled");
-					}}
-				>
-					<FontAwesomeIcon icon={faPlus} />
-				</span>
-
-				<span
-					ref={newKnowledgeSubtrackButtonRef}
-					className={classes.newStage}
-					style={readOnly ? { display: "none" } : undefined}
-					title="Add knowledge subtrack"
-					onClick={() => {
-						if (readOnly) return;
-						dispatch(
-							addKnowledgeSubtrack({
-								id: crypto.randomUUID(),
-								name: `Knowledge subtrack ${knowledgeSubtracks.length + 1}`,
-								filePaths: [],
-								collapsed: false,
-								inactive: false,
-							})
-						);
-					}}
-				>
-					<FontAwesomeIcon icon={faPlus} />
-				</span>
-
-				<span
-					ref={newCodebaseSubtrackButtonRef}
-					className={classes.newStage}
-					style={readOnly ? { display: "none" } : undefined}
-					title="Add codebase subtrack"
-					onClick={() => {
-						if (readOnly) return;
-						dispatch(
-							addCodebaseSubtrack({
-								id: crypto.randomUUID(),
-								name: `Codebase subtrack ${codebaseSubtracks.length + 1}`,
-								filePaths: [],
-								collapsed: false,
-								inactive: false,
-							})
-						);
-					}}
-				>
-					<FontAwesomeIcon icon={faPlus} />
-				</span>
-
-				<span
-					ref={syncCodebaseButtonRef}
-					className={classes.newStage}
-					style={readOnly ? { display: "none" } : undefined}
-					title="Sync codebase commits"
-					onClick={async (event) => {
-						event.stopPropagation();
-						if (readOnly) return;
-						if (!onSyncCodebaseEvents || isSyncingCodebase) return;
-						setIsSyncingCodebase(true);
-						try {
-							await onSyncCodebaseEvents();
-						} finally {
-							setIsSyncingCodebase(false);
-						}
-					}}
-				>
-					<FontAwesomeIcon icon={faArrowsRotate} spin={isSyncingCodebase} />
-				</span>
-
-				<span
-					ref={llmButtonRef}
-					className={classes.newStage}
-					style={{
-						...(readOnly ? { display: "none" } : {}),
-						color: isGeneratingMilestones ? "#9b9b9b" : undefined,
-						opacity: isGeneratingMilestones ? 0.5 : 1,
-						cursor: isGeneratingMilestones ? "wait" : "pointer",
-					}}
-					onClick={handleGenerateMilestones}
-				>
-					<FontAwesomeIcon icon={faWandSparkles} />
-				</span>
-
-				{pendingBlueprintLinkEventId && !readOnly && (
-					<div
-						className={classes.linkModeHint}
-						onClick={(event) => event.stopPropagation()}
+					<span
+						ref={todayCaretRef}
+						className={classes.marker}
+						style={{ left: 0, top: margin.top, display: "none" }}
 					>
-						<span>Create link mode: click a codebase subtrack row.</span>
-						<button
-							type="button"
-							className={classes.linkModeButton}
-							onClick={() => setPendingBlueprintLinkEventId(null)}
-						>
-							Cancel
-						</button>
-					</div>
-				)}
+						<FontAwesomeIcon icon={faCaretDown} />
+					</span>
 
-				{blueprintLinkMenu && !readOnly && (
-					<div
-						className={classes.timelineContextMenu}
-						style={{ left: blueprintLinkMenu.x, top: blueprintLinkMenu.y }}
-						onClick={(event) => event.stopPropagation()}
+					<span
+						ref={newStageButtonRef}
+						className={classes.newStage}
+						style={readOnly ? { display: "none" } : undefined}
+						onClick={() => {
+							if (readOnly) return;
+							onStageLaneCreation("Untitled");
+						}}
 					>
-						<button
-							type="button"
-							className={classes.timelineContextMenuButton}
-							onClick={() => {
-								setPendingBlueprintLinkEventId(blueprintLinkMenu.blueprintEventId);
-								setBlueprintLinkMenu(null);
-								setShowTooltip(false);
-							}}
+						<FontAwesomeIcon icon={faPlus} />
+					</span>
+
+					<span
+						ref={newKnowledgeSubtrackButtonRef}
+						className={classes.newStage}
+						style={readOnly ? { display: "none" } : undefined}
+						title="Add knowledge subtrack"
+						onClick={() => {
+							if (readOnly) return;
+							dispatch(
+								addKnowledgeSubtrack({
+									id: crypto.randomUUID(),
+									name: `Knowledge subtrack ${knowledgeSubtracks.length + 1}`,
+									filePaths: [],
+									collapsed: false,
+									inactive: false,
+								})
+							);
+						}}
+					>
+						<FontAwesomeIcon icon={faPlus} />
+					</span>
+
+					<span
+						ref={newCodebaseSubtrackButtonRef}
+						className={classes.newStage}
+						style={readOnly ? { display: "none" } : undefined}
+						title="Add codebase subtrack"
+						onClick={() => {
+							if (readOnly) return;
+							dispatch(
+								addCodebaseSubtrack({
+									id: crypto.randomUUID(),
+									name: `Codebase subtrack ${codebaseSubtracks.length + 1}`,
+									filePaths: [],
+									collapsed: false,
+									inactive: false,
+								})
+							);
+						}}
+					>
+						<FontAwesomeIcon icon={faPlus} />
+					</span>
+
+					<span
+						ref={codebaseVisualButtonRef}
+						className={classes.newStage}
+						title="Show codebase visual evolution"
+						onClick={(event) => {
+							event.stopPropagation();
+							setVisualEvolutionPanel((previous) =>
+								previous?.kind === "codebase"
+									? null
+									: { kind: "codebase" }
+							);
+							setSystemScreenshotTooltip(null);
+							setHoveredScreenshotZoneId(null);
+						}}
+					>
+						<FontAwesomeIcon icon={faImages} />
+					</span>
+
+					<span
+						ref={syncCodebaseButtonRef}
+						className={classes.newStage}
+						style={readOnly ? { display: "none" } : undefined}
+						title="Sync codebase commits"
+						onClick={async (event) => {
+							event.stopPropagation();
+							if (readOnly) return;
+							if (!onSyncCodebaseEvents || isSyncingCodebase) return;
+							setIsSyncingCodebase(true);
+							try {
+								await onSyncCodebaseEvents();
+							} finally {
+								setIsSyncingCodebase(false);
+							}
+						}}
+					>
+						<FontAwesomeIcon icon={faArrowsRotate} spin={isSyncingCodebase} />
+					</span>
+
+					<span
+						ref={llmButtonRef}
+						className={classes.newStage}
+						style={{
+							...(readOnly ? { display: "none" } : {}),
+							color: isGeneratingMilestones ? "#9b9b9b" : undefined,
+							opacity: isGeneratingMilestones ? 0.5 : 1,
+							cursor: isGeneratingMilestones ? "wait" : "pointer",
+						}}
+						onClick={handleGenerateMilestones}
+					>
+						<FontAwesomeIcon icon={faWandSparkles} />
+					</span>
+
+					{pendingBlueprintLinkEventId && !readOnly && (
+						<div
+							className={classes.linkModeHint}
+							onClick={(event) => event.stopPropagation()}
 						>
-							Create link
-						</button>
-					</div>
-				)}
+							<span>Create link mode: click a codebase subtrack row.</span>
+							<button
+								type="button"
+								className={classes.linkModeButton}
+								onClick={() => setPendingBlueprintLinkEventId(null)}
+							>
+								Cancel
+							</button>
+						</div>
+					)}
+
+					{blueprintLinkMenu && !readOnly && (
+						<div
+							className={classes.timelineContextMenu}
+							style={{ left: blueprintLinkMenu.x, top: blueprintLinkMenu.y }}
+							onClick={(event) => event.stopPropagation()}
+						>
+							<button
+								type="button"
+								className={classes.timelineContextMenuButton}
+								onClick={() => {
+									setPendingBlueprintLinkEventId(blueprintLinkMenu.blueprintEventId);
+									setBlueprintLinkMenu(null);
+									setShowTooltip(false);
+								}}
+							>
+								Create link
+							</button>
+						</div>
+					)}
 
 				{blueprintCodebaseLinkMenu && !readOnly && (
 					<div
@@ -858,6 +1061,88 @@ export const Timeline = ({
 							<p className={classes.screenshotTooltipHint}>
 								Hover a zone to highlight matching files and subtracks.
 							</p>
+						)}
+					</div>
+				), document.body)
+				: null}
+
+			{visualEvolutionPanel && visualEvolutionFloatingStyle && typeof document !== "undefined"
+				? createPortal((
+					<div
+						className={classes.visualEvolutionFloating}
+						style={visualEvolutionFloatingStyle}
+						onClick={(event) => event.stopPropagation()}
+					>
+						<p className={classes.visualEvolutionTitle}>
+							{visualEvolutionPanel.kind === "codebase"
+								? "Codebase visual evolution"
+								: (visualEvolutionSubtrack
+									? `Visual evolution - ${visualEvolutionSubtrack.name}`
+									: "Visual evolution")}
+						</p>
+						{visualEvolutionPanel.kind === "codebase" ? (
+							codebaseVisualScreenshots.length > 0 ? (
+								<div className={classes.visualEvolutionScroller}>
+									{codebaseVisualScreenshots.map((marker) => (
+										<figure key={marker.id} className={classes.visualEvolutionFrame}>
+											<div className={classes.visualEvolutionMedia}>
+												<img
+													src={marker.imageDataUrl}
+													alt={`System screenshot from ${formatDate(marker.occurredAt)}`}
+													className={classes.visualEvolutionImage}
+												/>
+											</div>
+											<figcaption className={classes.visualEvolutionTimestamp}>
+												{formatDate(marker.occurredAt)}
+											</figcaption>
+										</figure>
+									))}
+								</div>
+							) : (
+								<div className={classes.visualEvolutionEmpty}>
+									{VISUAL_EVOLUTION_EMPTY_TEXT}
+								</div>
+							)
+						) : (
+							visualEvolutionSubtrackCrops.length > 0 ? (
+								<div className={classes.visualEvolutionScroller}>
+									{visualEvolutionSubtrackCrops.map((preview) => {
+										const scaledWidth = Math.round(preview.imageWidth * preview.scale);
+										const scaledHeight = Math.round(preview.imageHeight * preview.scale);
+										const offsetX = -Math.round(preview.cropX * preview.scale);
+										const offsetY = -Math.round(preview.cropY * preview.scale);
+										return (
+											<figure key={`${preview.markerId}-${preview.cropX}-${preview.cropY}`} className={classes.visualEvolutionFrame}>
+												<div
+													className={classes.visualEvolutionCrop}
+													style={{
+														width: `${preview.displayWidth}px`,
+														height: `${preview.displayHeight}px`,
+													}}
+												>
+													<img
+														src={preview.imageDataUrl}
+														alt={`Component crop from ${formatDate(preview.occurredAt)}`}
+														className={classes.visualEvolutionCropImage}
+														style={{
+															width: `${scaledWidth}px`,
+															height: `${scaledHeight}px`,
+															transform: `translate(${offsetX}px, ${offsetY}px)`,
+														}}
+													/>
+												</div>
+												<figcaption className={classes.visualEvolutionTimestamp}>
+													{formatDate(preview.occurredAt)}
+												</figcaption>
+											</figure>
+										);
+									})}
+								</div>
+							) : (
+								<div className={classes.visualEvolutionEmpty}>
+									{VISUAL_EVOLUTION_EMPTY_TEXT}
+								</div>
+							)
 						)}
 					</div>
 				), document.body)

@@ -76,6 +76,94 @@
     font-size: 11px;
 }
 
+.visualEvolutionTitle {
+    margin: 0 0 8px;
+    color: #f3f3f3;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.visualEvolutionScroller {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-height: 0;
+    padding-bottom: 2px;
+}
+
+.visualEvolutionFrame {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.visualEvolutionMedia {
+    width: 220px;
+    height: 140px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.visualEvolutionImage {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.visualEvolutionCrop {
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.32);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.visualEvolutionCropImage {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: block;
+    max-width: none;
+    user-select: none;
+    pointer-events: none;
+}
+
+.visualEvolutionTimestamp {
+    margin: 0;
+    color: #e5e5e5;
+    font-size: 10px;
+    text-align: center;
+}
+
+.visualEvolutionFloating {
+    position: fixed;
+    z-index: 3000;
+    max-height: min(360px, calc(100vh - 24px));
+    overflow: auto;
+    background: rgba(20, 20, 20, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    padding: 10px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+}
+
+.visualEvolutionEmpty {
+    min-height: 170px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #e5e5e5;
+    font-size: 12px;
+}
+
 .codeBaseTooltip p{
     margin: 0;
 }

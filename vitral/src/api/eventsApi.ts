@@ -16,7 +16,7 @@ export async function getGitHubEvents(
     }
 
     const url =
-        `${API_BASE}/api/state/${projectId}/github/events` +
+        `${API_BASE}/state/${projectId}/github/events` +
         (params.toString() ? `?${params.toString()}` : "");
 
     const res = await fetch(url, {

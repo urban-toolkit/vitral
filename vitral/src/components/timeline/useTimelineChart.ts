@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import * as d3 from "d3";
-import { faCheck, faCircle, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
+import { faCheck, faCircle, faImages, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
 import type {
     Dispatch,
     MutableRefObject,
@@ -81,6 +81,9 @@ const faWandSparklesPath = Array.isArray(faWandSparkles.icon[4])
     : faWandSparkles.icon[4];
 const faWandSparklesWidth = faWandSparkles.icon[0];
 const faWandSparklesHeight = faWandSparkles.icon[1];
+const faImagesPath = Array.isArray(faImages.icon[4]) ? faImages.icon[4][0] : faImages.icon[4];
+const faImagesWidth = faImages.icon[0];
+const faImagesHeight = faImages.icon[1];
 const BLUEPRINT_HIGHLIGHT_FILL = "#00A8DB";
 const BLUEPRINT_HIGHLIGHT_STROKE = "#005E79";
 
@@ -115,6 +118,7 @@ type UseTimelineChartParams = {
     newStageButtonRef: RefObject<HTMLSpanElement | null>;
     newKnowledgeSubtrackButtonRef: RefObject<HTMLSpanElement | null>;
     newCodebaseSubtrackButtonRef: RefObject<HTMLSpanElement | null>;
+    codebaseVisualButtonRef: RefObject<HTMLSpanElement | null>;
     syncCodebaseButtonRef: RefObject<HTMLSpanElement | null>;
     llmButtonRef: RefObject<HTMLSpanElement | null>;
     width: number;
@@ -154,6 +158,7 @@ type UseTimelineChartParams = {
     onCreateBlueprintCodebaseLink: (blueprintEventId: string, codebaseSubtrackId: string) => void;
     onDeleteSystemScreenshotMarker: (markerId: string) => void;
     onSuggestCodebaseSubtrackFiles: (subtrackId: string) => void;
+    onToggleCodebaseSubtrackVisualEvolution: (subtrackId: string) => void;
     suggestingCodebaseSubtrackIds: string[];
     setSystemScreenshotTooltip: Dispatch<SetStateAction<SystemScreenshotTooltipState>>;
     setMilestoneMenu: Dispatch<SetStateAction<MilestoneMenuState>>;
@@ -178,6 +183,7 @@ export function useTimelineChart({
     newStageButtonRef,
     newKnowledgeSubtrackButtonRef,
     newCodebaseSubtrackButtonRef,
+    codebaseVisualButtonRef,
     syncCodebaseButtonRef,
     llmButtonRef,
     width,
@@ -217,6 +223,7 @@ export function useTimelineChart({
     onCreateBlueprintCodebaseLink,
     onDeleteSystemScreenshotMarker,
     onSuggestCodebaseSubtrackFiles,
+    onToggleCodebaseSubtrackVisualEvolution,
     suggestingCodebaseSubtrackIds,
     setSystemScreenshotTooltip,
     setMilestoneMenu,
@@ -941,6 +948,31 @@ export function useTimelineChart({
                 suggestingSubtrackIdSet.has(row.id) ? "Suggesting files..." : "Suggest files with LLM"
             );
 
+        const codebaseSubtrackVisualEvolutionIcon = codebaseSubtrackGroups
+            .append("g")
+            .attr("data-timeline-interactive", "true")
+            .attr("transform", (row: any) => `translate(${timelineLeft - 48}, ${row.top + 12})`)
+            .style("cursor", "pointer")
+            .on("click", (event: MouseEvent, row: any) => {
+                event.stopPropagation();
+                onToggleCodebaseSubtrackVisualEvolution(row.id);
+            });
+
+        codebaseSubtrackVisualEvolutionIcon
+            .append("circle")
+            .attr("r", 8)
+            .attr("fill", "transparent");
+
+        codebaseSubtrackVisualEvolutionIcon
+            .append("path")
+            .attr("d", faImagesPath)
+            .attr("fill", "black")
+            .attr("transform", `scale(0.018) translate(${-faImagesWidth / 2} ${-faImagesHeight / 2})`);
+
+        codebaseSubtrackVisualEvolutionIcon
+            .append("title")
+            .text("Show visual evolution");
+
         codebaseSubtrackGroups
             .append("text")
             .attr("class", classes.subStageDelete)
@@ -1277,6 +1309,11 @@ export function useTimelineChart({
                 newCodebaseSubtrackButtonRef.current,
                 margin.left + 8,
                 laneY.codebase + 40
+            );
+            setRefPos(
+                codebaseVisualButtonRef.current,
+                timelineLeft - 38,
+                laneY.codebase + 5
             );
             setRefPos(
                 syncCodebaseButtonRef.current,
@@ -2311,6 +2348,7 @@ export function useTimelineChart({
         newStageButtonRef,
         newKnowledgeSubtrackButtonRef,
         newCodebaseSubtrackButtonRef,
+        codebaseVisualButtonRef,
         syncCodebaseButtonRef,
         llmButtonRef,
         codebaseSubtracks,
@@ -2345,6 +2383,7 @@ export function useTimelineChart({
         onCreateBlueprintCodebaseLink,
         onDeleteSystemScreenshotMarker,
         onSuggestCodebaseSubtrackFiles,
+        onToggleCodebaseSubtrackVisualEvolution,
         suggestingCodebaseSubtrackIds,
         setSystemScreenshotTooltip,
         setMilestoneMenu,
