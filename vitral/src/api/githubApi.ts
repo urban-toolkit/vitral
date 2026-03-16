@@ -1,8 +1,6 @@
-const API_BASE = (() => {
-    const configured = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
-    if (configured) return configured;
-    return import.meta.env.DEV ? "http://localhost:3000" : "";
-})();
+import { resolveApiBaseUrl } from "@/api/baseUrl";
+
+const API_BASE = resolveApiBaseUrl();
 
 export type GitHubDocumentResponse = {
     github_owner?: string,
@@ -29,7 +27,7 @@ export type GitHubContentItem = {
 };
 
 export async function githubStatus() {
-    const res = await fetch(`${API_BASE}/api/auth/github/status`, {
+    const res = await fetch(`${API_BASE}/auth/github/status`, {
         credentials: "include",
     });
     if (!res.ok) throw new Error("Failed to check GitHub status");
@@ -42,7 +40,7 @@ export async function githubStatus() {
 export async function getGithubDocumentLink(
     docId: string
 ): Promise<GitHubDocumentResponse> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/github`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/github`, {
         credentials: "include",
     });
 
@@ -55,7 +53,7 @@ export async function getGithubDocumentLink(
 }
 
 export async function getGitHubRepos(): Promise<GitHubRepo[]> {
-    const res = await fetch(`${API_BASE}/api/auth/github/repos`, {
+    const res = await fetch(`${API_BASE}/auth/github/repos`, {
         credentials: "include",
     });
 
@@ -73,7 +71,7 @@ export async function linkRepoToDocument(
     owner: string,
     repo: string
 ): Promise<{ id: string, github_owner: string, github_repo: string, github_default_branch: string }> {
-    const res = await fetch(`${API_BASE}/api/state/${docId}/github/link`, {
+    const res = await fetch(`${API_BASE}/state/${docId}/github/link`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -92,7 +90,7 @@ export async function getGitHubContents(
     path: string = ""
 ): Promise<GitHubContentItem[]> {
     const url =
-        `${API_BASE}/api/state/${projectId}/github/contents` +
+        `${API_BASE}/state/${projectId}/github/contents` +
         (path ? `?path=${encodeURIComponent(path)}` : "");
 
     const res = await fetch(url, {

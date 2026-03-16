@@ -17,12 +17,9 @@ import FileModal from "@/components/files/FileModal";
 import { FilePreviewCard } from "@/components/files/FilePreviewCard";
 import { LoadSpinner } from "@/components/project/LoadSpinner";
 import { getFileContent } from "@/api/stateApi";
+import { resolveApiBaseUrl } from "@/api/baseUrl";
 
-const API_BASE = (() => {
-    const configured = (import.meta.env.VITE_BACKEND_URL ?? "").replace(/\/+$/, "");
-    if (configured) return configured;
-    return import.meta.env.DEV ? "http://localhost:3000" : "";
-})();
+const API_BASE = resolveApiBaseUrl();
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -96,7 +93,7 @@ async function fetchFileContent(docId: string, fileId: string): Promise<string> 
 }
 
 async function fetchRawBlob(docId: string, fileId: string): Promise<Blob> {
-    const response = await fetch(`${API_BASE}/api/state/${docId}/files/${fileId}/raw`, {
+    const response = await fetch(`${API_BASE}/state/${docId}/files/${fileId}/raw`, {
         method: "GET",
         credentials: "include",
     });
@@ -119,7 +116,7 @@ async function convertDocxToMarkdown(blob: Blob, filename: string): Promise<stri
     formData.append("file", blob, filename);
     formData.append("from_formats", JSON.stringify(["docx"]));
 
-    const response = await fetch(`${API_BASE}/api/docling/convert/file`, {
+    const response = await fetch(`${API_BASE}/docling/convert/file`, {
         method: "POST",
         body: formData,
         credentials: "include",
@@ -156,7 +153,7 @@ export function FilePreview({ file }: FilePreviewProps) {
 
     const rawUrl = useMemo(() => {
         if (!hasValidDocId) return "";
-        return `${API_BASE}/api/state/${resolvedDocId}/files/${file.id}/raw`;
+        return `${API_BASE}/state/${resolvedDocId}/files/${file.id}/raw`;
     }, [hasValidDocId, resolvedDocId, file.id]);
 
     const onClick = () => {

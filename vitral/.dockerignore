@@ -18,11 +18,6 @@ yarn-error.log*
 pnpm-debug.log*
 *.log
 
-# ---- env / secrets ----
-.env
-.env.*
-!.env.example
-
 # ---- OS / editor junk ----
 .DS_Store
 Thumbs.db
@@ -48,5 +43,3 @@ Dockerfile*
 tmp
 temp
 .cache
-
-.env

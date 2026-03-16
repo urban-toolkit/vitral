@@ -3,13 +3,12 @@ services:
     build:
       context: ./vitral
       dockerfile: ./Dockerfile
-      args:
-        VITE_BACKEND_URL: ""
     environment:
       NODE_ENV: production
-      PORT: ${PORT:-3000}
+    env_file:
+      - ./vitral/.env.production
+      - .env.common
     ports:
-      #- 127.0.0.1:9898:5173
       - 127.0.0.1:9898:80
     depends_on:
       - backend
@@ -18,26 +17,12 @@ services:
     build:
       context: ./backend
       dockerfile: ./Dockerfile
-    environment:
-      NODE_ENV: production
-      PORT: ${PORT:-3000}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      DATABASE_URL: postgres://vitral:vitral@postgres:5432/vitral
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
-      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:9898/api/auth/github/callback}
-      COOKIE_SECRET: ${COOKIE_SECRET}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:9898}
-      DOCLING_URL: ${DOCLING_URL}
-      S3_REGION: ${S3_REGION}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE}
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
-      S3_BUCKET: ${S3_BUCKET}
+    env_file:
+      - ./backend/.env.production
+      - .env.common
+      - .env
     expose:
-      - "${PORT:-3000}"
+      - "3000"
     depends_on:
       - postgres
       - minio
@@ -106,4 +91,3 @@ services:
 volumes:
   postgres_data:
   minio_data:
-  docling_data:
