@@ -22,23 +22,6 @@ function truncateLabel(text: string, maxChars: number): string {
     return `${text.slice(0, Math.max(1, maxChars - 1))}...`;
 }
 
-function splitCircleLabel(text: string, maxCharsPerLine: number, maxLines: number): string[] {
-    const normalized = text.replace(/\s+/g, " ").trim();
-    if (!normalized) return [""];
-
-    const maxChars = maxCharsPerLine * maxLines;
-    const capped = normalized.length > maxChars
-        ? `${normalized.slice(0, Math.max(1, maxChars - 3))}...`
-        : normalized;
-
-    const lines: string[] = [];
-    for (let index = 0; index < capped.length; index += maxCharsPerLine) {
-        lines.push(capped.slice(index, index + maxCharsPerLine));
-    }
-
-    return lines.slice(0, maxLines);
-}
-
 function normalizePath(path: string): string {
     return path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
 }
@@ -61,7 +44,6 @@ function BlueprintComponentNodeImpl(props: NodeProps<nodeType>) {
     const rawTitle = typeof rawData.title === "string" ? rawData.title : "Component";
     const [draftTitle, setDraftTitle] = useState(rawTitle);
     const description = typeof rawData.description === "string" ? rawData.description : "";
-    const labelLines = splitCircleLabel(draftTitle, 9, 3);
     const codebaseFilePaths = Array.isArray(rawData.codebaseFilePaths)
         ? rawData.codebaseFilePaths
             .filter((path): path is string => typeof path === "string")
@@ -169,11 +151,7 @@ function BlueprintComponentNodeImpl(props: NodeProps<nodeType>) {
                         }}
                     />
                 ) : (
-                    labelLines.map((line, index) => (
-                        <span key={`${line}-${index}`} className={classes.line}>
-                            {truncateLabel(line, 9)}
-                        </span>
-                    ))
+                    <p className={classes.title}>{rawTitle}</p>
                 )}
 
                 {codebaseFilePaths.length > 0 && (

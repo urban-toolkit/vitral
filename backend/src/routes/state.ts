@@ -1557,14 +1557,21 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const blueprintLinks = activeConnections
             .map((row) => {
-                const sourceIsBlueprint = row.source_label === "blueprint_component";
                 const targetIsBlueprint = row.target_label === "blueprint_component";
-                if (!sourceIsBlueprint && !targetIsBlueprint) return null;
+                const sourceIsCard =
+                    row.source_label === "person" ||
+                    row.source_label === "activity" ||
+                    row.source_label === "requirement" ||
+                    row.source_label === "concept" ||
+                    row.source_label === "insight" ||
+                    row.source_label === "object";
+                // Enforce directional links only: card -> blueprint component.
+                if (!targetIsBlueprint || !sourceIsCard) return null;
 
-                const componentNodeId = sourceIsBlueprint ? row.source_node_id : row.target_node_id;
-                const cardNodeId = sourceIsBlueprint ? row.target_node_id : row.source_node_id;
-                const cardLabel = sourceIsBlueprint ? row.target_label : row.source_label;
-                const cardTitle = sourceIsBlueprint ? row.target_title : row.source_title;
+                const componentNodeId = row.target_node_id;
+                const cardNodeId = row.source_node_id;
+                const cardLabel = row.source_label;
+                const cardTitle = row.source_title;
                 const blueprintEvent = blueprintByComponentNodeId.get(componentNodeId);
                 if (!blueprintEvent) return null;
                 const cardCreatedAt = cardCreatedAtByNodeId.get(cardNodeId) ?? row.occurred_at;

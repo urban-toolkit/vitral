@@ -21,6 +21,7 @@ import {
 } from "@/store/timelineSlice";
 import classes from "./Timeline.module.css";
 import type {
+    BlueprintEventConnection,
     CodebaseSubtrack,
     KnowledgeBlueprintLink,
     KnowledgeCrossTreeConnection,
@@ -132,6 +133,7 @@ type UseTimelineChartParams = {
     knowledgeTreePills: KnowledgeTreePill[];
     knowledgeCrossTreeConnections: KnowledgeCrossTreeConnection[];
     knowledgeBlueprintLinks: KnowledgeBlueprintLink[];
+    blueprintEventConnections: BlueprintEventConnection[];
     hoveredKnowledgeTreeId: string | null;
     onHoveredKnowledgeTreeIdChange: (treeId: string | null) => void;
     blueprintCodebaseLinks: BlueprintCodebaseLink[];
@@ -197,6 +199,7 @@ export function useTimelineChart({
     knowledgeTreePills,
     knowledgeCrossTreeConnections,
     knowledgeBlueprintLinks,
+    blueprintEventConnections,
     hoveredKnowledgeTreeId,
     onHoveredKnowledgeTreeIdChange,
     blueprintCodebaseLinks,
@@ -515,6 +518,7 @@ export function useTimelineChart({
         const knowledgeConnectionsG = svg.append("g");
         const knowledgeEventsG = svg.append("g");
         const knowledgeBlueprintLinksG = svg.append("g");
+        const blueprintEventConnectionsG = svg.append("g");
         const blueprintCodebaseLinksG = svg.append("g");
         const eventsG = svg.append("g");
         const screenshotOverlayG = svg.append("g");
@@ -1578,6 +1582,7 @@ export function useTimelineChart({
             knowledgeConnectionsG.selectAll("*").remove();
             knowledgeEventsG.selectAll("*").remove();
             knowledgeBlueprintLinksG.selectAll("*").remove();
+            blueprintEventConnectionsG.selectAll("*").remove();
 
             const pillPositionByTreeId = new Map<string, { x: number; y: number }>();
             const cardCreatedPositionByNodeId = new Map<string, { x: number; y: number }>();
@@ -2018,6 +2023,74 @@ export function useTimelineChart({
 
             const blueprintEventsById = new Map(parsed.bp.map((eventData) => [eventData.id, eventData]));
             const codebaseSubtrackRowsById = new Map(codebaseSubtrackRows.map((row) => [row.id, row]));
+            const blueprintEventLaneCenterY = laneY.blueprint + laneH / 2;
+
+            const resolvedBlueprintEventConnections = blueprintEventConnections
+                .map((connection) => ({
+                    connection,
+                    sourceEvent: blueprintEventsById.get(connection.sourceBlueprintEventId),
+                    targetEvent: blueprintEventsById.get(connection.targetBlueprintEventId),
+                }))
+                .filter((entry) => entry.sourceEvent && entry.targetEvent);
+
+            const blueprintArcIndexByPair = new Map<string, number>();
+
+            const blueprintEventConnectionPaths = blueprintEventConnectionsG
+                .selectAll("path.blueprint-event-connection")
+                .data(resolvedBlueprintEventConnections, (entry: any) => entry.connection.id)
+                .join("path")
+                .attr("class", "blueprint-event-connection")
+                .attr("data-timeline-interactive", "true")
+                .attr("fill", "none")
+                .attr("stroke", (entry: any) => {
+                    const isHighlighted =
+                        highlightedBlueprintEventIds.has(entry.connection.sourceBlueprintEventId) ||
+                        highlightedBlueprintEventIds.has(entry.connection.targetBlueprintEventId);
+                    return isHighlighted
+                        ? BLUEPRINT_HIGHLIGHT_STROKE
+                        : connectionColorForKind(entry.connection.kind);
+                })
+                .attr("stroke-width", (entry: any) => {
+                    const isHighlighted =
+                        highlightedBlueprintEventIds.has(entry.connection.sourceBlueprintEventId) ||
+                        highlightedBlueprintEventIds.has(entry.connection.targetBlueprintEventId);
+                    return isHighlighted ? 3.6 : 3;
+                })
+                .attr("opacity", (entry: any) => {
+                    const isHighlighted =
+                        highlightedBlueprintEventIds.has(entry.connection.sourceBlueprintEventId) ||
+                        highlightedBlueprintEventIds.has(entry.connection.targetBlueprintEventId);
+                    return isHighlighted ? 1 : 0.88;
+                })
+                .style("cursor", "pointer")
+                .attr("d", (entry: any) => {
+                    const sourceX = x(entry.sourceEvent.date);
+                    const targetX = x(entry.targetEvent.date);
+                    if (!Number.isFinite(sourceX) || !Number.isFinite(targetX)) {
+                        return "";
+                    }
+
+                    const minX = Math.min(sourceX, targetX);
+                    const maxX = Math.max(sourceX, targetX);
+                    const sortedPair = [entry.connection.sourceBlueprintEventId, entry.connection.targetBlueprintEventId]
+                        .sort()
+                        .join("::");
+                    const pairKey = `${sortedPair}::${minX}:${maxX}`;
+                    const arcIndex = blueprintArcIndexByPair.get(pairKey) ?? 0;
+                    blueprintArcIndexByPair.set(pairKey, arcIndex + 1);
+
+                    const midX = (sourceX + targetX) / 2;
+                    const arcHeight = 12 + arcIndex * 8;
+                    const controlY = blueprintEventLaneCenterY - arcHeight;
+                    return `M ${sourceX} ${blueprintEventLaneCenterY} Q ${midX} ${controlY} ${targetX} ${blueprintEventLaneCenterY}`;
+                });
+
+            blueprintEventConnectionPaths
+                .append("title")
+                .text((entry: any) =>
+                    `${entry.connection.sourceBlueprintEventName} -> ${entry.connection.targetBlueprintEventName}\n` +
+                    `Label: ${entry.connection.label || entry.connection.kind}`
+                );
 
             const resolvedBlueprintCodebaseLinks = blueprintCodebaseLinks
                 .map((link) => ({
@@ -2357,6 +2430,7 @@ export function useTimelineChart({
         knowledgeTreePills,
         knowledgeCrossTreeConnections,
         knowledgeBlueprintLinks,
+        blueprintEventConnections,
         hoveredKnowledgeTreeId,
         onHoveredKnowledgeTreeIdChange,
         blueprintCodebaseLinks,

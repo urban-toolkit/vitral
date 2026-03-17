@@ -113,12 +113,14 @@ import {
     TIMELINE_DOCK_TOGGLE_HEIGHT,
 } from "@/pages/projectEditor/TimelineDock";
 import type { KnowledgeBaseEvent } from "@/components/timeline/timelineTypes";
+import type { BlueprintEventConnection } from "@/components/timeline/timelineTypes";
 import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttachmentProcessing";
 import { SystemScreenshotPanel } from "@/pages/projectEditor/SystemScreenshotPanel";
 
 const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["requirement"]);
 const REFERENCED_BY_EDGE_LABEL = "referenced by";
 const ITERATION_OF_EDGE_LABEL = "iteration of";
+const FEEDS_INTO_EDGE_LABEL = "feeds into";
 const RIGHT_SIDEBAR_WIDTH_PX = 250;
 
 function readImageFileAsDataUrl(file: File): Promise<string> {
@@ -219,6 +221,18 @@ function edgeLabelFrom(edge: edgeType): string {
         return edge.data.label.trim().toLowerCase();
     }
     return "";
+}
+
+function connectionKindFromEdge(edge: edgeType): "regular" | "referenced_by" | "iteration_of" {
+    const rawKind = typeof edge.data?.kind === "string"
+        ? edge.data.kind.toLowerCase().trim()
+        : "";
+    if (rawKind === "referenced_by") return "referenced_by";
+    if (rawKind === "iteration_of") return "iteration_of";
+    const label = edgeLabelFrom(edge);
+    if (label === REFERENCED_BY_EDGE_LABEL) return "referenced_by";
+    if (label === ITERATION_OF_EDGE_LABEL) return "iteration_of";
+    return "regular";
 }
 
 function readNodeString(node: nodeType, key: string): string {
@@ -1279,6 +1293,56 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         () => Array.from(emphasizedBlueprintComponentIds),
         [emphasizedBlueprintComponentIds]
     );
+    const blueprintEventConnections = useMemo<BlueprintEventConnection[]>(() => {
+        const nodeById = new Map(nodes.map((node) => [node.id, node]));
+        const blueprintEventByComponentNodeId = new Map<string, typeof blueprintEvents[number]>();
+
+        for (const eventData of blueprintEvents) {
+            const componentNodeId = typeof eventData.componentNodeId === "string"
+                ? eventData.componentNodeId.trim()
+                : "";
+            if (!componentNodeId) continue;
+            blueprintEventByComponentNodeId.set(componentNodeId, eventData);
+        }
+
+        const connections: BlueprintEventConnection[] = [];
+        for (const edge of edges) {
+            const sourceNode = nodeById.get(edge.source);
+            const targetNode = nodeById.get(edge.target);
+            if (!sourceNode || !targetNode) continue;
+
+            const sourceLabel = normalizeNodeLabel(String(sourceNode.data?.label ?? ""));
+            const targetLabel = normalizeNodeLabel(String(targetNode.data?.label ?? ""));
+            if (sourceLabel !== "blueprint_component" || targetLabel !== "blueprint_component") continue;
+
+            const sourceEvent = blueprintEventByComponentNodeId.get(sourceNode.id);
+            const targetEvent = blueprintEventByComponentNodeId.get(targetNode.id);
+            if (!sourceEvent || !targetEvent) continue;
+
+            const kind = connectionKindFromEdge(edge);
+            const label = edgeLabelFrom(edge) || (
+                kind === "referenced_by"
+                    ? REFERENCED_BY_EDGE_LABEL
+                    : kind === "iteration_of"
+                        ? ITERATION_OF_EDGE_LABEL
+                        : FEEDS_INTO_EDGE_LABEL
+            );
+
+            connections.push({
+                id: edge.id,
+                kind,
+                label,
+                sourceBlueprintEventId: sourceEvent.id,
+                sourceBlueprintEventName: sourceEvent.name || "Blueprint component",
+                sourceComponentNodeId: sourceNode.id,
+                targetBlueprintEventId: targetEvent.id,
+                targetBlueprintEventName: targetEvent.name || "Blueprint component",
+                targetComponentNodeId: targetNode.id,
+            });
+        }
+
+        return connections;
+    }, [blueprintEvents, edges, nodes]);
     const normalizedHoveredCodebasePath = useMemo(
         () => (hoveredCodebaseFilePath ? normalizePath(hoveredCodebaseFilePath) : ""),
         [hoveredCodebaseFilePath]
@@ -2891,6 +2955,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onPlaybackAtChange={handlePlaybackAtChange}
                 designStudyEvents={designStudyEvents}
                 blueprintEvents={blueprintEvents}
+                blueprintEventConnections={blueprintEventConnections}
                 connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}
                 stages={timelineStages}
                 defaultStages={defaultStages}

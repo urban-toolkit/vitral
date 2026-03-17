@@ -61,6 +61,7 @@ import { useTimelineChart } from "./useTimelineChart";
 
 export type {
 	BlueprintEvent,
+	BlueprintEventConnection,
 	KnowledgeBaseEvent,
 	KnowledgeBlueprintLink,
 	KnowledgeCrossTreeConnection,
@@ -197,6 +198,7 @@ export const Timeline = ({
 	knowledgeBaseEvents = [],
 	designStudyEvents = [],
 	blueprintEvents = [],
+	blueprintEventConnections = [],
 	knowledgeTreePills = [],
 	knowledgeCrossTreeConnections = [],
 	knowledgeBlueprintLinks = [],
@@ -468,6 +470,7 @@ export const Timeline = ({
 		knowledgeTreePills,
 		knowledgeCrossTreeConnections,
 		knowledgeBlueprintLinks,
+		blueprintEventConnections,
 		hoveredKnowledgeTreeId,
 		onHoveredKnowledgeTreeIdChange: setHoveredKnowledgeTreeId,
 		blueprintCodebaseLinks,

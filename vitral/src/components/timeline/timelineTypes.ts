@@ -74,6 +74,18 @@ export type KnowledgeBlueprintLink = {
   componentNodeId: string;
 };
 
+export type BlueprintEventConnection = {
+  id: string;
+  kind: "regular" | "referenced_by" | "iteration_of";
+  label: string;
+  sourceBlueprintEventId: string;
+  sourceBlueprintEventName: string;
+  sourceComponentNodeId: string;
+  targetBlueprintEventId: string;
+  targetBlueprintEventName: string;
+  targetComponentNodeId: string;
+};
+
 export type KnowledgeBaseEvent = TimelineEventBase & {
   kind: "knowledge";
   subtype?: string;
@@ -108,6 +120,7 @@ export type TimelineProps = {
   knowledgeBaseEvents?: KnowledgeBaseEvent[];
   designStudyEvents?: DesignStudyEvent[];
   blueprintEvents?: BlueprintEvent[];
+  blueprintEventConnections?: BlueprintEventConnection[];
   knowledgeTreePills?: KnowledgeTreePill[];
   knowledgeCrossTreeConnections?: KnowledgeCrossTreeConnection[];
   knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];

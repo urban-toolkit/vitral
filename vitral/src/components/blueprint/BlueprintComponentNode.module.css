@@ -31,12 +31,12 @@
     box-sizing: border-box;
 }
 
-.line {
-    display: block;
-    max-width: 100%;
+.title {
+    margin: 0;
+    width: 90px;
     font-size: 10px;
     font-weight: 700;
-    line-height: 1.05;
+    line-height: 1.15;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -5,6 +5,7 @@ import { faChevronUp } from "@fortawesome/free-solid-svg-icons";
 import {
     Timeline,
     type BlueprintEvent,
+    type BlueprintEventConnection,
     type KnowledgeBaseEvent,
     type KnowledgeBlueprintLink,
     type KnowledgeCrossTreeConnection,
@@ -33,6 +34,7 @@ type TimelineDockProps = {
     onPlaybackAtChange?: (value: string | null) => void;
     designStudyEvents: DesignStudyEvent[];
     blueprintEvents?: BlueprintEvent[];
+    blueprintEventConnections?: BlueprintEventConnection[];
     connectedBlueprintComponentNodeIds?: string[];
     stages: Stage[];
     defaultStages: string[];
@@ -62,6 +64,7 @@ export const TimelineDock = memo(function TimelineDock({
     onPlaybackAtChange,
     designStudyEvents,
     blueprintEvents = [],
+    blueprintEventConnections = [],
     connectedBlueprintComponentNodeIds = [],
     stages,
     defaultStages,
@@ -122,6 +125,7 @@ export const TimelineDock = memo(function TimelineDock({
                     knowledgeBaseEvents={knowledgeBaseEvents}
                     designStudyEvents={designStudyEvents}
                     blueprintEvents={blueprintEvents}
+                    blueprintEventConnections={blueprintEventConnections}
                     knowledgeTreePills={knowledgeTreePills}
                     knowledgeCrossTreeConnections={knowledgeCrossTreeConnections}
                     knowledgeBlueprintLinks={knowledgeBlueprintLinks}
