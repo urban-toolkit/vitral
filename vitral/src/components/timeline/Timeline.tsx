@@ -74,17 +74,20 @@ type VisualEvolutionPanelState = {
 	subtrackId?: string;
 } | null;
 
-type ScreenshotCropPreview = {
+type ScreenshotFocusRect = {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+};
+
+type ScreenshotFocusPreview = {
 	markerId: string;
 	occurredAt: string;
 	imageDataUrl: string;
 	imageWidth: number;
 	imageHeight: number;
-	cropX: number;
-	cropY: number;
-	cropWidth: number;
-	cropHeight: number;
-	scale: number;
+	focusRects: ScreenshotFocusRect[];
 	displayWidth: number;
 	displayHeight: number;
 };
@@ -103,10 +106,24 @@ const clamp = (value: number, min: number, max: number) =>
 
 const VISUAL_EVOLUTION_EMPTY_TEXT = "Upload screenshots of your system to see its evolution here";
 
-function buildSubtrackScreenshotCrops(
+function buildFocusMaskPath(
+	imageWidth: number,
+	imageHeight: number,
+	focusRects: ScreenshotFocusRect[]
+): string {
+	const path = [`M0 0 H${imageWidth} V${imageHeight} H0 Z`];
+	for (const rect of focusRects) {
+		path.push(
+			`M${rect.x} ${rect.y} H${rect.x + rect.width} V${rect.y + rect.height} H${rect.x} Z`
+		);
+	}
+	return path.join(" ");
+}
+
+function buildSubtrackScreenshotFocusPreviews(
 	markers: SystemScreenshotMarker[],
 	filePaths: string[]
-): ScreenshotCropPreview[] {
+): ScreenshotFocusPreview[] {
 	const trackedPathSet = new Set(
 		filePaths
 			.filter((path): path is string => typeof path === "string")
@@ -115,10 +132,9 @@ function buildSubtrackScreenshotCrops(
 	);
 	if (trackedPathSet.size === 0) return [];
 
-	const previews: ScreenshotCropPreview[] = [];
-	const previewMaxWidth = 220;
-	const previewMaxHeight = 140;
-	const cropPadding = 10;
+	const previews: ScreenshotFocusPreview[] = [];
+	const previewMaxWidth = 420;
+	const previewMaxHeight = 240;
 
 	for (const marker of markers) {
 		const imageDataUrl = String(marker.imageDataUrl ?? "").trim();
@@ -133,10 +149,7 @@ function buildSubtrackScreenshotCrops(
 		);
 		if (matchedZones.length === 0) continue;
 
-		let minX = Number.POSITIVE_INFINITY;
-		let minY = Number.POSITIVE_INFINITY;
-		let maxX = Number.NEGATIVE_INFINITY;
-		let maxY = Number.NEGATIVE_INFINITY;
+		const focusRects: ScreenshotFocusRect[] = [];
 
 		for (const zone of matchedZones) {
 			const zoneX = clamp(Number(zone.x ?? 0), 0, imageWidth);
@@ -144,22 +157,17 @@ function buildSubtrackScreenshotCrops(
 			const zoneWidth = clamp(Number(zone.width ?? 0), 0, imageWidth - zoneX);
 			const zoneHeight = clamp(Number(zone.height ?? 0), 0, imageHeight - zoneY);
 			if (zoneWidth <= 0 || zoneHeight <= 0) continue;
-			minX = Math.min(minX, zoneX);
-			minY = Math.min(minY, zoneY);
-			maxX = Math.max(maxX, zoneX + zoneWidth);
-			maxY = Math.max(maxY, zoneY + zoneHeight);
+			focusRects.push({
+				x: zoneX,
+				y: zoneY,
+				width: zoneWidth,
+				height: zoneHeight,
+			});
 		}
 
-		if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-			continue;
-		}
+		if (focusRects.length === 0) continue;
 
-		const cropX = clamp(minX - cropPadding, 0, imageWidth);
-		const cropY = clamp(minY - cropPadding, 0, imageHeight);
-		const cropWidth = clamp((maxX - minX) + cropPadding * 2, 1, imageWidth - cropX);
-		const cropHeight = clamp((maxY - minY) + cropPadding * 2, 1, imageHeight - cropY);
-
-		const scale = Math.min(previewMaxWidth / cropWidth, previewMaxHeight / cropHeight);
+		const scale = Math.min(previewMaxWidth / imageWidth, previewMaxHeight / imageHeight);
 		if (!Number.isFinite(scale) || scale <= 0) continue;
 
 		previews.push({
@@ -168,13 +176,9 @@ function buildSubtrackScreenshotCrops(
 			imageDataUrl,
 			imageWidth,
 			imageHeight,
-			cropX,
-			cropY,
-			cropWidth,
-			cropHeight,
-			scale,
-			displayWidth: Math.max(48, Math.round(cropWidth * scale)),
-			displayHeight: Math.max(48, Math.round(cropHeight * scale)),
+			focusRects,
+			displayWidth: Math.max(48, Math.round(imageWidth * scale)),
+			displayHeight: Math.max(48, Math.round(imageHeight * scale)),
 		});
 	}
 
@@ -227,6 +231,15 @@ export const Timeline = ({
 		y: number;
 	} | null>(null);
 	const [visualEvolutionPanel, setVisualEvolutionPanel] = useState<VisualEvolutionPanelState>(null);
+	const [visualEvolutionPreviewTooltip, setVisualEvolutionPreviewTooltip] = useState<{
+		x: number;
+		y: number;
+		imageDataUrl: string;
+		imageWidth: number;
+		imageHeight: number;
+		occurredAt: string;
+		focusRects?: ScreenshotFocusRect[];
+	} | null>(null);
 	const [hoveredScreenshotZoneId, setHoveredScreenshotZoneId] = useState<string | null>(null);
 	const [blueprintLinkMenu, setBlueprintLinkMenu] = useState<{
 		x: number;
@@ -313,9 +326,9 @@ export const Timeline = ({
 		if (!subtrackId) return null;
 		return codebaseSubtracks.find((subtrack) => subtrack.id === subtrackId) ?? null;
 	}, [codebaseSubtracks, visualEvolutionPanel]);
-	const visualEvolutionSubtrackCrops = useMemo(() => {
+	const visualEvolutionSubtrackPreviews = useMemo(() => {
 		if (!visualEvolutionSubtrack) return [];
-		return buildSubtrackScreenshotCrops(
+		return buildSubtrackScreenshotFocusPreviews(
 			orderedScreenshotMarkers,
 			Array.isArray(visualEvolutionSubtrack.filePaths) ? visualEvolutionSubtrack.filePaths : []
 		);
@@ -377,6 +390,7 @@ export const Timeline = ({
 			setHoveredKnowledgeTreeId(null);
 			setSystemScreenshotTooltip(null);
 			setVisualEvolutionPanel(null);
+			setVisualEvolutionPreviewTooltip(null);
 			setHoveredScreenshotZoneId(null);
 			dispatch(setHighlightedCodebaseFilePaths([]));
 		};
@@ -533,6 +547,7 @@ export const Timeline = ({
 				};
 			});
 			setSystemScreenshotTooltip(null);
+			setVisualEvolutionPreviewTooltip(null);
 			setHoveredScreenshotZoneId(null);
 		},
 		suggestingCodebaseSubtrackIds,
@@ -726,14 +741,53 @@ export const Timeline = ({
 			12,
 			Math.min(rect.left + (rect.width - resolvedWidth) / 2, window.innerWidth - resolvedWidth - 12)
 		);
-		const bottom = Math.max(8, window.innerHeight - rect.top + 8);
-
 		return {
-			left,
-			bottom,
-			width: resolvedWidth,
+			left: left + 320 + 22,
+			bottom: 380 + 15,
+			width: resolvedWidth - 320 - 250 - 35,
 		};
 	}, [visualEvolutionPanel, width, height]);
+
+	const visualEvolutionPreviewTooltipStyle = useMemo(() => {
+		if (!visualEvolutionPreviewTooltip || typeof window === "undefined") return null;
+		const tooltipWidth = 1120;
+		const tooltipHeight = 720;
+		const left = Math.max(
+			12,
+			Math.min(window.innerWidth - tooltipWidth - 12, visualEvolutionPreviewTooltip.x + 16)
+		);
+		const top = Math.max(
+			12,
+			Math.min(window.innerHeight - tooltipHeight - 12, visualEvolutionPreviewTooltip.y + 16)
+		);
+		return { left, top };
+	}, [visualEvolutionPreviewTooltip]);
+
+	useEffect(() => {
+		if (visualEvolutionPanel) return;
+		setVisualEvolutionPreviewTooltip(null);
+	}, [visualEvolutionPanel]);
+
+	const updateVisualEvolutionPreviewTooltip = (
+		event: { clientX: number; clientY: number },
+		payload: {
+			imageDataUrl: string;
+			imageWidth: number;
+			imageHeight: number;
+			occurredAt: string;
+			focusRects?: ScreenshotFocusRect[];
+		}
+	) => {
+		setVisualEvolutionPreviewTooltip({
+			x: event.clientX,
+			y: event.clientY,
+			imageDataUrl: payload.imageDataUrl,
+			imageWidth: payload.imageWidth,
+			imageHeight: payload.imageHeight,
+			occurredAt: payload.occurredAt,
+			focusRects: payload.focusRects,
+		});
+	};
 
 	const tooltipInner = useMemo(() => {
 		if (selectedEvent?.kind === "codebase") {
@@ -780,6 +834,7 @@ export const Timeline = ({
 					setHoveredKnowledgeTreeId(null);
 					setSystemScreenshotTooltip(null);
 					setVisualEvolutionPanel(null);
+					setVisualEvolutionPreviewTooltip(null);
 					setHoveredScreenshotZoneId(null);
 					dispatch(setHighlightedCodebaseFilePaths([]));
 				}}
@@ -868,6 +923,7 @@ export const Timeline = ({
 									: { kind: "codebase" }
 							);
 							setSystemScreenshotTooltip(null);
+							setVisualEvolutionPreviewTooltip(null);
 							setHoveredScreenshotZoneId(null);
 						}}
 					>
@@ -1083,9 +1139,31 @@ export const Timeline = ({
 						{visualEvolutionPanel.kind === "codebase" ? (
 							codebaseVisualScreenshots.length > 0 ? (
 								<div className={classes.visualEvolutionScroller}>
-									{codebaseVisualScreenshots.map((marker) => (
+									{codebaseVisualScreenshots.map((marker) => {
+										const imageWidth = Math.max(1, Number(marker.imageWidth ?? 1));
+										const imageHeight = Math.max(1, Number(marker.imageHeight ?? 1));
+										return (
 										<figure key={marker.id} className={classes.visualEvolutionFrame}>
-											<div className={classes.visualEvolutionMedia}>
+											<div
+												className={classes.visualEvolutionMedia}
+												onMouseEnter={(event) =>
+													updateVisualEvolutionPreviewTooltip(event, {
+														imageDataUrl: marker.imageDataUrl,
+														imageWidth,
+														imageHeight,
+														occurredAt: marker.occurredAt,
+													})
+												}
+												onMouseMove={(event) =>
+													updateVisualEvolutionPreviewTooltip(event, {
+														imageDataUrl: marker.imageDataUrl,
+														imageWidth,
+														imageHeight,
+														occurredAt: marker.occurredAt,
+													})
+												}
+												onMouseLeave={() => setVisualEvolutionPreviewTooltip(null)}
+											>
 												<img
 													src={marker.imageDataUrl}
 													alt={`System screenshot from ${formatDate(marker.occurredAt)}`}
@@ -1096,7 +1174,7 @@ export const Timeline = ({
 												{formatDate(marker.occurredAt)}
 											</figcaption>
 										</figure>
-									))}
+									)})}
 								</div>
 							) : (
 								<div className={classes.visualEvolutionEmpty}>
@@ -1104,32 +1182,61 @@ export const Timeline = ({
 								</div>
 							)
 						) : (
-							visualEvolutionSubtrackCrops.length > 0 ? (
+							visualEvolutionSubtrackPreviews.length > 0 ? (
 								<div className={classes.visualEvolutionScroller}>
-									{visualEvolutionSubtrackCrops.map((preview) => {
-										const scaledWidth = Math.round(preview.imageWidth * preview.scale);
-										const scaledHeight = Math.round(preview.imageHeight * preview.scale);
-										const offsetX = -Math.round(preview.cropX * preview.scale);
-										const offsetY = -Math.round(preview.cropY * preview.scale);
+									{visualEvolutionSubtrackPreviews.map((preview) => {
+										const maskPath = buildFocusMaskPath(
+											preview.imageWidth,
+											preview.imageHeight,
+											preview.focusRects
+										);
 										return (
-											<figure key={`${preview.markerId}-${preview.cropX}-${preview.cropY}`} className={classes.visualEvolutionFrame}>
+											<figure key={`${preview.markerId}-${preview.occurredAt}`} className={classes.visualEvolutionFrame}>
 												<div
-													className={classes.visualEvolutionCrop}
+													className={classes.visualEvolutionMedia}
 													style={{
 														width: `${preview.displayWidth}px`,
 														height: `${preview.displayHeight}px`,
 													}}
+													onMouseEnter={(event) =>
+														updateVisualEvolutionPreviewTooltip(event, {
+															imageDataUrl: preview.imageDataUrl,
+															imageWidth: preview.imageWidth,
+															imageHeight: preview.imageHeight,
+															occurredAt: preview.occurredAt,
+															focusRects: preview.focusRects,
+														})
+													}
+													onMouseMove={(event) =>
+														updateVisualEvolutionPreviewTooltip(event, {
+															imageDataUrl: preview.imageDataUrl,
+															imageWidth: preview.imageWidth,
+															imageHeight: preview.imageHeight,
+															occurredAt: preview.occurredAt,
+															focusRects: preview.focusRects,
+														})
+													}
+													onMouseLeave={() => setVisualEvolutionPreviewTooltip(null)}
 												>
 													<img
 														src={preview.imageDataUrl}
-														alt={`Component crop from ${formatDate(preview.occurredAt)}`}
-														className={classes.visualEvolutionCropImage}
-														style={{
-															width: `${scaledWidth}px`,
-															height: `${scaledHeight}px`,
-															transform: `translate(${offsetX}px, ${offsetY}px)`,
-														}}
+														alt={`Focused component view from ${formatDate(preview.occurredAt)}`}
+														className={classes.visualEvolutionImage}
 													/>
+													<div className={classes.visualEvolutionFocusOverlay}>
+														<svg
+															className={classes.visualEvolutionFocusMask}
+															viewBox={`0 0 ${preview.imageWidth} ${preview.imageHeight}`}
+															preserveAspectRatio="none"
+															aria-hidden="true"
+														>
+															<path
+																d={maskPath}
+																fill="rgba(0, 0, 0, 0.84)"
+																fillRule="evenodd"
+															/>
+														</svg>
+													</div>
 												</div>
 												<figcaption className={classes.visualEvolutionTimestamp}>
 													{formatDate(preview.occurredAt)}
@@ -1144,6 +1251,52 @@ export const Timeline = ({
 								</div>
 							)
 						)}
+					</div>
+				), document.body)
+				: null}
+
+			{visualEvolutionPreviewTooltip && visualEvolutionPreviewTooltipStyle && typeof document !== "undefined"
+				? createPortal((
+					<div
+						className={classes.visualEvolutionPreviewTooltip}
+						style={visualEvolutionPreviewTooltipStyle}
+					>
+						<div
+							className={classes.visualEvolutionPreviewMedia}
+							style={{
+								aspectRatio: `${Math.max(1, visualEvolutionPreviewTooltip.imageWidth)} / ${Math.max(1, visualEvolutionPreviewTooltip.imageHeight)}`,
+							}}
+						>
+							<img
+								src={visualEvolutionPreviewTooltip.imageDataUrl}
+								alt={`System screenshot preview from ${formatDate(visualEvolutionPreviewTooltip.occurredAt)}`}
+								className={classes.visualEvolutionPreviewImage}
+							/>
+							{Array.isArray(visualEvolutionPreviewTooltip.focusRects) &&
+								visualEvolutionPreviewTooltip.focusRects.length > 0 ? (
+								<div className={classes.visualEvolutionFocusOverlay}>
+									<svg
+										className={classes.visualEvolutionFocusMask}
+										viewBox={`0 0 ${visualEvolutionPreviewTooltip.imageWidth} ${visualEvolutionPreviewTooltip.imageHeight}`}
+										preserveAspectRatio="none"
+										aria-hidden="true"
+									>
+										<path
+											d={buildFocusMaskPath(
+												visualEvolutionPreviewTooltip.imageWidth,
+												visualEvolutionPreviewTooltip.imageHeight,
+												visualEvolutionPreviewTooltip.focusRects
+											)}
+											fill="rgba(0, 0, 0, 0.84)"
+											fillRule="evenodd"
+										/>
+									</svg>
+								</div>
+							) : null}
+						</div>
+						<p className={classes.visualEvolutionPreviewTimestamp}>
+							{formatDate(visualEvolutionPreviewTooltip.occurredAt)}
+						</p>
 					</div>
 				), document.body)
 				: null}
