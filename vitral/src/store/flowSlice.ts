@@ -5,6 +5,16 @@ import type { RootState } from "@/store/rootReducer";
 
 const EMPTY_IDS: string[] = [];
 const EMPTY_BY_ID: Record<string, fileRecord> = {};
+const NODE_HISTORY_KEY = "__history";
+const NODE_EDIT_AT_KEY = "__editAt";
+const DEFAULT_HISTORY_TIMESTAMP = "1970-01-01T00:00:00.000Z";
+
+type NodeHistoryEntry = {
+    at: string;
+    kind: "data" | "position";
+    data?: Record<string, unknown>;
+    position?: { x: number; y: number };
+};
 
 const initialState: { nodes: nodeType[], edges: edgeType[], title: string } = {
     nodes: [],
@@ -72,7 +82,10 @@ function edgeDedupKey(edge: edgeType): string {
     const kind = edgeString(data.kind);
     const from = edgeString(data.from);
     const to = edgeString(data.to);
-    return `${source}|${target}|${label}|${kind}|${from}|${to}`;
+    const deleted = typeof data.deletedAt === "string" && data.deletedAt.trim() !== ""
+        ? "deleted"
+        : "active";
+    return `${source}|${target}|${label}|${kind}|${from}|${to}|${deleted}`;
 }
 
 function dedupeEdges(edges: edgeType[]): edgeType[] {
@@ -285,25 +298,207 @@ function resizeSystemBlueprintGroups(nodes: nodeType[]): void {
     }
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function normalizeIsoTimestamp(value: unknown, fallback: string): string {
+    if (typeof value !== "string") return fallback;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return fallback;
+    return parsed.toISOString();
+}
+
+function nodeDataRecord(node: nodeType): Record<string, unknown> {
+    return isObjectRecord(node.data) ? { ...node.data } : {};
+}
+
+function stripNodeMeta(data: Record<string, unknown>): Record<string, unknown> {
+    const cloned = { ...data };
+    delete cloned[NODE_HISTORY_KEY];
+    delete cloned[NODE_EDIT_AT_KEY];
+    return cloned;
+}
+
+function readNodeHistory(data: Record<string, unknown>): NodeHistoryEntry[] {
+    const raw = data[NODE_HISTORY_KEY];
+    if (!Array.isArray(raw)) return [];
+
+    return raw
+        .map((item) => {
+            if (!isObjectRecord(item)) return null;
+            const kind = item.kind === "position" ? "position" : item.kind === "data" ? "data" : null;
+            if (!kind) return null;
+            const at = normalizeIsoTimestamp(item.at, "");
+            if (!at) return null;
+
+            const entry: NodeHistoryEntry = { at, kind };
+            if (kind === "data" && isObjectRecord(item.data)) {
+                entry.data = { ...item.data };
+            }
+            if (kind === "position" && isObjectRecord(item.position)) {
+                const x = Number(item.position.x);
+                const y = Number(item.position.y);
+                if (Number.isFinite(x) && Number.isFinite(y)) {
+                    entry.position = { x, y };
+                }
+            }
+            return entry;
+        })
+        .filter((entry): entry is NodeHistoryEntry => entry !== null);
+}
+
+function writeNodeHistory(data: Record<string, unknown>, history: NodeHistoryEntry[]): Record<string, unknown> {
+    return {
+        ...data,
+        [NODE_HISTORY_KEY]: history,
+    };
+}
+
+function appendNodeDataSnapshot(
+    history: NodeHistoryEntry[],
+    at: string,
+    snapshot: Record<string, unknown>,
+): NodeHistoryEntry[] {
+    return [
+        ...history,
+        {
+            at,
+            kind: "data",
+            data: { ...snapshot },
+        },
+    ];
+}
+
+function appendNodePositionSnapshot(
+    history: NodeHistoryEntry[],
+    at: string,
+    position: { x: number; y: number },
+): NodeHistoryEntry[] {
+    return [
+        ...history,
+        {
+            at,
+            kind: "position",
+            position: { x: position.x, y: position.y },
+        },
+    ];
+}
+
+function ensureNodeHistory(node: nodeType): nodeType {
+    const data = nodeDataRecord(node);
+    const createdAt = normalizeIsoTimestamp(data.createdAt, DEFAULT_HISTORY_TIMESTAMP);
+    const snapshotData = stripNodeMeta(data);
+    const history = readNodeHistory(data);
+
+    if (history.length > 0) {
+        const nextData = writeNodeHistory({
+            ...snapshotData,
+            createdAt,
+        }, history);
+
+        return {
+            ...node,
+            data: nextData as nodeType["data"],
+        };
+    }
+
+    const initialized = appendNodePositionSnapshot(
+        appendNodeDataSnapshot([], createdAt, { ...snapshotData, createdAt }),
+        createdAt,
+        node.position,
+    );
+
+    const nextData = writeNodeHistory({
+        ...snapshotData,
+        createdAt,
+    }, initialized);
+
+    return {
+        ...node,
+        data: nextData as nodeType["data"],
+    };
+}
+
+function ensureEdgeTimestamps(edge: edgeType): edgeType {
+    const data = edgeDataRecord(edge);
+    const createdAt = normalizeIsoTimestamp(data.createdAt, DEFAULT_HISTORY_TIMESTAMP);
+    const deletedAtRaw = data.deletedAt;
+    const deletedAt = typeof deletedAtRaw === "string" && deletedAtRaw.trim() !== ""
+        ? normalizeIsoTimestamp(deletedAtRaw, "")
+        : "";
+
+    return {
+        ...edge,
+        data: {
+            ...data,
+            createdAt,
+            ...(deletedAt ? { deletedAt } : {}),
+        },
+    };
+}
+
 const flowSlice = createSlice({
     name: 'flow',
     initialState,
     reducers: {
         setNodes: (state, action) => {
-            state.nodes = action.payload;
+            const incoming = Array.isArray(action.payload) ? action.payload : [];
+            state.nodes = incoming.map((node) => ensureNodeHistory(node));
         },
         setEdges: (state, action) => {
-            state.edges = dedupeEdges(Array.isArray(action.payload) ? action.payload : []);
+            const incoming = Array.isArray(action.payload) ? action.payload : [];
+            state.edges = dedupeEdges(incoming.map((edge) => ensureEdgeTimestamps(edge)));
         },
         addNode: (state, action: PayloadAction<nodeType>) => {
-            state.nodes.push(action.payload);
+            state.nodes.push(ensureNodeHistory(action.payload));
         },
         addNodes: (state, action) => {
-            state.nodes = state.nodes.concat(action.payload);
+            const incoming = Array.isArray(action.payload) ? action.payload : [];
+            state.nodes = state.nodes.concat(incoming.map((node) => ensureNodeHistory(node)));
         },
         updateNode: (state, action: PayloadAction<nodeType>) => {
-            const index = state.nodes.findIndex(n => n.id === action.payload.id);
-            if (index !== -1) state.nodes[index] = { ...state.nodes[index], ...action.payload };
+            const index = state.nodes.findIndex((n) => n.id === action.payload.id);
+            if (index === -1) return;
+
+            const existing = ensureNodeHistory(state.nodes[index]);
+            const existingData = nodeDataRecord(existing);
+            const incomingData = isObjectRecord(action.payload.data)
+                ? action.payload.data as Record<string, unknown>
+                : {};
+            const mergedData = {
+                ...existingData,
+                ...incomingData,
+            };
+            const nowIso = new Date().toISOString();
+            const editAt = normalizeIsoTimestamp(mergedData[NODE_EDIT_AT_KEY], nowIso);
+            const previousSnapshot = stripNodeMeta(existingData);
+            const nextSnapshot = stripNodeMeta(mergedData);
+            const previousPosition = existing.position;
+            const nextPosition = action.payload.position ?? existing.position;
+
+            let history = readNodeHistory(mergedData);
+            const dataChanged = JSON.stringify(previousSnapshot) !== JSON.stringify(nextSnapshot);
+            const positionChanged = previousPosition.x !== nextPosition.x || previousPosition.y !== nextPosition.y;
+
+            if (dataChanged) {
+                history = appendNodeDataSnapshot(history, editAt, nextSnapshot);
+            }
+            if (positionChanged) {
+                history = appendNodePositionSnapshot(history, editAt, nextPosition);
+            }
+
+            const nextData = writeNodeHistory({
+                ...nextSnapshot,
+                createdAt: normalizeIsoTimestamp(nextSnapshot.createdAt, DEFAULT_HISTORY_TIMESTAMP),
+            }, history);
+
+            state.nodes[index] = {
+                ...existing,
+                ...action.payload,
+                position: nextPosition,
+                data: nextData as nodeType["data"],
+            };
         },
         removeNode: (state, action) => {
             state.nodes = state.nodes.filter(n => n.id !== action.payload);
@@ -311,18 +506,61 @@ const flowSlice = createSlice({
             resizeSystemBlueprintGroups(state.nodes);
         },
         connectEdge: (state, action) => {
-            state.edges = dedupeEdges([...state.edges, action.payload]);
+            state.edges = dedupeEdges([...state.edges, ensureEdgeTimestamps(action.payload)]);
         },
         connectEdges: (state, action) => {
             const incoming = Array.isArray(action.payload) ? action.payload : [];
-            state.edges = dedupeEdges(state.edges.concat(incoming));
+            state.edges = dedupeEdges(state.edges.concat(incoming.map((edge) => ensureEdgeTimestamps(edge))));
+        },
+        updateEdge: (state, action: PayloadAction<edgeType>) => {
+            const index = state.edges.findIndex((edge) => edge.id === action.payload.id);
+            if (index === -1) return;
+            const existing = state.edges[index];
+            const existingData = edgeDataRecord(existing);
+            const incomingData = edgeDataRecord(action.payload);
+            state.edges[index] = ensureEdgeTimestamps({
+                ...existing,
+                ...action.payload,
+                data: {
+                    ...existingData,
+                    ...incomingData,
+                },
+            });
         },
         removeEdge: (state, action) => {
             state.edges = state.edges.filter(e => e.id !== action.payload);
         },
         onNodesChange: (state, action) => {
+            const changes = Array.isArray(action.payload) ? action.payload : [];
+            const positionTimestampsByNodeId = new Map<string, string>();
+            const nowIso = new Date().toISOString();
+            for (const change of changes) {
+                if (!isObjectRecord(change)) continue;
+                if (change.type !== "position") continue;
+                const nodeId = typeof change.id === "string" ? change.id : "";
+                if (!nodeId) continue;
+                const editAt = normalizeIsoTimestamp(change[NODE_EDIT_AT_KEY], nowIso);
+                positionTimestampsByNodeId.set(nodeId, editAt);
+            }
+
             const a = applyNodeChanges(action.payload, state.nodes);
             state.nodes = a;
+
+            if (positionTimestampsByNodeId.size > 0) {
+                state.nodes = state.nodes.map((node) => {
+                    const at = positionTimestampsByNodeId.get(node.id);
+                    if (!at) return node;
+                    const enriched = ensureNodeHistory(node);
+                    const data = nodeDataRecord(enriched);
+                    const history = appendNodePositionSnapshot(readNodeHistory(data), at, enriched.position);
+                    const nextData = writeNodeHistory(stripNodeMeta(data), history);
+                    return {
+                        ...enriched,
+                        data: nextData as nodeType["data"],
+                    };
+                });
+            }
+
             const hasRemoval = Array.isArray(action.payload)
                 ? action.payload.some((change: { type?: string }) => change.type === "remove")
                 : false;
@@ -332,7 +570,7 @@ const flowSlice = createSlice({
         },
         onEdgesChange: (state, action) => {
             const a = applyEdgeChanges(action.payload, state.edges);
-            state.edges = dedupeEdges(a);
+            state.edges = dedupeEdges(a.map((edge) => ensureEdgeTimestamps(edge)));
         },
         setTitle: (state, action) => {
             state.title = action.payload;
@@ -418,6 +656,7 @@ export const {
     updateNode,
     removeNode,
     connectEdge,
+    updateEdge,
     removeEdge,
     onNodesChange,
     onEdgesChange,

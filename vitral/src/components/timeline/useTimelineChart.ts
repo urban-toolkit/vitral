@@ -1515,19 +1515,18 @@ export function useTimelineChart({
 
             const timelineDomainStart = parsed.domain[0];
             const timelineDomainEnd = parsed.domain[1];
-            const maxPlayableDate = today < timelineDomainStart
+            const defaultPlaybackDate = today < timelineDomainStart
                 ? timelineDomainStart
                 : (today > timelineDomainEnd ? timelineDomainEnd : today);
-            const playbackCandidate = playbackAt ? toDate(playbackAt) : maxPlayableDate;
+            const playbackCandidate = playbackAt ? toDate(playbackAt) : defaultPlaybackDate;
             const clampedPlaybackDate = new Date(
-                Math.min(
-                    maxPlayableDate.getTime(),
-                    Math.max(timelineDomainStart.getTime(), playbackCandidate.getTime()),
-                ),
+                Math.min(timelineDomainEnd.getTime(), Math.max(timelineDomainStart.getTime(), playbackCandidate.getTime())),
             );
-            const maxPlayableX = x(maxPlayableDate);
+            const maxPlayableX = x(timelineDomainEnd);
             const minPlayableX = timelineLeft;
             const playheadX = Math.max(minPlayableX, Math.min(maxPlayableX, x(clampedPlaybackDate)));
+            const todayX = x(today);
+            const todaySnapPx = 14;
 
             markerG
                 .append("line")
@@ -1544,12 +1543,11 @@ export function useTimelineChart({
                 if (!onPlaybackAtChange) return;
                 const [pointerX] = d3.pointer(event, currentSvg);
                 const clampedX = Math.max(minPlayableX, Math.min(maxPlayableX, pointerX));
-                const nextDate = x.invert(clampedX);
-                const deltaToNow = Math.abs(nextDate.getTime() - today.getTime());
-                if (deltaToNow < 60_000) {
+                if (showToday && Math.abs(clampedX - todayX) <= todaySnapPx) {
                     onPlaybackAtChange(null);
                     return;
                 }
+                const nextDate = x.invert(clampedX);
                 onPlaybackAtChange(nextDate.toISOString());
             };
 
@@ -1568,7 +1566,7 @@ export function useTimelineChart({
 
             playheadHandle
                 .append("title")
-                .text("Playback time (drag left to inspect past canvas states)");
+                .text("Playback time (drag to inspect past and future canvas states)");
 
             if (onPlaybackAtChange) {
                 playheadHandle.call(

@@ -31,7 +31,6 @@ import {
     deleteFile,
     exportProjectVi,
     loadDocument,
-    loadDocumentStateAt,
     loadKnowledgeProvenance,
     queryCanvasChat,
     queryDocumentNodes,
@@ -72,6 +71,7 @@ import {
     onEdgesChange,
     onNodesChange,
     removeNode,
+    updateEdge,
     updateNode,
 } from "@/store/flowSlice";
 import { removeFile, selectAllFiles } from "@/store/filesSlice";
@@ -205,6 +205,72 @@ function toIsoDateString(value: unknown): string {
         return value.toISOString();
     }
     return "";
+}
+
+function toTimestampMs(value: unknown): number | null {
+    if (typeof value === "string" || value instanceof Date) {
+        const parsed = new Date(value).getTime();
+        return Number.isNaN(parsed) ? null : parsed;
+    }
+    return null;
+}
+
+type NodeHistoryEntry = {
+    at?: unknown;
+    kind?: unknown;
+    data?: unknown;
+    position?: unknown;
+};
+
+function nodeHistoryFrom(data: unknown): NodeHistoryEntry[] {
+    if (!data || typeof data !== "object") return [];
+    const history = (data as Record<string, unknown>).__history;
+    if (!Array.isArray(history)) return [];
+    return history.filter((entry): entry is NodeHistoryEntry => (
+        typeof entry === "object" &&
+        entry !== null
+    ));
+}
+
+function resolveNodeAtPlayback(node: nodeType, playbackTime: number): nodeType {
+    const dataRecord = (node.data ?? {}) as Record<string, unknown>;
+    const history = nodeHistoryFrom(dataRecord);
+    if (history.length === 0) return node;
+
+    let resolvedData: Record<string, unknown> | null = null;
+    let resolvedPosition: { x: number; y: number } | null = null;
+
+    for (const entry of history) {
+        const at = toTimestampMs(entry.at);
+        if (at === null || at > playbackTime) continue;
+
+        if (entry.kind === "data" && entry.data && typeof entry.data === "object") {
+            resolvedData = { ...(entry.data as Record<string, unknown>) };
+        }
+        if (entry.kind === "position" && entry.position && typeof entry.position === "object") {
+            const position = entry.position as Record<string, unknown>;
+            const x = Number(position.x);
+            const y = Number(position.y);
+            if (Number.isFinite(x) && Number.isFinite(y)) {
+                resolvedPosition = { x, y };
+            }
+        }
+    }
+
+    if (!resolvedData && !resolvedPosition) return node;
+
+    const nextData = resolvedData
+        ? ({
+            ...resolvedData,
+            __history: history,
+        } as unknown as nodeType["data"])
+        : node.data;
+
+    return {
+        ...node,
+        ...(resolvedPosition ? { position: resolvedPosition } : {}),
+        data: nextData,
+    };
 }
 
 function normalizeNodeLabel(label: string): string {
@@ -395,6 +461,7 @@ function toBlueprintData(payload: BlueprintDragPayload): BlueprintData {
 function buildBlueprintComponentGraph(
     payload: BlueprintDragPayload,
     dropPosition: { x: number; y: number },
+    createdAt?: string,
 ): { nodes: nodeType[]; edges: edgeType[] } {
     const blueprint = toBlueprintData(payload);
 
@@ -564,6 +631,7 @@ function buildBlueprintComponentGraph(
             type: "technical",
             title: paperTitle,
             description: "System Paper",
+            ...(createdAt ? { createdAt } : {}),
             blueprintGroupLevel: "paper",
             blueprintPaperTitle: blueprint.paperTitle,
             blueprintFileName: blueprint.fileName,
@@ -594,6 +662,7 @@ function buildBlueprintComponentGraph(
                 type: "technical",
                 title: highLayout.high.name,
                 description: "High Block",
+                ...(createdAt ? { createdAt } : {}),
                 blueprintGroupLevel: "high",
                 blueprintPaperTitle: blueprint.paperTitle,
                 blueprintFileName: blueprint.fileName,
@@ -626,6 +695,7 @@ function buildBlueprintComponentGraph(
                     type: "technical",
                     title: intermediate.name,
                     description: "Intermediate Block",
+                    ...(createdAt ? { createdAt } : {}),
                     blueprintGroupLevel: "intermediate",
                     blueprintPaperTitle: blueprint.paperTitle,
                     blueprintFileName: blueprint.fileName,
@@ -654,6 +724,7 @@ function buildBlueprintComponentGraph(
                         title: component.name,
                         codebaseFilePaths: [],
                         description: `${component.highBlockName} / ${component.intermediateBlockName}`,
+                        ...(createdAt ? { createdAt } : {}),
                         blueprintComponent: component,
                         blueprintPaperTitle: blueprint.paperTitle,
                         blueprintFileName: blueprint.fileName,
@@ -691,6 +762,7 @@ function buildBlueprintComponentGraph(
                     label: "feeds into",
                     from: "blueprint_component",
                     to: "blueprint_component",
+                    ...(createdAt ? { createdAt } : {}),
                 },
             });
         }
@@ -733,10 +805,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [knowledgeCrossTreeConnections, setKnowledgeCrossTreeConnections] = useState<KnowledgeCrossTreeConnection[]>([]);
     const [knowledgeBlueprintLinks, setKnowledgeBlueprintLinks] = useState<KnowledgeBlueprintLink[]>([]);
     const [playbackAt, setPlaybackAt] = useState<string | null>(null);
-    const [playbackSnapshot, setPlaybackSnapshot] = useState<{ nodes: nodeType[]; edges: edgeType[] } | null>(null);
     const [projectGoal, setProjectGoal] = useState("");
     const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
-    const queuedPositionChangesRef = useRef<NodeChange<nodeType>[]>([]);
+    const queuedPositionChangesRef = useRef<Array<NodeChange<nodeType> & { __editAt?: string }>>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
     const queryRequestIdRef = useRef(0);
     const chatRequestIdRef = useRef(0);
@@ -824,16 +895,81 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
         return latest;
     }, [mostRecentSystemScreenshotMarker, playbackAt, systemScreenshotMarkers]);
-    const isPlaybackMode = playbackAt !== null;
-    const interactionLocked = reviewOnly || isPlaybackMode;
-    const timelineContextNodes = useMemo(
-        () => (isPlaybackMode && playbackSnapshot ? playbackSnapshot.nodes : nodes),
-        [isPlaybackMode, nodes, playbackSnapshot],
-    );
-    const timelineContextEdges = useMemo(
-        () => (isPlaybackMode && playbackSnapshot ? playbackSnapshot.edges : edges),
-        [edges, isPlaybackMode, playbackSnapshot],
-    );
+    const playbackAtTime = useMemo(() => {
+        if (!playbackAt) return null;
+        return toTimestampMs(playbackAt);
+    }, [playbackAt]);
+    const effectivePlaybackTime = playbackAtTime ?? Date.now();
+    const latestChangeTime = useMemo(() => {
+        const startBound = toTimestampMs(timelineStartEnd.start) ?? Number.NEGATIVE_INFINITY;
+        const endBound = toTimestampMs(timelineStartEnd.end) ?? Number.POSITIVE_INFINITY;
+        let latest: number | null = null;
+
+        const addCandidate = (value: unknown) => {
+            const timestamp = toTimestampMs(value);
+            if (timestamp === null) return;
+            if (timestamp < startBound || timestamp > endBound) return;
+            latest = latest === null ? timestamp : Math.max(latest, timestamp);
+        };
+
+        for (const node of nodes) {
+            addCandidate((node.data as Record<string, unknown>)?.createdAt);
+            const dataRecord = (node.data ?? {}) as Record<string, unknown>;
+            for (const entry of nodeHistoryFrom(dataRecord)) {
+                addCandidate(entry.at);
+            }
+        }
+        for (const eventData of designStudyEvents) addCandidate(eventData.occurredAt);
+        for (const eventData of blueprintEvents) addCandidate(eventData.occurredAt);
+        for (const marker of systemScreenshotMarkers) addCandidate(marker.occurredAt);
+        for (const edge of edges) {
+            addCandidate((edge.data as Record<string, unknown> | undefined)?.createdAt);
+            addCandidate((edge.data as Record<string, unknown> | undefined)?.deletedAt);
+        }
+
+        return latest;
+    }, [blueprintEvents, designStudyEvents, edges, nodes, systemScreenshotMarkers, timelineStartEnd.end, timelineStartEnd.start]);
+    const isHistoricalPlayback = useMemo(() => {
+        if (latestChangeTime === null) return false;
+        return effectivePlaybackTime < latestChangeTime;
+    }, [effectivePlaybackTime, latestChangeTime]);
+    const interactionLocked = reviewOnly || isHistoricalPlayback;
+    const resolveActionTimestamp = useCallback(() => {
+        if (playbackAt) {
+            const parsed = new Date(playbackAt);
+            if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+        }
+        return new Date().toISOString();
+    }, [playbackAt]);
+    const timelineContextNodes = useMemo(() => {
+        return nodes
+            .filter((node) => {
+                const createdAt = toTimestampMs((node.data as Record<string, unknown>)?.createdAt);
+                return createdAt === null || createdAt <= effectivePlaybackTime;
+            })
+            .map((node) => resolveNodeAtPlayback(node, effectivePlaybackTime));
+    }, [effectivePlaybackTime, nodes]);
+    const timelineContextEdges = useMemo(() => {
+        const cutoffTime = effectivePlaybackTime;
+        const visibleNodeIds = new Set(timelineContextNodes.map((node) => node.id));
+
+        return edges.filter((edge) => {
+            if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) {
+                return false;
+            }
+            const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
+            const createdAt = toTimestampMs(edgeData.createdAt);
+            if (createdAt !== null && createdAt > cutoffTime) {
+                return false;
+            }
+
+            const deletedAt = toTimestampMs(edgeData.deletedAt);
+            if (deletedAt !== null && deletedAt <= cutoffTime) {
+                return false;
+            }
+            return true;
+        });
+    }, [edges, effectivePlaybackTime, timelineContextNodes]);
     const knowledgeProvenanceTriggerKey = useMemo(() => {
         const nodeParts = nodes
             .map((node) => {
@@ -910,41 +1046,28 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         };
     }, [knowledgeProvenanceTriggerKey, projectId, status]);
 
-    useEffect(() => {
-        if (!playbackAt) {
-            setPlaybackSnapshot(null);
-            return;
+    const cardCreatedAtByNodeId = useMemo(() => {
+        const byId = new Map<string, string>();
+        for (const node of nodes) {
+            const data = (node.data ?? {}) as Record<string, unknown>;
+            const createdAt = typeof data.createdAt === "string" ? data.createdAt : "";
+            const parsed = new Date(createdAt);
+            if (Number.isNaN(parsed.getTime())) continue;
+            byId.set(node.id, parsed.toISOString());
         }
-        let active = true;
-
-        void (async () => {
-            try {
-                const snapshot = await loadDocumentStateAt(projectId, playbackAt);
-                if (!active) return;
-                const flow = snapshot.state?.flow as { nodes?: unknown; edges?: unknown } | undefined;
-                const snapshotNodes = Array.isArray(flow?.nodes) ? flow.nodes as nodeType[] : [];
-                const snapshotEdges = Array.isArray(flow?.edges) ? flow.edges as edgeType[] : [];
-                setPlaybackSnapshot({
-                    nodes: snapshotNodes,
-                    edges: snapshotEdges,
-                });
-            } catch (error) {
-                if (!active) return;
-                console.warn("Failed to load state snapshot for timeline playback.", error);
-                setPlaybackSnapshot(null);
-                setPlaybackAt(null);
-            }
-        })();
-
-        return () => {
-            active = false;
-        };
-    }, [playbackAt, projectId]);
+        return byId;
+    }, [nodes]);
 
     const knowledgeBaseEvents = useMemo<KnowledgeBaseEvent[]>(() => {
-        return knowledgeCreationEvents.map((eventData) => ({
+        return knowledgeCreationEvents.map((eventData) => {
+            const nodeId = typeof eventData.nodeId === "string" ? eventData.nodeId : "";
+            const occurredAt = nodeId && cardCreatedAtByNodeId.has(nodeId)
+                ? cardCreatedAtByNodeId.get(nodeId) ?? eventData.occurredAt
+                : eventData.occurredAt;
+
+            return {
             id: eventData.id,
-            occurredAt: eventData.occurredAt,
+            occurredAt,
             kind: "knowledge",
             subtype: eventData.eventType,
             isDeleted: eventData.isDeleted === true,
@@ -954,7 +1077,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             treeTitle: eventData.treeTitle ?? undefined,
             events: [{
                 id: eventData.id,
-                occurredAt: eventData.occurredAt,
+                occurredAt,
                 eventType: eventData.eventType,
                 isDeleted: eventData.isDeleted,
                 nodeId: eventData.nodeId,
@@ -963,8 +1086,43 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 cardDescription: eventData.cardDescription,
                 metadata: eventData.metadata,
             }],
-        }));
-    }, [knowledgeCreationEvents]);
+            };
+        });
+    }, [cardCreatedAtByNodeId, knowledgeCreationEvents]);
+    const normalizedKnowledgeTreePills = useMemo(() => {
+        return knowledgePills.map((pill) => {
+            const normalizedEvents = Array.isArray(pill.events)
+                ? pill.events.map((eventData) => {
+                    const nodeId = typeof eventData.nodeId === "string" ? eventData.nodeId : "";
+                    const occurredAt = nodeId && cardCreatedAtByNodeId.has(nodeId)
+                        ? cardCreatedAtByNodeId.get(nodeId) ?? eventData.occurredAt
+                        : eventData.occurredAt;
+                    return {
+                        ...eventData,
+                        occurredAt,
+                    };
+                })
+                : [];
+
+            const parsedPillOccurredAt = new Date(pill.occurredAt).getTime();
+            const fallbackOccurredAt = Number.isNaN(parsedPillOccurredAt)
+                ? pill.occurredAt
+                : new Date(parsedPillOccurredAt).toISOString();
+            const earliestEventOccurredAt = normalizedEvents.reduce<string | null>((earliest, eventData) => {
+                const parsed = new Date(eventData.occurredAt).getTime();
+                if (Number.isNaN(parsed)) return earliest;
+                if (!earliest) return new Date(parsed).toISOString();
+                const earliestTime = new Date(earliest).getTime();
+                return parsed < earliestTime ? new Date(parsed).toISOString() : earliest;
+            }, null);
+
+            return {
+                ...pill,
+                occurredAt: earliestEventOccurredAt ?? fallbackOccurredAt,
+                events: normalizedEvents,
+            };
+        });
+    }, [cardCreatedAtByNodeId, knowledgePills]);
 
     const {
         onAttachFile,
@@ -981,6 +1139,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         edges,
         allFiles,
         projectSettings: llmProjectSettings,
+        actionTimestamp: playbackAt,
         setLoading,
     });
 
@@ -1006,10 +1165,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         if (queuedPositionChangesRef.current.length === 0) return;
-        const queuedChanges = queuedPositionChangesRef.current;
+        const editAt = resolveActionTimestamp();
+        const queuedChanges = queuedPositionChangesRef.current.map((change) => ({
+            ...change,
+            __editAt: editAt,
+        }));
         queuedPositionChangesRef.current = [];
-        dispatch(onNodesChange(queuedChanges));
-    }, [dispatch, interactionLocked, viewMode]);
+        dispatch(onNodesChange(queuedChanges as NodeChange<nodeType>[]));
+    }, [dispatch, interactionLocked, resolveActionTimestamp, viewMode]);
 
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
         if (interactionLocked) return;
@@ -1032,8 +1195,34 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
         if (interactionLocked) return;
-        dispatch(onEdgesChange(changes));
-    }, [dispatch, interactionLocked]);
+        const removeChanges = changes.filter((change) => change.type === "remove");
+        const passthroughChanges = changes.filter((change) => change.type !== "remove");
+
+        if (passthroughChanges.length > 0) {
+            dispatch(onEdgesChange(passthroughChanges));
+        }
+
+        if (removeChanges.length === 0) return;
+        const deletedAt = resolveActionTimestamp();
+        for (const change of removeChanges) {
+            const edgeId = typeof change.id === "string" ? change.id : "";
+            if (!edgeId) continue;
+            const edge = edges.find((candidate) => candidate.id === edgeId);
+            if (!edge) continue;
+
+            const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
+            const existingDeletedAt = toTimestampMs(edgeData.deletedAt);
+            if (existingDeletedAt !== null) continue;
+
+            dispatch(updateEdge({
+                ...edge,
+                data: {
+                    ...edgeData,
+                    deletedAt,
+                },
+            }));
+        }
+    }, [dispatch, edges, interactionLocked, resolveActionTimestamp]);
 
     const resetFiltersForCanvasCreation = useCallback(() => {
         setViewMode("explore");
@@ -1083,7 +1272,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             name: typeof componentData.title === "string" && componentData.title.trim() !== ""
                 ? componentData.title
                 : "Blueprint component",
-            occurredAt: new Date().toISOString(),
+            occurredAt: resolveActionTimestamp(),
             componentNodeId: componentNode.id,
             paperDescription: blueprintComponent && typeof blueprintComponent.description === "string"
                 ? blueprintComponent.description
@@ -1098,7 +1287,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 ? componentData.blueprintFileName
                 : undefined,
         }));
-    }, [dispatch, blueprintEvents, interactionLocked]);
+    }, [dispatch, blueprintEvents, interactionLocked, resolveActionTimestamp]);
 
     const handleConnectSelection = useCallback((option: EdgeConnectOption) => {
         if (interactionLocked) return;
@@ -1120,6 +1309,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 edgeLabelFrom(edge) === label
             ));
             if (!alreadyConnected) {
+                const createdAt = resolveActionTimestamp();
                 dispatch(connectEdges([{
                     id: crypto.randomUUID(),
                     source: pending.sourceId,
@@ -1130,6 +1320,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                         label,
                         from: pending.sourceLabel,
                         to: pending.targetLabel,
+                        createdAt,
                         ...(kind ? { kind } : {}),
                     },
                 }]));
@@ -1144,7 +1335,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
             return null;
         });
-    }, [dispatch, interactionLocked, edges, nodes, maybeCreateBlueprintEventFromConnection]);
+    }, [dispatch, interactionLocked, edges, nodes, maybeCreateBlueprintEventFromConnection, resolveActionTimestamp]);
 
     const handleConnect = useCallback((connection: Connection) => {
         if (interactionLocked) return;
@@ -1190,12 +1381,83 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         data[propertyName] = value;
+        data.__editAt = resolveActionTimestamp();
 
         dispatch(updateNode({
             ...nodeProps,
             data: data as nodeType["data"],
         }));
-    }, [dispatch, interactionLocked]);
+    }, [dispatch, interactionLocked, resolveActionTimestamp]);
+
+    const handleBlueprintComponentTitleChange = useCallback((nodeId: string, titleValue: string) => {
+        if (interactionLocked) return;
+        const targetNode = nodes.find((node) => node.id === nodeId);
+        if (!targetNode) return;
+
+        const data = { ...(targetNode.data as Record<string, unknown>) };
+        const nextTitle = titleValue.trim() || "Blueprint component";
+        data.title = nextTitle;
+        data.__editAt = resolveActionTimestamp();
+
+        if (data.blueprintComponent && typeof data.blueprintComponent === "object") {
+            data.blueprintComponent = {
+                ...(data.blueprintComponent as Record<string, unknown>),
+                name: nextTitle,
+            };
+        }
+
+        dispatch(updateNode({
+            ...targetNode,
+            data: data as nodeType["data"],
+        }));
+    }, [dispatch, interactionLocked, nodes, resolveActionTimestamp]);
+
+    const handleBlueprintComponentAttachCodebasePath = useCallback((nodeId: string, filePath: string) => {
+        if (interactionLocked) return;
+        const normalizedPath = normalizePath(filePath);
+        if (!normalizedPath) return;
+
+        const targetNode = nodes.find((node) => node.id === nodeId);
+        if (!targetNode) return;
+
+        const data = { ...(targetNode.data as Record<string, unknown>) };
+        const currentPaths = Array.isArray(data.codebaseFilePaths)
+            ? data.codebaseFilePaths.filter((path): path is string => typeof path === "string")
+            : [];
+        if (currentPaths.includes(normalizedPath)) return;
+
+        data.codebaseFilePaths = [...currentPaths, normalizedPath];
+        data.__editAt = resolveActionTimestamp();
+
+        dispatch(updateNode({
+            ...targetNode,
+            data: data as nodeType["data"],
+        }));
+    }, [dispatch, interactionLocked, nodes, resolveActionTimestamp]);
+
+    const handleBlueprintComponentDetachCodebasePath = useCallback((nodeId: string, filePath: string) => {
+        if (interactionLocked) return;
+        const normalizedPath = normalizePath(filePath);
+        if (!normalizedPath) return;
+
+        const targetNode = nodes.find((node) => node.id === nodeId);
+        if (!targetNode) return;
+
+        const data = { ...(targetNode.data as Record<string, unknown>) };
+        const currentPaths = Array.isArray(data.codebaseFilePaths)
+            ? data.codebaseFilePaths.filter((path): path is string => typeof path === "string")
+            : [];
+        const nextPaths = currentPaths.filter((path) => normalizePath(path) !== normalizedPath);
+        if (nextPaths.length === currentPaths.length) return;
+
+        data.codebaseFilePaths = nextPaths;
+        data.__editAt = resolveActionTimestamp();
+
+        dispatch(updateNode({
+            ...targetNode,
+            data: data as nodeType["data"],
+        }));
+    }, [dispatch, interactionLocked, nodes, resolveActionTimestamp]);
 
     const onDeleteNode = useCallback((nodeId: string) => {
         if (interactionLocked) return;
@@ -1237,8 +1499,24 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         },
         blueprint: BlueprintNode as unknown as NodeTypes[string],
         blueprintGroup: BlueprintGroupNode as unknown as NodeTypes[string],
-        blueprintComponent: BlueprintComponentNode as unknown as NodeTypes[string],
-    }), [onAttachFileForNode, onDetachFile, onDataPropertyChange, onDeleteNode, participantNames]);
+        blueprintComponent: (nodeProps: NodeProps) => (
+            <BlueprintComponentNode
+                {...(nodeProps as NodeProps<nodeType>)}
+                onRenameTitle={handleBlueprintComponentTitleChange}
+                onAttachCodebaseFilePath={handleBlueprintComponentAttachCodebasePath}
+                onDetachCodebaseFilePath={handleBlueprintComponentDetachCodebasePath}
+            />
+        ),
+    }), [
+        handleBlueprintComponentAttachCodebasePath,
+        handleBlueprintComponentDetachCodebasePath,
+        handleBlueprintComponentTitleChange,
+        onAttachFileForNode,
+        onDataPropertyChange,
+        onDeleteNode,
+        onDetachFile,
+        participantNames,
+    ]);
 
     const edgeTypes = useMemo(() => ({
         relation: RelationEdge,
@@ -1768,6 +2046,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     },
                     blueprintPaperTitle: "Manual component",
                     blueprintFileName: "",
+                    createdAt: resolveActionTimestamp(),
                 },
             }));
             return;
@@ -1782,11 +2061,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 label: "activity",
                 type: "social",
                 title: "Untitled",
-                createdAt: new Date().toISOString(),
+                createdAt: resolveActionTimestamp(),
                 relevant: true,
             },
         }));
-    }, [dispatch, interactionLocked, viewMode, cursorMode, screenToFlowPosition, isInsideSystemBlueprintParentBox, resetFiltersForCanvasCreation]);
+    }, [cursorMode, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, resolveActionTimestamp, resetFiltersForCanvasCreation, screenToFlowPosition, viewMode]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
@@ -1813,7 +2092,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             if (!payload) return;
 
             const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-            const graph = buildBlueprintComponentGraph(payload, position);
+            const graph = buildBlueprintComponentGraph(payload, position, resolveActionTimestamp());
             if (graph.nodes.length > 0) {
                 dispatch(addNodes(graph.nodes));
             }
@@ -1844,7 +2123,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 });
             }
         })();
-    }, [dispatch, onAttachFileForCanvas, interactionLocked, screenToFlowPosition, viewMode]);
+    }, [dispatch, interactionLocked, onAttachFileForCanvas, resolveActionTimestamp, screenToFlowPosition, viewMode]);
 
     const onFreeInputSubmit = useCallback(async (x: number, y: number, userText: string) => {
         if (interactionLocked) return;
@@ -1859,13 +2138,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 const { nodes: generatedNodes, idMap } = llmCardsToNodes(
                     response.cards,
                     screenToFlowPosition({ x, y }),
-                    { createdAt: new Date().toISOString() },
+                    { createdAt: resolveActionTimestamp() },
                 );
                 const generatedEdges = llmConnectionsToEdges(
                     response.connections,
                     idMap,
                     response.cards
-                );
+                ).map((edge) => ({
+                    ...edge,
+                    data: {
+                        ...(edge.data as Record<string, unknown> | undefined),
+                        createdAt: resolveActionTimestamp(),
+                    },
+                }));
 
                 dispatch(addNodes(generatedNodes));
                 dispatch(connectEdges(generatedEdges));
@@ -1873,7 +2158,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setLoading(false);
         }
-    }, [dispatch, interactionLocked, screenToFlowPosition]);
+    }, [dispatch, interactionLocked, resolveActionTimestamp, screenToFlowPosition]);
 
     const fetchGithubEvents = useCallback(async (connected: boolean) => {
         if (!reviewOnly && !connected) return;
@@ -2009,7 +2294,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     missingBlueprintEvents.push({
                         id: blueprintEventId,
                         name: nextEventName,
-                        occurredAt: new Date().toISOString(),
+                        occurredAt: resolveActionTimestamp(),
                         componentNodeId: node.id,
                         paperDescription: nextPaperDescription,
                         referenceCitation: nextReferenceCitation,
@@ -2044,7 +2329,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         dispatch(reconcileBlueprintCodebaseAutoLinks(requiredAutoLinks));
-    }, [dispatch, interactionLocked, nodes, blueprintEvents, codebaseSubtracks]);
+    }, [codebaseSubtracks, dispatch, interactionLocked, nodes, blueprintEvents, resolveActionTimestamp]);
 
     useEffect(() => {
         dispatch(setGithubEvents([]));
@@ -2207,7 +2492,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 scopeNodeIds,
                 limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
                 minScore: 0.3,
-                at: isPlaybackMode ? playbackAt ?? undefined : undefined,
+                at: playbackAt ?? undefined,
             });
             if (requestId !== queryRequestIdRef.current) return;
             setActiveQuery(trimmed);
@@ -2216,7 +2501,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             if (requestId !== queryRequestIdRef.current) return;
             console.error("Failed to refresh filtered nodes for the current query.", error);
         }
-    }, [isPlaybackMode, playbackAt, projectId]);
+    }, [playbackAt, projectId]);
 
     const clearCanvasFilter = useCallback(() => {
         setActiveQuery("");
@@ -2255,7 +2540,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     scopeNodeIds,
                     limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
                     minScore: 0.3,
-                    at: isPlaybackMode ? playbackAt ?? undefined : undefined,
+                    at: playbackAt ?? undefined,
                 });
                 if (requestId !== chatRequestIdRef.current) return;
 
@@ -2281,7 +2566,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 }
             }
         })();
-    }, [chatInput, chatLoading, chatMessages, labelFilteredNodes, isPlaybackMode, playbackAt, projectId]);
+    }, [chatInput, chatLoading, chatMessages, labelFilteredNodes, playbackAt, projectId]);
 
     const handleSystemPapersRefresh = useCallback(() => {
         const cards = nodes
@@ -2699,17 +2984,17 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [checkGitStatus, interactionLocked]);
 
     const handleAddSystemScreenshotMarker = useCallback(() => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         const markerOccurredAt = playbackAt ?? new Date().toISOString();
         dispatch(addSystemScreenshotMarker({
             id: crypto.randomUUID(),
             occurredAt: markerOccurredAt,
             imageDataUrl: "",
         }));
-    }, [dispatch, playbackAt, reviewOnly]);
+    }, [dispatch, interactionLocked, playbackAt]);
 
     const handleUploadSystemScreenshotForLatestMarker = useCallback(async (file: File) => {
-        if (reviewOnly) return;
+        if (interactionLocked) return;
         setProcessingSystemScreenshot(true);
         try {
             const imageDataUrl = await readImageFileAsDataUrl(file);
@@ -2761,7 +3046,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setProcessingSystemScreenshot(false);
         }
-    }, [codebaseSubtracks, dispatch, playbackAt, playbackAwareSystemScreenshotMarker?.id, projectGoal, projectId, reviewOnly, title]);
+    }, [codebaseSubtracks, dispatch, interactionLocked, playbackAt, playbackAwareSystemScreenshotMarker?.id, projectGoal, projectId, title]);
 
     const handleDeleteAsset = useCallback(async (file: { id: string; name: string }) => {
         if (interactionLocked) return;
@@ -2784,14 +3069,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const handlePlaybackAtChange = useCallback((value: string | null) => {
         if (!value) {
             setPlaybackAt(null);
-            setPlaybackSnapshot(null);
             return;
         }
         const parsed = new Date(value);
         if (Number.isNaN(parsed.getTime())) return;
-        const now = new Date();
-        const clamped = parsed.getTime() > now.getTime() ? now : parsed;
-        setPlaybackAt(clamped.toISOString());
+        setPlaybackAt(parsed.toISOString());
     }, []);
 
     if (status === "loading") return <div>Loading...</div>;
@@ -2892,7 +3174,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 rightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX + 12}
                 latestImageDataUrl={playbackAwareSystemScreenshotMarker?.imageDataUrl ?? ""}
                 processing={processingSystemScreenshot}
-                readOnly={reviewOnly}
+                readOnly={interactionLocked}
                 onAddMarker={handleAddSystemScreenshotMarker}
                 onUploadForLatestMarker={handleUploadSystemScreenshotForLatestMarker}
             />
@@ -2948,7 +3230,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 projectGoal={projectGoal}
                 codebaseEvents={gitEvents}
                 knowledgeBaseEvents={knowledgeBaseEvents}
-                knowledgeTreePills={knowledgePills}
+                knowledgeTreePills={normalizedKnowledgeTreePills}
                 knowledgeCrossTreeConnections={knowledgeCrossTreeConnections}
                 knowledgeBlueprintLinks={knowledgeBlueprintLinks}
                 playbackAt={playbackAt}

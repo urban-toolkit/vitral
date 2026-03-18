@@ -16,6 +16,12 @@ import {
 } from "@/store/timelineSlice";
 import classes from "./BlueprintComponentNode.module.css";
 
+type BlueprintComponentNodeProps = NodeProps<nodeType> & {
+    onRenameTitle?: (nodeId: string, title: string) => void;
+    onAttachCodebaseFilePath?: (nodeId: string, filePath: string) => void;
+    onDetachCodebaseFilePath?: (nodeId: string, filePath: string) => void;
+};
+
 function truncateLabel(text: string, maxChars: number): string {
     if (!text) return "";
     if (text.length <= maxChars) return text;
@@ -32,7 +38,7 @@ function basename(path: string): string {
     return parts.length > 0 ? parts[parts.length - 1] : normalized;
 }
 
-function BlueprintComponentNodeImpl(props: NodeProps<nodeType>) {
+function BlueprintComponentNodeImpl(props: BlueprintComponentNodeProps) {
     const dispatch = useDispatch();
     const blueprintEvents = useSelector(selectAllBlueprintEvents);
     const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
@@ -83,6 +89,10 @@ function BlueprintComponentNodeImpl(props: NodeProps<nodeType>) {
         event.preventDefault();
         event.stopPropagation();
         setIsDragTarget(false);
+        if (props.onAttachCodebaseFilePath) {
+            props.onAttachCodebaseFilePath(props.id, parsedPath);
+            return;
+        }
         dispatch(attachCodebaseFilePathToNode({ nodeId: props.id, filePath: parsedPath }));
     };
 
@@ -97,7 +107,11 @@ function BlueprintComponentNodeImpl(props: NodeProps<nodeType>) {
 
     const commitTitleEdit = () => {
         const nextTitle = draftTitle.trim() || "Blueprint component";
-        dispatch(renameNodeTitle({ nodeId: props.id, title: nextTitle }));
+        if (props.onRenameTitle) {
+            props.onRenameTitle(props.id, nextTitle);
+        } else {
+            dispatch(renameNodeTitle({ nodeId: props.id, title: nextTitle }));
+        }
         setDraftTitle(nextTitle);
         setIsEditingTitle(false);
     };
@@ -168,12 +182,14 @@ function BlueprintComponentNodeImpl(props: NodeProps<nodeType>) {
                                     onMouseDown={(event) => event.stopPropagation()}
                                     onClick={(event) => {
                                         event.stopPropagation();
-                                        dispatch(
-                                            detachCodebaseFilePathFromNode({
-                                                nodeId: props.id,
-                                                filePath: path,
-                                            })
-                                        );
+                                        if (props.onDetachCodebaseFilePath) {
+                                            props.onDetachCodebaseFilePath(props.id, path);
+                                            return;
+                                        }
+                                        dispatch(detachCodebaseFilePathFromNode({
+                                            nodeId: props.id,
+                                            filePath: path,
+                                        }));
                                     }}
                                 >
                                     x
