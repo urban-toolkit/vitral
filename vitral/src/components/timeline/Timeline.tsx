@@ -35,6 +35,7 @@ import {
 	selectHoveredCodebaseFilePath,
 	selectAllSubStages,
 	selectParticipants,
+	selectLlmModel,
 	selectSystemScreenshotMarkers,
 	setHighlightedCodebaseFilePaths,
 	setHighlightedKnowledgeNodeIds,
@@ -297,6 +298,7 @@ export const Timeline = ({
 	const knowledgeSubtracks = useSelector(selectKnowledgeSubtracks);
 	const knowledgePillTrackAssignments = useSelector(selectKnowledgePillTrackAssignments);
 	const participants = useSelector(selectParticipants);
+	const llmModel = useSelector(selectLlmModel);
 	const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
 	const highlightedCodebaseFilePaths = useSelector(selectHighlightedCodebaseFilePaths);
 	const blueprintCodebaseLinks = useSelector(selectBlueprintCodebaseLinks);
@@ -666,6 +668,7 @@ export const Timeline = ({
 			const fallbackEndIso = toIso(endMarker, fallbackStartIso);
 
 			const milestones = await requestMilestonesLLM({
+				llmModel,
 				projectName: (projectName ?? "").trim() || "Untitled",
 				goal: (projectGoal ?? "").trim(),
 				expectedStart: fallbackStartIso,
@@ -716,6 +719,7 @@ export const Timeline = ({
 
 		try {
 			const suggestedFilePaths = await requestCodebaseSubtrackFilesLLM({
+				llmModel,
 				projectId,
 				projectTitle: (projectName ?? "").trim() || "Untitled",
 				projectGoal: (projectGoal ?? "").trim(),

@@ -248,6 +248,7 @@ export type BlueprintEvent = {
 };
 
 export type TimelineState = {
+    llmModel: string;
     stages: {
         byId: Record<string, Stage>;
         allIds: string[];
@@ -282,6 +283,7 @@ export type TimelineState = {
 };
 
 export type TimelineStatePayload = {
+    llmModel?: string;
     stages: Stage[];
     subStages: SubStage[];
     designStudyEvents: DesignStudyEvent[];

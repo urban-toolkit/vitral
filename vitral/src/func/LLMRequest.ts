@@ -309,6 +309,7 @@ type PreparedLlmPayload = {
 };
 
 export type LlmProjectSettingsContext = {
+    llmModel?: string;
     projectTitle: string;
     projectGoal: string;
     participants: Array<{
@@ -339,6 +340,12 @@ export type llmArtifactData = {
     title: string;
     description: string;
 };
+
+function resolveLlmModel(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed !== "" ? trimmed : undefined;
+}
 
 function tryParseJson<T>(raw: string): T | null {
     try {
@@ -504,7 +511,11 @@ export async function requestCardsLLM(
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ input: userText, prompt }),
+        body: JSON.stringify({
+            input: userText,
+            prompt,
+            model: resolveLlmModel(projectSettings?.llmModel),
+        }),
     });
 
     if (!response.ok) {
@@ -545,7 +556,11 @@ export async function requestArtifactLLM(
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ input: userText, prompt }),
+        body: JSON.stringify({
+            input: userText,
+            prompt,
+            model: resolveLlmModel(projectSettings?.llmModel),
+        }),
     });
 
     if (!response.ok) {
@@ -557,14 +572,21 @@ export async function requestArtifactLLM(
     return tryParseJson<llmArtifactData>(data.output);
 }
 
-export async function requestCardsLLMTextInput(userText: string): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
+export async function requestCardsLLMTextInput(
+    userText: string,
+    llmModel?: string
+): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
 
     const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ input: userText, prompt: "CardsFromTextInput" }),
+        body: JSON.stringify({
+            input: userText,
+            prompt: "CardsFromTextInput",
+            model: resolveLlmModel(llmModel),
+        }),
     });
 
     if (!response.ok) {
@@ -820,6 +842,7 @@ export function llmConnectionsToEdges(
 }
 
 type GoalMilestonesContext = {
+    llmModel?: string;
     projectName: string;
     goal: string;
     expectedStart: string;
@@ -831,6 +854,7 @@ type GoalMilestonesContext = {
 };
 
 type MilestonesInterpolationContext = {
+    llmModel?: string;
     projectName: string;
     goal: string;
     expectedStart: string;
@@ -871,7 +895,15 @@ function normalizeMilestonesOutput(rawOutput: string, fallbackIso: string): Desi
     return normalized;
 }
 
-async function requestMilestonesByPrompt(prompt: string, payload: unknown, fallbackIso: string): Promise<DesignStudyEvent[]> {
+async function requestMilestonesByPrompt(
+    prompt: string,
+    payload: unknown,
+    fallbackIso: string,
+    llmModel?: string
+): Promise<DesignStudyEvent[]> {
+    const payloadModel = payload && typeof payload === "object"
+        ? resolveLlmModel((payload as { llmModel?: unknown }).llmModel)
+        : undefined;
     const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
@@ -880,6 +912,7 @@ async function requestMilestonesByPrompt(prompt: string, payload: unknown, fallb
         body: JSON.stringify({
             input: JSON.stringify(payload),
             prompt,
+            model: resolveLlmModel(llmModel) ?? payloadModel,
         }),
     });
 
@@ -900,12 +933,12 @@ export async function requestMilestonesLLM(context: MilestonesInterpolationConte
         ? toIsoOrFallback(context.existingMilestones[0].occurredAt, new Date().toISOString())
         : new Date().toISOString();
 
-    return requestMilestonesByPrompt("Milestones", context, fallbackIso);
+    return requestMilestonesByPrompt("Milestones", context, fallbackIso, context.llmModel);
 }
 
 export async function requestGoalMilestonesLLM(context: GoalMilestonesContext): Promise<DesignStudyEvent[]> {
     const fallbackIso = toIsoOrFallback(context.expectedStart, new Date().toISOString());
-    return requestMilestonesByPrompt("GoalMilestones", context, fallbackIso);
+    return requestMilestonesByPrompt("GoalMilestones", context, fallbackIso, context.llmModel);
 }
 
 function normalizeMarkdownSection(rawOutput: string): string {
@@ -919,7 +952,8 @@ function normalizeMarkdownSection(rawOutput: string): string {
 
 export async function requestMarkdownReportSectionLLM(
     prompt: string,
-    payload: unknown
+    payload: unknown,
+    llmModel?: string
 ): Promise<string> {
     const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
@@ -929,6 +963,7 @@ export async function requestMarkdownReportSectionLLM(
         body: JSON.stringify({
             input: JSON.stringify(payload),
             prompt,
+            model: resolveLlmModel(llmModel),
         }),
     });
 
@@ -1068,6 +1103,7 @@ async function getRepoTreeWithCache(projectId: string): Promise<RepoTreePayload>
 }
 
 type CodebaseSubtrackSuggestionContext = {
+    llmModel?: string;
     projectId: string;
     projectTitle: string;
     projectGoal: string;
@@ -1149,6 +1185,7 @@ export async function requestCodebaseSubtrackFilesLLM(
         body: JSON.stringify({
             input: JSON.stringify(payload),
             prompt: "CodebaseSubtrackFiles",
+            model: resolveLlmModel(context.llmModel),
         }),
     });
 
@@ -1175,6 +1212,7 @@ export async function requestCodebaseSubtrackFilesLLM(
 }
 
 type SystemScreenshotZonesContext = {
+    llmModel?: string;
     projectId: string;
     projectTitle: string;
     projectGoal: string;
@@ -1362,6 +1400,7 @@ export async function requestSystemScreenshotZonesLLM(
         },
         body: JSON.stringify({
             prompt: "SystemScreenshotZones",
+            model: resolveLlmModel(context.llmModel),
             input: JSON.stringify({
                 content: JSON.stringify(payload),
                 images: [

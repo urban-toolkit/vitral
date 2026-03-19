@@ -65,6 +65,7 @@ function normalizeScreenshotZones(zones: unknown): SystemScreenshotZone[] {
 }
 
 const initialState: TimelineState = {
+    llmModel: "gpt-5-nano",
     stages: {
         byId: {},
         allIds: [],
@@ -154,6 +155,10 @@ export const timelineSlice = createSlice({
     name: "timeline",
     initialState,
     reducers: {
+        setLlmModel: (state, action: PayloadAction<string>) => {
+            const value = String(action.payload ?? "").trim();
+            state.llmModel = value || "gpt-5-nano";
+        },
 
         // Stages
         setStages: (state, action: PayloadAction<Stage[]>) => {
@@ -795,6 +800,7 @@ export const timelineSlice = createSlice({
 });
 
 export const {
+    setLlmModel,
     setStages,
     addStage,
     updateStage,
@@ -943,4 +949,9 @@ export const selectDefaultStages = createSelector(
 export const selectTimelineStartEnd = createSelector(
     selectTimelineState,
     s => s.timelineStartEnd
+);
+
+export const selectLlmModel = createSelector(
+    selectTimelineState,
+    s => s.llmModel
 );

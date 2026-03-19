@@ -40,6 +40,7 @@ type StageInput = {
 type SetupState = {
     projectName: string;
     goal: string;
+    llmModel: string;
     availableRoles: string[];
     participants: Participant[];
     timeline: {
@@ -62,6 +63,8 @@ type TemplateSelection = {
 type JsonExportMode = "everything" | "configs";
 
 type LiteratureTemplate = LiteratureSetupTemplate;
+const DEFAULT_LLM_MODEL = "gpt-5-nano";
+const LLM_MODEL_OPTIONS = ["gpt-5-nano", "gpt-4.1-mini", "gpt-5-mini", "gpt-5.2"];
 
 function toDateInputValue(date: Date): string {
     const tzOffset = date.getTimezoneOffset() * 60_000;
@@ -184,6 +187,7 @@ function buildInitialSetup(): SetupState {
     return {
         projectName: "Untitled",
         goal: "",
+        llmModel: DEFAULT_LLM_MODEL,
         availableRoles: ["Researcher", "Designer", "Developer"],
         participants: [
             {
@@ -254,6 +258,7 @@ function normalizeSetup(source: unknown): SetupState {
     return {
         projectName: String(value.projectName || initial.projectName),
         goal: String(value.goal || initial.goal),
+        llmModel: String((value as Partial<SetupState>).llmModel || initial.llmModel),
         availableRoles: availableRoles.length > 0 ? availableRoles : initial.availableRoles,
         participants: participants.length > 0 ? participants : initial.participants,
         timeline: {
@@ -287,6 +292,7 @@ function toTimelinePayload(
     }));
 
     return {
+        llmModel: setup.llmModel?.trim() || DEFAULT_LLM_MODEL,
         stages,
         subStages: Array.isArray(existingTimeline?.subStages) ? existingTimeline.subStages : [],
         designStudyEvents,
@@ -392,6 +398,7 @@ function buildGoalMilestonesContext(setup: SetupState) {
     return {
         projectName: setup.projectName.trim() || "Untitled",
         goal: setup.goal.trim(),
+        llmModel: setup.llmModel?.trim() || DEFAULT_LLM_MODEL,
         expectedStart: safeIso(setup.timeline.expectedStart, fallbackStartIso),
         expectedEnd: safeIso(setup.timeline.expectedEnd, fallbackEndIso),
         availableRoles: setup.availableRoles.map((role) => role.trim()).filter(Boolean),
@@ -510,13 +517,16 @@ export function ProjectSetupPage() {
                     if (!active) return;
 
                     const initial = buildInitialSetup();
-                    const timeline = timelineToSetupTimeline(
-                        doc.timeline,
-                        initial.timeline.expectedStart,
-                        initial.timeline.expectedEnd,
-                    );
-                    const participants = timelineToSetupParticipants(doc.timeline);
-                    const availableRoles = uniqueRoles([
+                const timeline = timelineToSetupTimeline(
+                    doc.timeline,
+                    initial.timeline.expectedStart,
+                    initial.timeline.expectedEnd,
+                );
+                const llmModel = typeof doc.timeline?.llmModel === "string" && doc.timeline.llmModel.trim() !== ""
+                    ? doc.timeline.llmModel.trim()
+                    : DEFAULT_LLM_MODEL;
+                const participants = timelineToSetupParticipants(doc.timeline);
+                const availableRoles = uniqueRoles([
                         ...initial.availableRoles,
                         ...participants.map((participant) => participant.role),
                     ]);
@@ -528,6 +538,7 @@ export function ProjectSetupPage() {
                         ...prev,
                         projectName: doc.title || "Untitled",
                         goal: doc.description || "",
+                        llmModel,
                         availableRoles: availableRoles.length > 0 ? availableRoles : initial.availableRoles,
                         participants,
                         timeline,
@@ -698,6 +709,9 @@ export function ProjectSetupPage() {
                 ...(Object.prototype.hasOwnProperty.call(source, "goal")
                     ? { goal: source.goal as string }
                     : {}),
+                ...(Object.prototype.hasOwnProperty.call(source, "llmModel")
+                    ? { llmModel: source.llmModel as string }
+                    : {}),
                 ...(Object.prototype.hasOwnProperty.call(source, "availableRoles")
                     ? { availableRoles: source.availableRoles as string[] }
                     : {}),
@@ -823,6 +837,17 @@ export function ProjectSetupPage() {
                     >
                         Cancel
                     </button>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 12, opacity: 0.8 }}>LLM model</span>
+                        <select
+                            value={setup.llmModel}
+                            onChange={(event) => setSetup((prev) => ({ ...prev, llmModel: event.target.value }))}
+                        >
+                            {LLM_MODEL_OPTIONS.map((model) => (
+                                <option key={model} value={model}>{model}</option>
+                            ))}
+                        </select>
+                    </label>
                     <button type="button" onClick={onSubmitProjectSetup} disabled={submitting}>
                         {submitting ? (isEditMode ? "Saving..." : "Creating...") : (isEditMode ? "Save Changes" : "Create Project")}
                     </button>

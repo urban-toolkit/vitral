@@ -19,6 +19,7 @@ import {
     selectKnowledgePillTrackAssignments,
     selectKnowledgeSubtracks,
     selectDefaultStages,
+    selectLlmModel,
     selectTimelineStartEnd,
     setCodebaseSubtracks,
     setKnowledgePillTrackAssignments,
@@ -31,7 +32,8 @@ import {
     setDesignStudyEvents,
     setStages,
     setSubStages,
-    setTimelineStartEnd
+    setTimelineStartEnd,
+    setLlmModel,
 } from "@/store/timelineSlice";
 import type {
     BlueprintCodebaseLink,
@@ -59,6 +61,7 @@ export function useDocumentSync(projectId: string) {
     const knowledgePillTrackAssignments = useSelector(selectKnowledgePillTrackAssignments);
     const participants = useSelector(selectParticipants);
     const defaultStages = useSelector(selectDefaultStages);
+    const llmModel = useSelector(selectLlmModel);
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
 
     const [status, setStatus] = useState<SyncStatus>("idle");
@@ -87,9 +90,10 @@ export function useDocumentSync(projectId: string) {
             knowledgePillTrackAssignments: knowledgePillTrackAssignments,
             participants: participants,
             defaultStages: defaultStages,
+            llmModel: llmModel,
             timelineStartEnd: timelineStartEnd
         });
-    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants]);
+    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, llmModel, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
@@ -110,6 +114,7 @@ export function useDocumentSync(projectId: string) {
                 knowledgePillTrackAssignments: Record<string, string | null>,
                 participants: Array<{ id: string; name: string; role: string }>,
                 defaultStages: string[],
+                llmModel: string,
                 timelineStartEnd: {start: string, end: string},  
                 title?: string) => {
 
@@ -134,6 +139,7 @@ export function useDocumentSync(projectId: string) {
                         knowledgePillTrackAssignments,
                         participants,
                         defaultStages,
+                        llmModel,
                         timelineStartEnd
                     }, title);
 
@@ -165,6 +171,7 @@ export function useDocumentSync(projectId: string) {
                 knowledgePillTrackAssignments: Record<string, string | null>,
                 participants: Array<{ id: string; name: string; role: string }>,
                 defaultStages: string[],
+                llmModel: string,
                 timelineStartEnd: { start: string; end: string },
             ) => {
                 if (activeProjectIdRef.current !== id) return;
@@ -185,6 +192,7 @@ export function useDocumentSync(projectId: string) {
                         knowledgePillTrackAssignments,
                         participants,
                         defaultStages,
+                        llmModel,
                         timelineStartEnd,
                     });
 
@@ -243,6 +251,9 @@ export function useDocumentSync(projectId: string) {
                 const knowledgePillTrackAssignments = timeline?.knowledgePillTrackAssignments ?? {};
                 const participants = timeline?.participants ?? [];
                 const defaultStages = timeline?.defaultStages ?? [];
+                const llmModel = typeof timeline?.llmModel === "string" && timeline.llmModel.trim() !== ""
+                    ? timeline.llmModel.trim()
+                    : "gpt-5-nano";
                 const timelineStartEnd = timeline?.timelineStartEnd ?? {start: "June 15, 2023 03:24:00", end: "December 04, 2023 00:24:00"};
 
                 dispatch(setStages(stages));
@@ -256,6 +267,7 @@ export function useDocumentSync(projectId: string) {
                 dispatch(setKnowledgePillTrackAssignments(knowledgePillTrackAssignments));
                 dispatch(setParticipants(participants));
                 dispatch(setDefaultStages(defaultStages));
+                dispatch(setLlmModel(llmModel));
                 dispatch(setTimelineStartEnd(timelineStartEnd));
 
                 lastSavedHashRef.current = JSON.stringify({ 
@@ -273,6 +285,7 @@ export function useDocumentSync(projectId: string) {
                     knowledgePillTrackAssignments,
                     participants,
                     defaultStages,
+                    llmModel,
                     timelineStartEnd });
                 lastRevisionHashRef.current = lastSavedHashRef.current;
                 hasLoadedRef.current = true;
@@ -319,12 +332,13 @@ export function useDocumentSync(projectId: string) {
                 knowledgePillTrackAssignments,
                 participants,
                 defaultStages,
+                llmModel,
                 timelineStartEnd,
             );
         }
 
-        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants, defaultStages, timelineStartEnd, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, reviewOnly, debouncedSave, debouncedRevision, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, defaultStages, timelineStartEnd, participants]);
+        debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants, defaultStages, llmModel, timelineStartEnd, flow.title);
+    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, reviewOnly, debouncedSave, debouncedRevision, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, defaultStages, llmModel, timelineStartEnd, participants]);
 
     return { status, error, reviewOnly };
 }

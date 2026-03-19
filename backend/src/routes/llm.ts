@@ -14,11 +14,49 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
     app.post("/chat", async (request: any, reply: any) => {
         try {
 
-            const body = request.body as { input: string, prompt?: string };
+            const body = request.body as { input: string, prompt?: string, model?: string };
 
             if (!body?.input) {
                 return reply.status(400).send({ error: "Invalid input" });
             }
+
+            const DEFAULT_CHAT_MODEL = (process.env.OPENAI_LLM_CHAT_MODEL ?? "gpt-5-nano").trim() || "gpt-5-nano";
+            const allowedModels = (process.env.OPENAI_LLM_CHAT_ALLOWED_MODELS ?? "gpt-5-nano,gpt-4.1-mini,gpt-5-mini,gpt-5.2")
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean);
+            const allowedModelSet = new Set(allowedModels.length > 0 ? allowedModels : [DEFAULT_CHAT_MODEL]);
+
+            const normalizeModel = (value: unknown): string | undefined => {
+                if (typeof value !== "string") return undefined;
+                const trimmed = value.trim();
+                return trimmed !== "" ? trimmed : undefined;
+            };
+
+            const extractModelFromPayload = (payload: unknown): string | undefined => {
+                if (!payload || typeof payload !== "object") return undefined;
+                const source = payload as Record<string, unknown>;
+                const fromRoot = normalizeModel(source.llmModel);
+                if (fromRoot) return fromRoot;
+                const projectSettings = source.projectSettings;
+                if (!projectSettings || typeof projectSettings !== "object") return undefined;
+                return normalizeModel((projectSettings as Record<string, unknown>).llmModel);
+            };
+
+            let parsedInputPayload: unknown = undefined;
+            try {
+                parsedInputPayload = JSON.parse(body.input);
+            } catch {
+                parsedInputPayload = undefined;
+            }
+
+            const requestedModel =
+                normalizeModel(body.model) ??
+                extractModelFromPayload(parsedInputPayload) ??
+                DEFAULT_CHAT_MODEL;
+            const resolvedModel = allowedModelSet.has(requestedModel)
+                ? requestedModel
+                : (allowedModels[0] ?? DEFAULT_CHAT_MODEL);
 
             let promptContent = "";
 
@@ -82,9 +120,16 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                     assets?: AssetMetadata[];
                     projectSettings?: Record<string, unknown>;
                 } | undefined;
-                try {
-                    parsed = JSON.parse(body.input);
-                } catch {
+                if (parsedInputPayload && typeof parsedInputPayload === "object") {
+                    parsed = parsedInputPayload as {
+                        name?: string;
+                        ext?: string;
+                        content?: string;
+                        images?: { id: string; dataUrl: string }[];
+                        assets?: AssetMetadata[];
+                        projectSettings?: Record<string, unknown>;
+                    };
+                } else {
                     return reply.status(400).send({ error: "Invalid multimodal payload" });
                 }
 
@@ -124,12 +169,9 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                 let parsed:
                     | { content?: string; assets?: AssetMetadata[] }
                     | undefined;
-
-                try {
-                    parsed = JSON.parse(body.input);
-                } catch {
-                    parsed = undefined;
-                }
+                parsed = parsedInputPayload && typeof parsedInputPayload === "object"
+                    ? parsedInputPayload as { content?: string; assets?: AssetMetadata[] }
+                    : undefined;
 
                 const parsedText = typeof parsed?.content === "string" ? parsed.content : body.input;
                 const assetsBlock = formatAssetsBlock(parsed?.assets);
@@ -144,10 +186,7 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
             }
 
             const response = await client.responses.create({
-                model: "gpt-5-nano",
-                // model: "gpt-4.1-mini",
-                // model: "gpt-5-mini",
-                // model: "gpt-5.2",
+                model: resolvedModel,
                 input: [
                     {
                         role: "user",

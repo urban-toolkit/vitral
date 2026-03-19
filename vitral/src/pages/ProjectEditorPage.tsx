@@ -91,6 +91,7 @@ import {
     selectDefaultStages,
     selectHighlightedKnowledgeNodeIds,
     selectParticipants,
+    selectLlmModel,
     selectSystemScreenshotMarkers,
     selectHoveredCodebaseFilePath,
     reconcileBlueprintCodebaseAutoLinks,
@@ -822,6 +823,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const timelineStages = useSelector(selectAllStages);
     const defaultStages = useSelector(selectDefaultStages);
     const participants = useSelector(selectParticipants);
+    const llmModel = useSelector(selectLlmModel);
     const timelineStartEnd = useSelector(selectTimelineStartEnd);
     const designStudyEvents = useSelector(selectAllDesignStudyEvents);
     const blueprintEvents = useSelector(selectAllBlueprintEvents);
@@ -838,6 +840,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const availableRoles = Array.from(new Set(participantRecords.map((participant) => participant.role)));
 
         return {
+            llmModel,
             projectTitle: title?.trim() || "Untitled",
             projectGoal: projectGoal?.trim() || "",
             participants: participantRecords,
@@ -858,7 +861,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 })),
             },
         };
-    }, [defaultStages, designStudyEvents, participants, projectGoal, timelineStages, timelineStartEnd.end, timelineStartEnd.start, title]);
+    }, [defaultStages, designStudyEvents, llmModel, participants, projectGoal, timelineStages, timelineStartEnd.end, timelineStartEnd.start, title]);
 
     const mostRecentSystemScreenshotMarker = useMemo(() => {
         if (systemScreenshotMarkers.length === 0) return null;
@@ -2128,7 +2131,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         try {
             const response: { cards: llmCardData[]; connections: llmConnectionData[] } =
-                await requestCardsLLMTextInput(userText);
+                await requestCardsLLMTextInput(userText, llmModel);
 
             if (response?.cards) {
                 const { nodes: generatedNodes, idMap } = llmCardsToNodes(
@@ -2154,7 +2157,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setLoading(false);
         }
-    }, [dispatch, interactionLocked, resolveActionTimestamp, screenToFlowPosition]);
+    }, [dispatch, interactionLocked, llmModel, resolveActionTimestamp, screenToFlowPosition]);
 
     const fetchGithubEvents = useCallback(async (connected: boolean) => {
         if (!reviewOnly && !connected) return;
@@ -2642,6 +2645,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 const latestScreenshotDataUrl = mostRecentSystemScreenshotMarker?.imageDataUrl?.trim() || "";
 
                 const settingsInfo = {
+                    llmModel,
                     projectTitle,
                     projectGoal: projectGoal?.trim() || "",
                     participants: participants.map((participant) => ({
@@ -2714,7 +2718,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     },
                     blueprintComponents: blueprintComponentsWithParents,
                     assets: assetsMetadata,
-                });
+                }, llmModel);
 
                 const abstractFallback = abstract || "This project explores the problem space, design constraints, and implementation strategy using the available artifacts and timeline context.";
 
@@ -2723,18 +2727,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                         projectTitle,
                         settings: settingsInfo,
                         abstract: abstractFallback,
-                    }),
+                    }, llmModel),
                     requestMarkdownReportSectionLLM("MarkdownReportLiteratureReview", {
                         projectTitle,
                         abstract: abstractFallback,
                         literatureCards,
                         blueprintComponentsWithParents,
-                    }),
+                    }, llmModel),
                     requestMarkdownReportSectionLLM("MarkdownReportDesignGoals", {
                         projectTitle,
                         abstract: abstractFallback,
                         requirementCards: cardsByLabel("requirement"),
-                    }),
+                    }, llmModel),
                     requestMarkdownReportSectionLLM("MarkdownReportTimeline", {
                         projectTitle,
                         abstract: abstractFallback,
@@ -2757,7 +2761,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                             title: subtrack.name,
                             attachedFiles: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
                         })),
-                    }),
+                    }, llmModel),
                     requestMarkdownReportSectionLLM("MarkdownReportMethods", {
                         projectTitle,
                         abstract: abstractFallback,
@@ -2768,12 +2772,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                             insights: cardsByLabel("insight"),
                             requirements: cardsByLabel("requirement"),
                         },
-                    }),
+                    }, llmModel),
                     requestMarkdownReportSectionLLM("MarkdownReportConclusion", {
                         projectTitle,
                         abstract: abstractFallback,
                         insightCards: cardsByLabel("insight"),
-                    }),
+                    }, llmModel),
                 ]);
 
                 const markdownParts: string[] = [];
@@ -2853,6 +2857,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         participants,
         projectGoal,
         projectId,
+        llmModel,
         timelineStages,
         timelineStartEnd.end,
         timelineStartEnd.start,
@@ -3030,6 +3035,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     name: subtrack.name,
                     filePaths: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
                 })),
+                llmModel,
             });
 
             dispatch(updateSystemScreenshotMarkerImage({
@@ -3042,7 +3048,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setProcessingSystemScreenshot(false);
         }
-    }, [codebaseSubtracks, dispatch, interactionLocked, playbackAt, playbackAwareSystemScreenshotMarker?.id, projectGoal, projectId, title]);
+    }, [codebaseSubtracks, dispatch, interactionLocked, llmModel, playbackAt, playbackAwareSystemScreenshotMarker?.id, projectGoal, projectId, title]);
 
     const handleDeleteAsset = useCallback(async (file: { id: string; name: string }) => {
         if (interactionLocked) return;
