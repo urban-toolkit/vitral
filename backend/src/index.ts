@@ -13,9 +13,12 @@ import dbPlugin from "./plugins/db.js";
 import s3Plugin from "./plugins/s3.js";
 import { doclingRoutes } from './routes/docling.js';
 
+const isProduction = process.env.NODE_ENV === "production";
+
 const app = Fastify({ 
     logger: true,
-    bodyLimit: 20 * 1024 * 1024 // 20MB
+    bodyLimit: 20 * 1024 * 1024, // 20MB
+    trustProxy: isProduction
  });
 
 const allowedOrigins = new Set([
@@ -24,8 +27,6 @@ const allowedOrigins = new Set([
   "http://localhost:3000",
   "https://arcade.evl.uic.edu",
 ]);
-
-const isProduction = process.env.NODE_ENV === "production";
 
 // const frontendOrigin = (() => {
 //     const raw = process.env.FRONTEND_URL;
