@@ -30,6 +30,7 @@ type FilePreviewProps = {
 const EMPTY_STR = "";
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const RAW_TEXT_FALLBACK_EXTENSIONS = new Set(["tsx", "jsx"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "ogg", "ogv", "avi"]);
 const PDF_ZOOM_MIN = 0.6;
 const PDF_ZOOM_MAX = 2.4;
 const PDF_ZOOM_STEP = 0.2;
@@ -142,6 +143,7 @@ export function FilePreview({ file }: FilePreviewProps) {
     const isMarkdown = ext === "md" || file.mimeType === "text/markdown";
     const isIpynb = ext === "ipynb";
     const isDocx = ext === "docx" || file.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const isVideo = file.mimeType.startsWith("video/") || VIDEO_EXTENSIONS.has(ext);
 
     const [open, setOpen] = useState(false);
     const [pdfNumPages, setPdfNumPages] = useState(0);
@@ -181,7 +183,7 @@ export function FilePreview({ file }: FilePreviewProps) {
 
     useEffect(() => {
         if (!open) return;
-        if (isImage) {
+        if (isImage || isVideo) {
             setLoading(false);
             setLoadError(null);
             setLoadedContent(null);
@@ -252,7 +254,7 @@ export function FilePreview({ file }: FilePreviewProps) {
         return () => {
             cancelled = true;
         };
-    }, [open, ext, resolvedDocId, hasValidDocId, file.id, file.name, isDocx, isImage, isIpynb, isPdf]);
+    }, [open, ext, resolvedDocId, hasValidDocId, file.id, file.name, isDocx, isImage, isIpynb, isPdf, isVideo]);
 
     const notebookJson = useMemo(() => {
         if (!isIpynb || !loadedContent) return null;
@@ -287,6 +289,34 @@ export function FilePreview({ file }: FilePreviewProps) {
                         src={rawUrl}
                         alt={file.name}
                         className={classes.modalImage}
+                    />
+                </div>
+            );
+        }
+
+        if (isVideo) {
+            if (!hasValidDocId) {
+                return <div className={classes.loadError}>Missing document id for this file.</div>;
+            }
+            return (
+                <div className={classes.modalVideoWrap}>
+                    <video
+                        className={classes.modalVideo}
+                        src={rawUrl}
+                        controls
+                        muted
+                        autoPlay
+                        playsInline
+                        preload="metadata"
+                        onLoadedMetadata={(event) => {
+                            event.currentTarget.muted = true;
+                            event.currentTarget.volume = 0;
+                        }}
+                        onVolumeChange={(event) => {
+                            if (event.currentTarget.muted && event.currentTarget.volume === 0) return;
+                            event.currentTarget.muted = true;
+                            event.currentTarget.volume = 0;
+                        }}
                     />
                 </div>
             );
@@ -385,6 +415,7 @@ export function FilePreview({ file }: FilePreviewProps) {
         isIpynb,
         isMarkdown,
         isPdf,
+        isVideo,
         lang,
         loadError,
         loadedContent,

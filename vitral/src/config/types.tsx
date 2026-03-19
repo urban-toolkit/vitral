@@ -1,7 +1,31 @@
 export type cardType = 'technical' | 'social';
 export type cardLabel = 'person' | 'activity' | 'requirement' | 'concept' | 'insight' | 'object';
 
-export type fileExtension = 'txt' | 'png' | 'jpg' | 'jpeg' | 'json' | 'csv' | 'ipynb' | 'py' | 'js' | 'ts' | 'tsx' | 'jsx' | 'html' | 'css' | 'md' | 'pdf' | 'docx';
+export type fileExtension =
+    | 'txt'
+    | 'png'
+    | 'jpg'
+    | 'jpeg'
+    | 'json'
+    | 'csv'
+    | 'ipynb'
+    | 'py'
+    | 'js'
+    | 'ts'
+    | 'tsx'
+    | 'jsx'
+    | 'html'
+    | 'css'
+    | 'md'
+    | 'pdf'
+    | 'docx'
+    | 'mp4'
+    | 'webm'
+    | 'mov'
+    | 'm4v'
+    | 'ogg'
+    | 'ogv'
+    | 'avi';
 
 export type cardData = {
     label: string,

@@ -196,7 +196,7 @@ function CardImpl(props: CardProps) {
                                 onFileSelected={handleFileSelected}
                                 dropZoneCSS={dropZoneCSS}
                                 loading={false}
-                                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .tsx, .jsx, .html, .css, .md, .docx, .pdf'
+                                accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .tsx, .jsx, .html, .css, .md, .docx, .pdf, .mp4, .webm, .mov, .m4v, .ogg, .ogv, .avi'
                             />
                         </FileCarousel>
                     </div>
