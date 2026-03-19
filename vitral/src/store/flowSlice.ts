@@ -22,11 +22,6 @@ const initialState: { nodes: nodeType[], edges: edgeType[], title: string } = {
     title: "Untitled"
 };
 
-function ensureAttachmentArray(node: nodeType): string[] {
-    if (!Array.isArray(node.data.attachmentIds)) node.data.attachmentIds = [];
-    return node.data.attachmentIds;
-}
-
 function ensureCodebaseFilePathArray(node: nodeType): string[] {
     const data = node.data as Record<string, unknown>;
     if (!Array.isArray(data.codebaseFilePaths)) data.codebaseFilePaths = [];
@@ -385,6 +380,27 @@ function appendNodePositionSnapshot(
     ];
 }
 
+function commitNodeDataSnapshot(
+    node: nodeType,
+    nextSnapshot: Record<string, unknown>,
+    at: unknown,
+): nodeType {
+    const ensuredNode = ensureNodeHistory(node);
+    const ensuredData = nodeDataRecord(ensuredNode);
+    const timestamp = normalizeIsoTimestamp(at, new Date().toISOString());
+    const normalizedSnapshot = {
+        ...nextSnapshot,
+        createdAt: normalizeIsoTimestamp(nextSnapshot.createdAt, DEFAULT_HISTORY_TIMESTAMP),
+    };
+    const history = appendNodeDataSnapshot(readNodeHistory(ensuredData), timestamp, normalizedSnapshot);
+    const nextData = writeNodeHistory(normalizedSnapshot, history);
+
+    return {
+        ...ensuredNode,
+        data: nextData as nodeType["data"],
+    };
+}
+
 function ensureNodeHistory(node: nodeType): nodeType {
     const data = nodeDataRecord(node);
     const createdAt = normalizeIsoTimestamp(data.createdAt, DEFAULT_HISTORY_TIMESTAMP);
@@ -575,27 +591,57 @@ const flowSlice = createSlice({
         setTitle: (state, action) => {
             state.title = action.payload;
         },
-        attachFileIdToNode: (state, action: PayloadAction<{ nodeId: string; fileId: string }>) => {
-            const { nodeId, fileId } = action.payload;
-            const node = state.nodes.find((n) => n.id === nodeId);
-            if (!node) return;
+        attachFileIdToNode: (state, action: PayloadAction<{ nodeId: string; fileId: string; editAt?: string }>) => {
+            const { nodeId, fileId, editAt } = action.payload;
+            const index = state.nodes.findIndex((n) => n.id === nodeId);
+            if (index === -1) return;
 
-            const ids = ensureAttachmentArray(node);
-            if (!ids.includes(fileId)) ids.push(fileId);
+            const node = ensureNodeHistory(state.nodes[index]);
+            const data = stripNodeMeta(nodeDataRecord(node));
+            const currentIds = Array.isArray(data.attachmentIds)
+                ? data.attachmentIds.filter((id): id is string => typeof id === "string")
+                : [];
+
+            if (currentIds.includes(fileId)) return;
+
+            state.nodes[index] = commitNodeDataSnapshot(node, {
+                ...data,
+                attachmentIds: [...currentIds, fileId],
+            }, editAt);
         },
-        detachFileIdFromNode: (state, action: PayloadAction<{ nodeId: string; fileId: string }>) => {
-            const { nodeId, fileId } = action.payload;
-            const node = state.nodes.find((n) => n.id === nodeId);
-            if (!node) return;
+        detachFileIdFromNode: (state, action: PayloadAction<{ nodeId: string; fileId: string; editAt?: string }>) => {
+            const { nodeId, fileId, editAt } = action.payload;
+            const index = state.nodes.findIndex((n) => n.id === nodeId);
+            if (index === -1) return;
 
-            const ids = ensureAttachmentArray(node);
-            node.data!.attachmentIds = ids.filter((id) => id !== fileId);
+            const node = ensureNodeHistory(state.nodes[index]);
+            const data = stripNodeMeta(nodeDataRecord(node));
+            const currentIds = Array.isArray(data.attachmentIds)
+                ? data.attachmentIds.filter((id): id is string => typeof id === "string")
+                : [];
+            const nextIds = currentIds.filter((id) => id !== fileId);
+            if (nextIds.length === currentIds.length) return;
+
+            state.nodes[index] = commitNodeDataSnapshot(node, {
+                ...data,
+                attachmentIds: nextIds,
+            }, editAt);
         },
         detachFileIdFromAllNodes: (state, action: PayloadAction<string>) => {
             const fileId = action.payload;
-            for (const node of state.nodes) {
-                if (!Array.isArray(node.data?.attachmentIds)) continue;
-                node.data.attachmentIds = node.data.attachmentIds.filter((id) => id !== fileId);
+            for (let index = 0; index < state.nodes.length; index++) {
+                const node = ensureNodeHistory(state.nodes[index]);
+                const data = stripNodeMeta(nodeDataRecord(node));
+                const currentIds = Array.isArray(data.attachmentIds)
+                    ? data.attachmentIds.filter((id): id is string => typeof id === "string")
+                    : [];
+                const nextIds = currentIds.filter((id) => id !== fileId);
+                if (nextIds.length === currentIds.length) continue;
+
+                state.nodes[index] = commitNodeDataSnapshot(node, {
+                    ...data,
+                    attachmentIds: nextIds,
+                }, new Date().toISOString());
             }
         },
         attachCodebaseFilePathToNode: (
