@@ -1,0 +1,44 @@
+{
+  "id": "lloyd_dykes_2011",
+  "name": "Human-centered approaches in geovisualization design: Investigating multiple methods through a long-term case study",
+  "participants": [
+    { "name": "You", "role": "Visualization Researcher" },
+    { "name": "PI", "role": "PI - Visualization Researcher" },
+    { "name": "Specialist 1", "role": "Domain Expert" },
+    { "name": "Specialist 2", "role": "Domain Expert" }
+  ],
+  "timeline": {
+    "milestones": [
+        { "name": "Conduct Contextual Inquiry with Domain Specialists", "dayOffset": 0 },
+        { "name": "Analyze Domain Tasks, Data, and Work Practices", "dayOffset": 3 },
+        { "name": "Establish Shared Understanding of Data-in-Context", "dayOffset": 7 },
+
+        { "name": "Elicit Requirements through Scenario-Based Design", "dayOffset": 10 },
+        { "name": "Engage Domain Experts via Sketching and Card Sorting", "dayOffset": 13 },
+        { "name": "Incorporate Expert Feedback on Tools and Interactions", "dayOffset": 16 },
+
+        { "name": "Develop Wireframe Prototypes with Realistic Data Context", "dayOffset": 20 },
+        { "name": "Iterate Early Designs through Think-Aloud Sessions", "dayOffset": 23 },
+        { "name": "Refine Concepts via Autoethnographic Design Reflection", "dayOffset": 26 },
+
+        { "name": "Construct Paper and Digital Interactive Prototypes", "dayOffset": 30 },
+        { "name": "Enable Exploratory Interaction with Real Domain Data", "dayOffset": 33 },
+        { "name": "Iterate Designs Based on Specialist Feedback and Use", "dayOffset": 36 },
+
+        { "name": "Integrate Features into Coherent Geovis Application Design", "dayOffset": 40 },
+        { "name": "Support Flexible Exploration with Combined Visual Tools", "dayOffset": 45 },
+
+        { "name": "Evaluate Prototypes via Active Intervention Sessions", "dayOffset": 50 },
+        { "name": "Assess Exploration and Insight through Free Interaction", "dayOffset": 53 },
+        { "name": "Synthesize Findings into Design Recommendations", "dayOffset": 57 }
+    ],
+    "stages": [
+      { "name": "Context of use", "startDayOffset": 0, "endDayOffset": 10 },
+      { "name": "Requirements", "startDayOffset": 10, "endDayOffset": 20 },
+      { "name": "Early prototypes", "startDayOffset": 20, "endDayOffset": 30 },
+      { "name": "Later prototypes", "startDayOffset": 30, "endDayOffset": 40 },
+      { "name": "Full application", "startDayOffset": 40, "endDayOffset": 50 },
+      { "name": "Evaluation", "startDayOffset": 50, "endDayOffset": 60 }
+    ]
+  }
+}

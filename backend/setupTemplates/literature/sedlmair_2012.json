@@ -1,0 +1,33 @@
+{
+  "id": "sedlmair_2012",
+  "name": "Design study methodology: Reflections from the trenches and the stacks",
+  "participants": [
+    { "name": "You", "role": "Visualization Researcher" },
+    { "name": "PI", "role": "PI - Visualization Researcher" },
+    { "name": "Specialist 1", "role": "Domain Expert" },
+    { "name": "Specialist 2", "role": "Domain Expert" }
+  ],
+  "timeline": {
+    "milestones": [
+        { "name": "Survey Visualization Literature and Methods", "dayOffset": 0 },
+        { "name": "Identify and Evaluate Potential Domain Collaborations", "dayOffset": 5 },
+        { "name": "Select Viable Collaboration and Problem Context", "dayOffset": 10 },
+        { "name": "Define Roles: Front-line Analysts and Gatekeepers", "dayOffset": 15 },
+        { "name": "Characterize Domain Problems and Abstract Tasks", "dayOffset": 20 },
+        { "name": "Iteratively Refine Problem and Data Abstractions", "dayOffset": 30 },
+        { "name": "Design Visualization Encodings and Interaction Concepts", "dayOffset": 40 },
+        { "name": "Prototype, Implement, and Integrate with Workflows", "dayOffset": 50 },
+        { "name": "Deploy System and Conduct In-the-Wild Evaluation", "dayOffset": 60 },
+        { "name": "Reflect on Findings and Articulate Research Contributions", "dayOffset": 65 }
+    ],
+    "stages": [
+      { "name": "Learn", "startDayOffset": 0, "endDayOffset": 10 },
+      { "name": "Winnow", "startDayOffset": 10, "endDayOffset": 20 },
+      { "name": "Cast", "startDayOffset": 20, "endDayOffset": 30 },
+      { "name": "Discover", "startDayOffset": 30, "endDayOffset": 40 },
+      { "name": "Design", "startDayOffset": 40, "endDayOffset": 50 },
+      { "name": "Implement and deploy", "startDayOffset": 50, "endDayOffset": 60 },
+      { "name": "Reflect and write", "startDayOffset": 60, "endDayOffset": 70 }
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "id": "hall_2019",
+  "name": "Design by immersion: A transdisciplinary approach to problem-driven visualizations",
+  "participants": [
+    { "name": "You", "role": "Visualization Researcher" },
+    { "name": "PI", "role": "PI - Visualization Researcher" },
+    { "name": "Specialist 1", "role": "Domain Expert" },
+    { "name": "Specialist 2", "role": "Domain Expert" }
+  ],
+  "timeline": {
+    "milestones": [
+      { "name": "Conduct Collaborative and Independent Domain Analysis", "dayOffset": 0 },
+
+      { "name": "Establish Transdisciplinary Collaboration Context", "dayOffset": 10 },
+      { "name": "Initiate Domain Immersion Activities", "dayOffset": 13 },
+      { "name": "Evaluate Through Embedded Domain Practices", "dayOffset": 16 },
+
+      { "name": "Explore Domain-Inspired Design Spaces", "dayOffset": 20 },
+      { "name": "Prototype and Iterate with Domain Feedback", "dayOffset": 23 },
+      { "name": "Integrate Domain Knowledge into Visual Encodings", "dayOffset": 26 },
+
+      { "name": "Define Problem-Driven Domain Focus", "dayOffset": 30 },
+
+      { "name": "Build Shared Language and Communication Practices", "dayOffset": 40 },
+      { "name": "Consolidate Insights and Transdisciplinary Outcomes", "dayOffset": 45 }
+    ],
+    "stages": [
+      { "name": "Data analysis", "startDayOffset": 0, "endDayOffset": 10 },
+      { "name": "Study methods", "startDayOffset": 10, "endDayOffset": 20 },
+      { "name": "Prototyping", "startDayOffset": 20, "endDayOffset": 30 },
+      { "name": "Learning", "startDayOffset": 30, "endDayOffset": 40 },
+      { "name": "Communicating", "startDayOffset": 40, "endDayOffset": 50 }
+    ]
+  }
+}

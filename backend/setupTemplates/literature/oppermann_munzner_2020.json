@@ -1,0 +1,35 @@
+{
+  "id": "oppermann_munzner_2020",
+  "name": "Data-first visualization design studies",
+  "participants": [
+    { "name": "You", "role": "Visualization Researcher" },
+    { "name": "PI", "role": "PI - Visualization Researcher" },
+    { "name": "Specialist 1", "role": "Domain Expert" },
+    { "name": "Specialist 2", "role": "Domain Expert" }
+  ],
+  "timeline": {
+    "milestones": [
+        { "name": "Survey Visualization Literature and Data-First Paradigms", "dayOffset": 0 },
+        { "name": "Acquire and Inspect Initial Real-World Dataset", "dayOffset": 10 },
+        { "name": "Abstract Data into Domain-Independent Representation", "dayOffset": 13 },
+        { "name": "Elicit Potential Stakeholder Tasks from Data", "dayOffset": 20 },
+        { "name": "Translate Domain Tasks into Abstract Task Space", "dayOffset": 23 },
+        { "name": "Assess Task–Data Fit Across Stakeholders", "dayOffset": 30 },
+        { "name": "Prioritize Stakeholders Based on Data Affordances", "dayOffset": 33 },
+        { "name": "Define Roles and Collaboration Structure", "dayOffset": 40 },
+        { "name": "Design Visualization Idioms Aligned with Data and Tasks", "dayOffset": 50 },
+        { "name": "Implement and Deploy Visualization System", "dayOffset": 60 },
+        { "name": "Reflect on Process and Document Data-First Insights", "dayOffset": 70 }
+    ],
+    "stages": [
+      { "name": "Learn", "startDayOffset": 0, "endDayOffset": 10 },
+      { "name": "Acquire data", "startDayOffset": 10, "endDayOffset": 20 },
+      { "name": "Elicit tasks", "startDayOffset": 20, "endDayOffset": 30 },
+      { "name": "Winnow", "startDayOffset": 30, "endDayOffset": 40 },
+      { "name": "Cast", "startDayOffset": 40, "endDayOffset": 50 },
+      { "name": "Design", "startDayOffset": 50, "endDayOffset": 60 },
+      { "name": "Implement and deploy", "startDayOffset": 60, "endDayOffset": 70 },
+      { "name": "Reflect and write", "startDayOffset": 70, "endDayOffset": 80 }
+    ]
+  }
+}

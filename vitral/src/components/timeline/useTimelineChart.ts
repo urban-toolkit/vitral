@@ -1132,27 +1132,7 @@ export function useTimelineChart({
 
             g.append("path")
                 .attr("d", "M 0 -12 L 12 0 L 0 12 L -12 0 Z")
-                .on("contextmenu", openMilestoneMenu)
-                .on("click", openMilestoneMenu);
-
-            g.append("text")
-                .attr("class", classes.diamondText)
-                .attr("x", 0)
-                .attr("y", -15)
-                .text(eventData.name)
-                .on("contextmenu", openMilestoneMenu)
-                .on("click", (event: any) => {
-                    if (readOnly) return;
-                    event.stopPropagation();
-                    const [sx, sy] = d3.pointer(event, containerRef.current);
-                    setNameEdit({
-                        id: eventData.id,
-                        x: sx,
-                        y: sy,
-                        value: eventData.name,
-                        key: "designStudyEvent",
-                    });
-                });
+                .on("contextmenu", openMilestoneMenu);
         };
 
         let activeKnowledgePillTreeId: string | null = null;
@@ -2262,7 +2242,7 @@ export function useTimelineChart({
                         dispatch(setHoveredBlueprintComponentNodeId(null));
                     })
                     .on("click", (event: any, eventData: any) => {
-                        if (kind !== "codebase" && kind !== "blueprint") return;
+                        if (kind !== "codebase" && kind !== "blueprint" && kind !== "designStudy") return;
                         hideKnowledgePillTooltip();
 
                         const heightOffset = containerRef.current
@@ -2273,6 +2253,13 @@ export function useTimelineChart({
                         const clampedY =
                             Math.min(Math.max(event.clientY, 0), window.innerHeight - 150) -
                             heightOffset;
+
+                        if (kind === "designStudy") {
+                            setMilestoneMenu(null);
+                            setSelectedMilestone(null);
+                            setBlueprintCodebaseLinkMenu(null);
+                            setBlueprintLinkMenu(null);
+                        }
 
                         setSelectedEvent({ kind, event: eventData });
                         setTooltipPosition({ x: clampedX, y: clampedY });

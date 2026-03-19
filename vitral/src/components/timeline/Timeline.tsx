@@ -799,6 +799,24 @@ export const Timeline = ({
 		if (selectedEvent?.kind === "blueprint") {
 			return <BlueprintTooltip event={selectedEvent.event as BlueprintEvent} />;
 		}
+		if (selectedEvent?.kind === "designStudy") {
+			const event = selectedEvent.event as DesignStudyEvent;
+			return (
+				<div className={classes.codeBaseTooltip}>
+					<div className={classes.tooltipHeader}>
+						<p style={{ fontWeight: "bold", fontSize: "var(--font-size-md)" }}>
+							{event.name || "Milestone"}
+						</p>
+					</div>
+					<p style={{ fontSize: "var(--font-size-xs)", color: "var(--subtitle-color)" }}>
+						{formatDate(event.occurredAt)}
+					</p>
+					<p style={{ fontSize: "var(--font-size-sm)", color: "var(--subtitle-color)" }}>
+						Source: {event.generatedBy === "llm" ? "LLM" : "Manual"}
+					</p>
+				</div>
+			);
+		}
 		if (selectedEvent?.kind === "knowledge") {
 			const event = selectedEvent.event as KnowledgeBaseEvent;
 			return (

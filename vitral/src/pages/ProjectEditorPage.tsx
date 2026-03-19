@@ -900,15 +900,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return toTimestampMs(playbackAt);
     }, [playbackAt]);
     const effectivePlaybackTime = playbackAtTime ?? Date.now();
-    const latestChangeTime = useMemo(() => {
-        const startBound = toTimestampMs(timelineStartEnd.start) ?? Number.NEGATIVE_INFINITY;
-        const endBound = toTimestampMs(timelineStartEnd.end) ?? Number.POSITIVE_INFINITY;
+    const latestCanvasChangeTime = useMemo(() => {
         let latest: number | null = null;
 
         const addCandidate = (value: unknown) => {
             const timestamp = toTimestampMs(value);
             if (timestamp === null) return;
-            if (timestamp < startBound || timestamp > endBound) return;
             latest = latest === null ? timestamp : Math.max(latest, timestamp);
         };
 
@@ -919,20 +916,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 addCandidate(entry.at);
             }
         }
-        for (const eventData of designStudyEvents) addCandidate(eventData.occurredAt);
-        for (const eventData of blueprintEvents) addCandidate(eventData.occurredAt);
-        for (const marker of systemScreenshotMarkers) addCandidate(marker.occurredAt);
         for (const edge of edges) {
             addCandidate((edge.data as Record<string, unknown> | undefined)?.createdAt);
             addCandidate((edge.data as Record<string, unknown> | undefined)?.deletedAt);
         }
 
         return latest;
-    }, [blueprintEvents, designStudyEvents, edges, nodes, systemScreenshotMarkers, timelineStartEnd.end, timelineStartEnd.start]);
+    }, [edges, nodes]);
     const isHistoricalPlayback = useMemo(() => {
-        if (latestChangeTime === null) return false;
-        return effectivePlaybackTime < latestChangeTime;
-    }, [effectivePlaybackTime, latestChangeTime]);
+        // Only lock while explicitly inspecting a historical playback point.
+        if (playbackAtTime === null) return false;
+        if (latestCanvasChangeTime === null) return false;
+        return playbackAtTime < latestCanvasChangeTime;
+    }, [latestCanvasChangeTime, playbackAtTime]);
     const interactionLocked = reviewOnly || isHistoricalPlayback;
     const resolveActionTimestamp = useCallback(() => {
         if (playbackAt) {

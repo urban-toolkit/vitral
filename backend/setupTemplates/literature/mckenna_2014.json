@@ -1,0 +1,33 @@
+{
+  "id": "mckenna_2014",
+  "name": "Design activity framework for visualization design",
+  "participants": [
+    { "name": "You", "role": "Visualization Researcher" },
+    { "name": "PI", "role": "PI - Visualization Researcher" },
+    { "name": "Specialist 1", "role": "Domain Expert" },
+    { "name": "Specialist 2", "role": "Domain Expert" }
+  ],
+  "timeline": {
+    "milestones": [
+        { "name": "Characterize Domain and User Needs", "dayOffset": 0 },
+        { "name": "Identify Opportunities, Constraints, and Considerations", "dayOffset": 5 },
+        { "name": "Define Data and Task Abstractions", "dayOffset": 10 },
+
+        { "name": "Generate Conceptual Design Ideas", "dayOffset": 12 },
+        { "name": "Create and Review Concept Sketches", "dayOffset": 15 },
+        { "name": "Develop and Refine Wireframes", "dayOffset": 18 },
+
+        { "name": "Translate Ideas into High-Fidelity Prototypes", "dayOffset": 22 },
+        { "name": "Evaluate Prototypes with Real Data", "dayOffset": 26 },
+        { "name": "Iterate on Design Decisions and Implementations", "dayOffset": 29 },
+
+        { "name": "Deploy System and Validate with Users", "dayOffset": 35 }
+    ],
+    "stages": [
+      { "name": "Understand", "startDayOffset": 0, "endDayOffset": 10 },
+      { "name": "Ideate", "startDayOffset": 10, "endDayOffset": 20 },
+      { "name": "Make", "startDayOffset": 20, "endDayOffset": 30 },
+      { "name": "Deploy", "startDayOffset": 30, "endDayOffset": 40 }
+    ]
+  }
+}
