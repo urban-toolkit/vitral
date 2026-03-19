@@ -333,6 +333,28 @@ function milestoneInputsFromEvents(events: DesignStudyEvent[], fallbackDate: str
     }));
 }
 
+function mergeMilestoneInputs(
+    existingMilestones: MilestoneInput[],
+    generatedMilestones: DesignStudyEvent[],
+    fallbackDate: string,
+): MilestoneInput[] {
+    const merged = [...existingMilestones];
+    const seenKeys = new Set(
+        merged.map((milestone) => (
+            `${milestone.name.trim().toLowerCase()}|${toDateInputFromUnknown(milestone.occurredAt, fallbackDate)}`
+        ))
+    );
+
+    for (const milestone of milestoneInputsFromEvents(generatedMilestones, fallbackDate)) {
+        const key = `${milestone.name.trim().toLowerCase()}|${toDateInputFromUnknown(milestone.occurredAt, fallbackDate)}`;
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        merged.push(milestone);
+    }
+
+    return merged;
+}
+
 function uniqueRoles(roles: string[]): string[] {
     return Array.from(new Set(roles.map((role) => role.trim()).filter(Boolean)));
 }
@@ -668,14 +690,16 @@ export function ProjectSetupPage() {
                 );
 
                 if (generatedMilestones.length > 0) {
+                    const mergedMilestones = mergeMilestoneInputs(
+                        sourceSetup.timeline.milestones,
+                        generatedMilestones,
+                        sourceSetup.timeline.expectedStart
+                    );
                     effectiveSetup = {
                         ...sourceSetup,
                         timeline: {
                             ...sourceSetup.timeline,
-                            milestones: milestoneInputsFromEvents(
-                                generatedMilestones,
-                                sourceSetup.timeline.expectedStart
-                            ),
+                            milestones: mergedMilestones,
                         },
                     };
                     setSetup(effectiveSetup);
