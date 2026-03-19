@@ -74,6 +74,93 @@ function plusDays(date: Date, days: number): Date {
     return next;
 }
 
+function toFiniteNumber(value: unknown): number | null {
+    const numeric = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function resolveTemplateOffsetDomain(template: LiteratureTemplate): { min: number; max: number } {
+    const stageDefs = template.definition.timeline?.stages ?? [];
+    const stageOffsets: number[] = [];
+    for (const stage of stageDefs) {
+        const startOffset = toFiniteNumber(stage.startDayOffset);
+        const endOffset = toFiniteNumber(stage.endDayOffset);
+        if (startOffset !== null) stageOffsets.push(startOffset);
+        if (endOffset !== null) stageOffsets.push(endOffset);
+    }
+
+    const offsetValues = stageOffsets.length > 0
+        ? stageOffsets
+        : (template.definition.timeline?.milestones ?? [])
+            .map((milestone) => toFiniteNumber(milestone.dayOffset))
+            .filter((value): value is number => value !== null);
+
+    if (offsetValues.length === 0) return { min: 0, max: 1 };
+
+    const min = Math.min(...offsetValues);
+    const max = Math.max(...offsetValues);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+        return { min: 0, max: 1 };
+    }
+    return { min, max };
+}
+
+function projectOffsetToDateInput(
+    expectedStart: string,
+    expectedEnd: string,
+    offset: number,
+    domain: { min: number; max: number },
+): string {
+    const startDate = new Date(expectedStart);
+    const endDate = new Date(expectedEnd);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        return expectedStart;
+    }
+
+    const rawRatio = (offset - domain.min) / (domain.max - domain.min);
+    const ratio = Math.max(0, Math.min(1, rawRatio));
+    const projectedTime = startDate.getTime() + ((endDate.getTime() - startDate.getTime()) * ratio);
+    return toDateInputValue(new Date(projectedTime));
+}
+
+function projectLiteratureTemplateTimeline(
+    timeline: SetupState["timeline"],
+    template: LiteratureTemplate,
+): SetupState["timeline"] {
+    const domain = resolveTemplateOffsetDomain(template);
+    const stageDefs = template.definition.timeline?.stages ?? [];
+    const milestoneDefs = template.definition.timeline?.milestones ?? [];
+
+    const stages = stageDefs.map((stage, index): StageInput => {
+        const existing = timeline.stages[index];
+        const startOffset = toFiniteNumber(stage.startDayOffset) ?? domain.min;
+        const endOffset = toFiniteNumber(stage.endDayOffset) ?? domain.max;
+        return {
+            id: existing?.id || crypto.randomUUID(),
+            name: String(stage.name || `Stage ${index + 1}`),
+            start: projectOffsetToDateInput(timeline.expectedStart, timeline.expectedEnd, startOffset, domain),
+            end: projectOffsetToDateInput(timeline.expectedStart, timeline.expectedEnd, endOffset, domain),
+        };
+    });
+
+    const milestones = milestoneDefs.map((milestone, index): MilestoneInput => {
+        const existing = timeline.milestones[index];
+        const dayOffset = toFiniteNumber(milestone.dayOffset) ?? domain.min;
+        return {
+            id: existing?.id || crypto.randomUUID(),
+            name: String(milestone.name || `Milestone ${index + 1}`),
+            occurredAt: projectOffsetToDateInput(timeline.expectedStart, timeline.expectedEnd, dayOffset, domain),
+            generatedBy: "manual",
+        };
+    });
+
+    return {
+        ...timeline,
+        milestones: milestones.length > 0 ? milestones : timeline.milestones,
+        stages: stages.length > 0 ? stages : timeline.stages,
+    };
+}
+
 function safeIso(input: string, fallbackIso: string): string {
     const parsed = new Date(input);
     return Number.isNaN(parsed.getTime()) ? fallbackIso : parsed.toISOString();
@@ -469,25 +556,11 @@ export function ProjectSetupPage() {
         setSetup((prev) => {
             const baseStart = toDateInputFromUnknown(prev.timeline.expectedStart, toDateInputValue(new Date()));
             const baseDate = new Date(baseStart);
-
-            const milestones = (template.definition.timeline?.milestones ?? []).map((milestone) => ({
-                id: crypto.randomUUID(),
-                name: milestone.name,
-                occurredAt: toDateInputValue(plusDays(baseDate, milestone.dayOffset ?? 0)),
-                generatedBy: "manual" as const,
-            }));
-
-            const stages = (template.definition.timeline?.stages ?? []).map((stage) => ({
-                id: crypto.randomUUID(),
-                name: stage.name,
-                start: toDateInputValue(plusDays(baseDate, stage.startDayOffset ?? 0)),
-                end: toDateInputValue(plusDays(baseDate, stage.endDayOffset ?? 0)),
-            }));
-
-            const maxStageEnd = stages.reduce((max, stage) => {
-                const parsed = new Date(stage.end).getTime();
-                return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
-            }, baseDate.getTime());
+            const stageEndOffsets = (template.definition.timeline?.stages ?? [])
+                .map((stage) => toFiniteNumber(stage.endDayOffset))
+                .filter((value): value is number => value !== null);
+            const maxStageEndOffset = stageEndOffsets.length > 0 ? Math.max(...stageEndOffsets) : 90;
+            const expectedEnd = toDateInputValue(plusDays(baseDate, maxStageEndOffset));
 
             const participants = (template.definition.participants ?? []).map((participant, index) => ({
                 id: crypto.randomUUID(),
@@ -499,17 +572,18 @@ export function ProjectSetupPage() {
                 ...prev.availableRoles,
                 ...participants.map((participant) => participant.role),
             ]);
+            const projectedTimeline = projectLiteratureTemplateTimeline({
+                expectedStart: baseStart,
+                expectedEnd,
+                milestones: prev.timeline.milestones,
+                stages: prev.timeline.stages,
+            }, template);
 
             return {
                 ...prev,
                 availableRoles: roles.length > 0 ? roles : ["Researcher"],
                 participants: participants.length > 0 ? participants : prev.participants,
-                timeline: {
-                    expectedStart: baseStart,
-                    expectedEnd: toDateInputValue(new Date(maxStageEnd)),
-                    milestones: milestones.length > 0 ? milestones : prev.timeline.milestones,
-                    stages: stages.length > 0 ? stages : prev.timeline.stages,
-                },
+                timeline: projectedTimeline,
             };
         });
     };
@@ -733,6 +807,9 @@ export function ProjectSetupPage() {
         ? (selectedTemplate.kind === "literature"
             ? literatureTemplates.find((template) => template.id === selectedTemplate.id)?.name
             : previousProjects.find((project) => project.id === selectedTemplate.id)?.title)
+        : null;
+    const selectedLiteratureTemplate = selectedTemplate?.kind === "literature"
+        ? (literatureTemplates.find((template) => template.id === selectedTemplate.id) ?? null)
         : null;
 
     return (
@@ -968,10 +1045,19 @@ export function ProjectSetupPage() {
                                 <input
                                     type="date"
                                     value={setup.timeline.expectedStart}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        timeline: { ...prev.timeline, expectedStart: event.target.value },
-                                    }))}
+                                    onChange={(event) => setSetup((prev) => {
+                                        const nextTimeline = {
+                                            ...prev.timeline,
+                                            expectedStart: event.target.value,
+                                        };
+                                        if (!selectedLiteratureTemplate) {
+                                            return { ...prev, timeline: nextTimeline };
+                                        }
+                                        return {
+                                            ...prev,
+                                            timeline: projectLiteratureTemplateTimeline(nextTimeline, selectedLiteratureTemplate),
+                                        };
+                                    })}
                                 />
                             </label>
                             <label>
@@ -979,10 +1065,19 @@ export function ProjectSetupPage() {
                                 <input
                                     type="date"
                                     value={setup.timeline.expectedEnd}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        timeline: { ...prev.timeline, expectedEnd: event.target.value },
-                                    }))}
+                                    onChange={(event) => setSetup((prev) => {
+                                        const nextTimeline = {
+                                            ...prev.timeline,
+                                            expectedEnd: event.target.value,
+                                        };
+                                        if (!selectedLiteratureTemplate) {
+                                            return { ...prev, timeline: nextTimeline };
+                                        }
+                                        return {
+                                            ...prev,
+                                            timeline: projectLiteratureTemplateTimeline(nextTimeline, selectedLiteratureTemplate),
+                                        };
+                                    })}
                                 />
                             </label>
                         </div>
