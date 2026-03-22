@@ -190,6 +190,7 @@ function buildSubtrackScreenshotFocusPreviews(
 export const Timeline = ({
 	projectId,
 	readOnly = false,
+	allowKnowledgeTrackClearMenu = false,
 	startMarker,
 	endMarker,
 	projectName,
@@ -205,6 +206,8 @@ export const Timeline = ({
 	knowledgeBlueprintLinks = [],
 	playbackAt = null,
 	onPlaybackAtChange,
+	onClearKnowledgePreviousEdits,
+	onClearKnowledgeNextEdits,
 	connectedBlueprintComponentNodeIds = [],
 	defaultStages = [],
 	onStageUpdate,
@@ -253,6 +256,10 @@ export const Timeline = ({
 		x: number;
 		y: number;
 		linkId: string;
+	} | null>(null);
+	const [knowledgeTrackMenu, setKnowledgeTrackMenu] = useState<{
+		x: number;
+		y: number;
 	} | null>(null);
 	const [pendingBlueprintLinkEventId, setPendingBlueprintLinkEventId] = useState<string | null>(null);
 
@@ -390,6 +397,7 @@ export const Timeline = ({
 			if (event.key !== "Escape") return;
 			setBlueprintLinkMenu(null);
 			setBlueprintCodebaseLinkMenu(null);
+			setKnowledgeTrackMenu(null);
 			setPendingBlueprintLinkEventId(null);
 			setHoveredKnowledgeTreeId(null);
 			setSystemScreenshotTooltip(null);
@@ -485,6 +493,7 @@ export const Timeline = ({
 		hoveredBlueprintComponentNodeId,
 		connectedBlueprintComponentNodeIds,
 		readOnly,
+		allowKnowledgeTrackClearMenu,
 		dispatch,
 		onStageBoundaryChange,
 		onStageLaneDeletion,
@@ -561,6 +570,7 @@ export const Timeline = ({
 		setSelectedMilestone,
 		setBlueprintLinkMenu,
 		setBlueprintCodebaseLinkMenu,
+		setKnowledgeTrackMenu,
 		setTagPicker,
 		setStageMenu,
 		setNameEdit,
@@ -856,6 +866,7 @@ export const Timeline = ({
 					setMilestoneMenu(null);
 					setBlueprintLinkMenu(null);
 					setBlueprintCodebaseLinkMenu(null);
+					setKnowledgeTrackMenu(null);
 					setHoveredKnowledgeTreeId(null);
 					setSystemScreenshotTooltip(null);
 					setVisualEvolutionPanel(null);
@@ -1041,6 +1052,37 @@ export const Timeline = ({
 							}}
 						>
 							Delete link
+						</button>
+					</div>
+				)}
+
+				{knowledgeTrackMenu && allowKnowledgeTrackClearMenu && (
+					<div
+						className={classes.timelineContextMenu}
+						style={{ left: knowledgeTrackMenu.x, top: knowledgeTrackMenu.y }}
+						onClick={(event) => event.stopPropagation()}
+					>
+						<button
+							type="button"
+							className={classes.timelineContextMenuButton}
+							onClick={() => {
+								onClearKnowledgePreviousEdits?.();
+								setKnowledgeTrackMenu(null);
+								setShowTooltip(false);
+							}}
+						>
+							Clear previous edits
+						</button>
+						<button
+							type="button"
+							className={classes.timelineContextMenuButton}
+							onClick={() => {
+								onClearKnowledgeNextEdits?.();
+								setKnowledgeTrackMenu(null);
+								setShowTooltip(false);
+							}}
+						>
+							Clear next edits
 						</button>
 					</div>
 				)}

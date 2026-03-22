@@ -70,7 +70,8 @@ import {
     detachFileIdFromNode,
     onEdgesChange,
     onNodesChange,
-    removeNode,
+    setEdges,
+    setNodes,
     updateEdge,
     updateNode,
 } from "@/store/flowSlice";
@@ -223,6 +224,100 @@ type NodeHistoryEntry = {
     position?: unknown;
 };
 
+type ParsedNodeHistoryEntry = {
+    atIso: string;
+    atMs: number;
+    kind: "data" | "position";
+    data?: Record<string, unknown>;
+    position?: { x: number; y: number };
+};
+
+const NODE_HISTORY_KEY = "__history";
+const NODE_EDIT_AT_KEY = "__editAt";
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function stripNodeMeta(data: Record<string, unknown>): Record<string, unknown> {
+    const next = { ...data };
+    delete next[NODE_HISTORY_KEY];
+    delete next[NODE_EDIT_AT_KEY];
+    return next;
+}
+
+function toIsoFromTimestamp(timestampMs: number): string {
+    return new Date(timestampMs).toISOString();
+}
+
+function normalizeNodeHistoryEntries(node: nodeType): ParsedNodeHistoryEntry[] {
+    const nodeData = (node.data ?? {}) as Record<string, unknown>;
+    const normalized: ParsedNodeHistoryEntry[] = [];
+    const rawEntries = nodeHistoryFrom(nodeData);
+    for (const entry of rawEntries) {
+        const atMs = toTimestampMs(entry.at);
+        if (atMs === null) continue;
+        const atIso = toIsoFromTimestamp(atMs);
+        if (entry.kind === "data" && isRecordValue(entry.data)) {
+            normalized.push({
+                atIso,
+                atMs,
+                kind: "data",
+                data: stripNodeMeta(entry.data),
+            });
+            continue;
+        }
+        if (entry.kind === "position" && isRecordValue(entry.position)) {
+            const x = Number(entry.position.x);
+            const y = Number(entry.position.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            normalized.push({
+                atIso,
+                atMs,
+                kind: "position",
+                position: { x, y },
+            });
+        }
+    }
+    normalized.sort((a, b) => {
+        if (a.atMs !== b.atMs) return a.atMs - b.atMs;
+        if (a.kind === b.kind) return 0;
+        return a.kind === "data" ? -1 : 1;
+    });
+    return normalized;
+}
+
+function serializeNodeHistoryEntries(history: ParsedNodeHistoryEntry[]): NodeHistoryEntry[] {
+    return history.map((entry) => {
+        if (entry.kind === "data") {
+            return {
+                at: entry.atIso,
+                kind: "data",
+                data: { ...(entry.data ?? {}) },
+            };
+        }
+        return {
+            at: entry.atIso,
+            kind: "position",
+            position: {
+                x: entry.position?.x ?? 0,
+                y: entry.position?.y ?? 0,
+            },
+        };
+    });
+}
+
+function nodeDataRecord(node: nodeType): Record<string, unknown> {
+    const data = node.data;
+    return isRecordValue(data) ? { ...data } : {};
+}
+
+function edgeDataRecord(edge: edgeType): Record<string, unknown> {
+    return edge.data && typeof edge.data === "object"
+        ? { ...(edge.data as Record<string, unknown>) }
+        : {};
+}
+
 function nodeHistoryFrom(data: unknown): NodeHistoryEntry[] {
     if (!data || typeof data !== "object") return [];
     const history = (data as Record<string, unknown>).__history;
@@ -278,6 +373,11 @@ function normalizeNodeLabel(label: string): string {
     const normalized = label.trim().toLowerCase();
     if (normalized === "task") return "requirement";
     return normalized;
+}
+
+function isKnowledgeCardNode(node: nodeType): boolean {
+    const labelValue = normalizeNodeLabel(String((node.data as Record<string, unknown>)?.label ?? ""));
+    return CARD_LABELS.includes(labelValue as cardLabel);
 }
 
 function edgeLabelFrom(edge: edgeType): string {
@@ -803,6 +903,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [processingSystemScreenshot, setProcessingSystemScreenshot] = useState(false);
     const [knowledgePills, setKnowledgePills] = useState<KnowledgePill[]>([]);
     const [knowledgeCreationEvents, setKnowledgeCreationEvents] = useState<KnowledgePillEvent[]>([]);
+    const [localDeletedKnowledgeCreationEvents, setLocalDeletedKnowledgeCreationEvents] = useState<KnowledgePillEvent[]>([]);
     const [knowledgeCrossTreeConnections, setKnowledgeCrossTreeConnections] = useState<KnowledgeCrossTreeConnection[]>([]);
     const [knowledgeBlueprintLinks, setKnowledgeBlueprintLinks] = useState<KnowledgeBlueprintLink[]>([]);
     const [playbackAt, setPlaybackAt] = useState<string | null>(null);
@@ -810,6 +911,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
     const queuedPositionChangesRef = useRef<Array<NodeChange<nodeType> & { __editAt?: string }>>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
+    const previousNodesRef = useRef<nodeType[]>([]);
     const queryRequestIdRef = useRef(0);
     const chatRequestIdRef = useRef(0);
     const pointerPositionRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -941,12 +1043,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return new Date().toISOString();
     }, [playbackAt]);
     const timelineContextNodes = useMemo(() => {
+        const cutoffTime = effectivePlaybackTime;
         return nodes
             .filter((node) => {
                 const createdAt = toTimestampMs((node.data as Record<string, unknown>)?.createdAt);
-                return createdAt === null || createdAt <= effectivePlaybackTime;
+                if (createdAt !== null && createdAt > cutoffTime) return false;
+                const deletedAt = toTimestampMs((node.data as Record<string, unknown>)?.deletedAt);
+                if (deletedAt !== null && deletedAt <= cutoffTime) return false;
+                return true;
             })
-            .map((node) => resolveNodeAtPlayback(node, effectivePlaybackTime));
+            .map((node) => resolveNodeAtPlayback(node, cutoffTime));
     }, [effectivePlaybackTime, nodes]);
     const timelineContextEdges = useMemo(() => {
         const cutoffTime = effectivePlaybackTime;
@@ -969,6 +1075,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             return true;
         });
     }, [edges, effectivePlaybackTime, timelineContextNodes]);
+    const playbackAtIso = useMemo(() => {
+        if (!playbackAt) return "";
+        const parsed = new Date(playbackAt);
+        if (Number.isNaN(parsed.getTime())) return "";
+        return parsed.toISOString();
+    }, [playbackAt]);
     const knowledgeProvenanceTriggerKey = useMemo(() => {
         const nodeParts = nodes
             .map((node) => {
@@ -978,7 +1090,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 const descriptionValue = typeof nodeData.description === "string" ? nodeData.description : "";
                 const relevantValue = nodeData.relevant === false ? "0" : "1";
                 const parentValue = typeof node.parentId === "string" ? node.parentId : "";
-                return `${node.id}|${label}|${titleValue}|${descriptionValue}|${relevantValue}|${parentValue}`;
+                const createdAtValue = typeof nodeData.createdAt === "string" ? nodeData.createdAt : "";
+                const deletedAtValue = typeof nodeData.deletedAt === "string" ? nodeData.deletedAt : "";
+                return `${node.id}|${label}|${titleValue}|${descriptionValue}|${relevantValue}|${parentValue}|${createdAtValue}|${deletedAtValue}`;
             })
             .sort();
         const edgeParts = edges
@@ -989,7 +1103,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     : (typeof edge.label === "string" ? edge.label : "");
                 const sourceLabel = typeof edgeData.from === "string" ? edgeData.from : "";
                 const targetLabel = typeof edgeData.to === "string" ? edgeData.to : "";
-                return `${edge.id}|${edge.source}|${edge.target}|${labelValue}|${sourceLabel}|${targetLabel}`;
+                const createdAtValue = typeof edgeData.createdAt === "string" ? edgeData.createdAt : "";
+                const deletedAtValue = typeof edgeData.deletedAt === "string" ? edgeData.deletedAt : "";
+                return `${edge.id}|${edge.source}|${edge.target}|${labelValue}|${sourceLabel}|${targetLabel}|${createdAtValue}|${deletedAtValue}`;
             })
             .sort();
         const blueprintParts = blueprintEvents
@@ -1002,7 +1118,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         ].join("||");
     }, [blueprintEvents, edges, nodes]);
     const lastKnowledgeProvenanceKeyRef = useRef<string>("");
+    const lastKnowledgeProvenanceRequestKeyRef = useRef<string>("");
     const previousKnowledgeSyncStatusRef = useRef<string>(status);
+
+    useEffect(() => {
+        setLocalDeletedKnowledgeCreationEvents([]);
+        previousNodesRef.current = [];
+    }, [projectId]);
 
     useEffect(() => {
         const previousStatus = previousKnowledgeSyncStatusRef.current;
@@ -1010,12 +1132,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         previousKnowledgeSyncStatusRef.current = status;
 
         if (status === "loading") return;
-        const requestKey = `${projectId}|${knowledgeProvenanceTriggerKey}`;
-        if (lastKnowledgeProvenanceKeyRef.current === requestKey && !shouldForceAfterSaveSettled) return;
+        const requestKey = `${projectId}|${knowledgeProvenanceTriggerKey}|${playbackAtIso || "live"}`;
+        const didRequestKeyChange = lastKnowledgeProvenanceRequestKeyRef.current !== requestKey;
+        lastKnowledgeProvenanceRequestKeyRef.current = requestKey;
+        if (lastKnowledgeProvenanceKeyRef.current === requestKey && !shouldForceAfterSaveSettled && !didRequestKeyChange) return;
 
         let active = true;
         const loadKnowledgeProvenanceSnapshot = async () => {
-            const at = new Date().toISOString();
+            const at = playbackAtIso || new Date().toISOString();
             try {
                 const provenance = await loadKnowledgeProvenance(projectId, at);
                 if (!active) return;
@@ -1043,8 +1167,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             window.clearTimeout(immediateTimerId);
             window.clearTimeout(settledTimerId);
         };
-    }, [knowledgeProvenanceTriggerKey, projectId, status]);
-
+    }, [knowledgeProvenanceTriggerKey, playbackAtIso, projectId, status]);
     const cardCreatedAtByNodeId = useMemo(() => {
         const byId = new Map<string, string>();
         for (const node of nodes) {
@@ -1056,9 +1179,53 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
         return byId;
     }, [nodes]);
+    const mergedKnowledgeCreationEvents = useMemo<KnowledgePillEvent[]>(() => {
+        const byNodeId = new Map<string, KnowledgePillEvent>();
+        const existingNodeIdSet = new Set(nodes.map((node) => node.id));
+        const currentActiveNodeIdSet = new Set(
+            nodes
+                .filter((node) => {
+                    const nodeData = (node.data ?? {}) as Record<string, unknown>;
+                    return toTimestampMs(nodeData.deletedAt) === null;
+                })
+                .map((node) => node.id)
+        );
+        const readNodeId = (eventData: KnowledgePillEvent): string => (
+            typeof eventData.nodeId === "string" ? eventData.nodeId.trim() : ""
+        );
+        const addServerEvent = (eventData: KnowledgePillEvent) => {
+            const nodeId = typeof eventData.nodeId === "string" ? eventData.nodeId.trim() : "";
+            if (!nodeId) return;
+            if (!existingNodeIdSet.has(nodeId)) return;
+            byNodeId.set(nodeId, eventData);
+        };
+        for (const eventData of knowledgeCreationEvents) {
+            addServerEvent(eventData);
+        }
+        for (const localDeletedEvent of localDeletedKnowledgeCreationEvents) {
+            const nodeId = readNodeId(localDeletedEvent);
+            if (!nodeId) continue;
+            if (!existingNodeIdSet.has(nodeId)) continue;
+            if (currentActiveNodeIdSet.has(nodeId)) continue;
+            const serverEvent = byNodeId.get(nodeId);
+            if (!serverEvent) {
+                byNodeId.set(nodeId, localDeletedEvent);
+                continue;
+            }
+            // Keep locally-deleted tombstones visible while server payload is still stale.
+            if (serverEvent.isDeleted !== true && localDeletedEvent.isDeleted === true) {
+                byNodeId.set(nodeId, localDeletedEvent);
+            }
+        }
+        return Array.from(byNodeId.values()).sort((a, b) => {
+            const delta = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+            if (delta !== 0) return delta;
+            return a.id.localeCompare(b.id);
+        });
+    }, [knowledgeCreationEvents, localDeletedKnowledgeCreationEvents, nodes]);
 
     const knowledgeBaseEvents = useMemo<KnowledgeBaseEvent[]>(() => {
-        return knowledgeCreationEvents.map((eventData) => {
+        return mergedKnowledgeCreationEvents.map((eventData) => {
             const nodeId = typeof eventData.nodeId === "string" ? eventData.nodeId : "";
             const occurredAt = nodeId && cardCreatedAtByNodeId.has(nodeId)
                 ? cardCreatedAtByNodeId.get(nodeId) ?? eventData.occurredAt
@@ -1087,11 +1254,17 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             }],
             };
         });
-    }, [cardCreatedAtByNodeId, knowledgeCreationEvents]);
+    }, [cardCreatedAtByNodeId, mergedKnowledgeCreationEvents]);
     const normalizedKnowledgeTreePills = useMemo(() => {
+        const existingNodeIdSet = new Set(nodes.map((node) => node.id));
         return knowledgePills.map((pill) => {
             const normalizedEvents = Array.isArray(pill.events)
-                ? pill.events.map((eventData) => {
+                ? pill.events
+                    .filter((eventData) => {
+                        const nodeId = typeof eventData.nodeId === "string" ? eventData.nodeId.trim() : "";
+                        return nodeId !== "" && existingNodeIdSet.has(nodeId);
+                    })
+                    .map((eventData) => {
                     const nodeId = typeof eventData.nodeId === "string" ? eventData.nodeId : "";
                     const occurredAt = nodeId && cardCreatedAtByNodeId.has(nodeId)
                         ? cardCreatedAtByNodeId.get(nodeId) ?? eventData.occurredAt
@@ -1102,6 +1275,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     };
                 })
                 : [];
+            if (normalizedEvents.length === 0) return null;
 
             const parsedPillOccurredAt = new Date(pill.occurredAt).getTime();
             const fallbackOccurredAt = Number.isNaN(parsedPillOccurredAt)
@@ -1120,8 +1294,21 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 occurredAt: earliestEventOccurredAt ?? fallbackOccurredAt,
                 events: normalizedEvents,
             };
-        });
-    }, [cardCreatedAtByNodeId, knowledgePills]);
+        }).filter((pill): pill is KnowledgePill => pill !== null);
+    }, [cardCreatedAtByNodeId, knowledgePills, nodes]);
+    const filteredKnowledgeCrossTreeConnections = useMemo(() => {
+        const existingNodeIdSet = new Set(nodes.map((node) => node.id));
+        return knowledgeCrossTreeConnections.filter((connection) => (
+            existingNodeIdSet.has(connection.sourceNodeId) &&
+            existingNodeIdSet.has(connection.targetNodeId)
+        ));
+    }, [knowledgeCrossTreeConnections, nodes]);
+    const filteredKnowledgeBlueprintLinks = useMemo(() => {
+        const existingNodeIdSet = new Set(nodes.map((node) => node.id));
+        return knowledgeBlueprintLinks.filter((connection) => (
+            existingNodeIdSet.has(connection.cardNodeId)
+        ));
+    }, [knowledgeBlueprintLinks, nodes]);
 
     const {
         onAttachFile,
@@ -1173,6 +1360,105 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         dispatch(onNodesChange(queuedChanges as NodeChange<nodeType>[]));
     }, [dispatch, interactionLocked, resolveActionTimestamp, viewMode]);
 
+    const rememberDeletedKnowledgeEventFromNode = useCallback((targetNode: nodeType | undefined) => {
+        if (!targetNode) return;
+        const nodeId = targetNode.id;
+
+        const nodeData = (targetNode.data ?? {}) as Record<string, unknown>;
+        const labelValue = normalizeNodeLabel(String(nodeData.label ?? ""));
+        if (!CARD_LABELS.includes(labelValue as cardLabel)) return;
+
+        const createdAtRaw = typeof nodeData.createdAt === "string" ? nodeData.createdAt : "";
+        const parsedCreatedAt = new Date(createdAtRaw);
+        const occurredAt = Number.isNaN(parsedCreatedAt.getTime())
+            ? resolveActionTimestamp()
+            : parsedCreatedAt.toISOString();
+        const titleValue = typeof nodeData.title === "string" && nodeData.title.trim() !== ""
+            ? nodeData.title
+            : "Untitled";
+        const descriptionValue = typeof nodeData.description === "string"
+            ? nodeData.description
+            : "";
+        const treeId = labelValue === "activity" ? nodeId : null;
+        const treeTitle = labelValue === "activity" ? titleValue : null;
+
+        setLocalDeletedKnowledgeCreationEvents((existing) => {
+            const nextEvent: KnowledgePillEvent = {
+                id: `local-created:${nodeId}`,
+                occurredAt,
+                eventType: "created",
+                isDeleted: true,
+                nodeId,
+                cardLabel: labelValue,
+                cardTitle: titleValue,
+                cardDescription: descriptionValue,
+                treeId,
+                treeTitle,
+                metadata: {
+                    deleted: true,
+                    localGhost: true,
+                },
+            };
+            const existingIndex = existing.findIndex((eventData) => eventData.nodeId === targetNode.id);
+            if (existingIndex === -1) {
+                return [...existing, nextEvent];
+            }
+            const next = [...existing];
+            next[existingIndex] = nextEvent;
+            return next;
+        });
+    }, [resolveActionTimestamp]);
+    const softDeleteNode = useCallback((nodeId: string) => {
+        const targetNode = nodes.find((node) => node.id === nodeId);
+        if (!targetNode) return;
+        const nodeData = (targetNode.data ?? {}) as Record<string, unknown>;
+        if (toTimestampMs(nodeData.deletedAt) !== null) return;
+
+        const deletedAt = resolveActionTimestamp();
+        rememberDeletedKnowledgeEventFromNode(targetNode);
+        dispatch(updateNode({
+            ...targetNode,
+            data: {
+                ...nodeData,
+                deletedAt,
+                __editAt: deletedAt,
+            } as unknown as nodeType["data"],
+        }));
+
+        for (const edge of edges) {
+            if (edge.source !== nodeId && edge.target !== nodeId) continue;
+            const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
+            if (toTimestampMs(edgeData.deletedAt) !== null) continue;
+            dispatch(updateEdge({
+                ...edge,
+                data: {
+                    ...edgeData,
+                    deletedAt,
+                },
+            }));
+        }
+    }, [dispatch, edges, nodes, rememberDeletedKnowledgeEventFromNode, resolveActionTimestamp]);
+
+    useEffect(() => {
+        if (status !== "ready") {
+            previousNodesRef.current = nodes;
+            return;
+        }
+        const previousNodes = previousNodesRef.current;
+        if (previousNodes.length === 0) {
+            previousNodesRef.current = nodes;
+            return;
+        }
+
+        const currentNodeIdSet = new Set(nodes.map((node) => node.id));
+        for (const previousNode of previousNodes) {
+            if (currentNodeIdSet.has(previousNode.id)) continue;
+            rememberDeletedKnowledgeEventFromNode(previousNode);
+        }
+
+        previousNodesRef.current = nodes;
+    }, [nodes, rememberDeletedKnowledgeEventFromNode, status]);
+
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
         if (interactionLocked) return;
         if (viewMode !== "explore") return;
@@ -1181,7 +1467,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const positionChanges = changes.filter((change) => change.type === "position");
 
         if (immediateChanges.length > 0) {
-            dispatch(onNodesChange(immediateChanges));
+            const removeChanges = immediateChanges.filter((change) => change.type === "remove");
+            for (const change of removeChanges) {
+                const removedNodeId = typeof change.id === "string" ? change.id : "";
+                if (!removedNodeId) continue;
+                softDeleteNode(removedNodeId);
+            }
+            const passthroughChanges = immediateChanges.filter((change) => change.type !== "remove");
+            if (passthroughChanges.length > 0) {
+                dispatch(onNodesChange(passthroughChanges));
+            }
         }
 
         if (positionChanges.length > 0) {
@@ -1190,7 +1485,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 nodeChangeRafRef.current = window.requestAnimationFrame(flushQueuedPositionChanges);
             }
         }
-    }, [dispatch, interactionLocked, viewMode, flushQueuedPositionChanges]);
+    }, [dispatch, interactionLocked, viewMode, flushQueuedPositionChanges, softDeleteNode]);
 
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
         if (interactionLocked) return;
@@ -1460,8 +1755,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const onDeleteNode = useCallback((nodeId: string) => {
         if (interactionLocked) return;
-        dispatch(removeNode(nodeId));
-    }, [dispatch, interactionLocked]);
+        softDeleteNode(nodeId);
+    }, [interactionLocked, softDeleteNode]);
 
     const onDetachFile = useCallback((nodeId: string, fileId: string) => {
         if (interactionLocked) return;
@@ -3068,6 +3363,366 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
     }, [dispatch, hoveredAssetFileId, interactionLocked, projectId]);
 
+    const clearKnowledgeEditsAroundPlayback = useCallback((direction: "before" | "after") => {
+        if (reviewOnly) return;
+        const cutoffIso = resolveActionTimestamp();
+        const cutoffMs = toTimestampMs(cutoffIso);
+        if (cutoffMs === null) return;
+
+        const knowledgeNodeIds = new Set(
+            nodes
+                .filter((node) => isKnowledgeCardNode(node))
+                .map((node) => node.id)
+        );
+        if (knowledgeNodeIds.size === 0) return;
+
+        const nextNodes: nodeType[] = [];
+
+        for (const node of nodes) {
+            if (!knowledgeNodeIds.has(node.id)) {
+                nextNodes.push(node);
+                continue;
+            }
+
+            const currentData = nodeDataRecord(node);
+            const history = normalizeNodeHistoryEntries(node);
+            const createdAtMs = toTimestampMs(currentData.createdAt);
+            const deletedAtMs = toTimestampMs(currentData.deletedAt);
+
+            if (direction === "before") {
+                const createdAfterCutoff = createdAtMs !== null && createdAtMs > cutoffMs;
+                const activeAtCutoff =
+                    (createdAtMs === null || createdAtMs <= cutoffMs) &&
+                    (deletedAtMs === null || deletedAtMs > cutoffMs);
+
+                if (createdAfterCutoff) {
+                    const trimmedHistory = history.filter((entry) => entry.atMs >= cutoffMs);
+                    const nextData = stripNodeMeta(currentData);
+                    if (createdAtMs !== null) {
+                        nextData.createdAt = toIsoFromTimestamp(createdAtMs);
+                    }
+                    if (deletedAtMs !== null) {
+                        nextData.deletedAt = toIsoFromTimestamp(deletedAtMs);
+                    } else {
+                        delete nextData.deletedAt;
+                    }
+                    nextNodes.push({
+                        ...node,
+                        data: {
+                            ...(nextData as nodeType["data"]),
+                            [NODE_HISTORY_KEY]: serializeNodeHistoryEntries(trimmedHistory),
+                        } as nodeType["data"],
+                    });
+                    continue;
+                }
+
+                if (!activeAtCutoff) {
+                    continue;
+                }
+
+                const resolvedAtCutoff = resolveNodeAtPlayback(node, cutoffMs);
+                const resolvedData = stripNodeMeta(nodeDataRecord(resolvedAtCutoff));
+                const futureHistory = history
+                    .filter((entry) => entry.atMs > cutoffMs)
+                    .map((entry) => {
+                        if (entry.kind !== "data") return entry;
+                        const nextEntryData = stripNodeMeta(entry.data ?? {});
+                        nextEntryData.createdAt = cutoffIso;
+                        return {
+                            ...entry,
+                            data: nextEntryData,
+                        };
+                    });
+                const rebasedCurrentData = stripNodeMeta(currentData);
+                rebasedCurrentData.createdAt = cutoffIso;
+                if (deletedAtMs !== null && deletedAtMs > cutoffMs) {
+                    rebasedCurrentData.deletedAt = toIsoFromTimestamp(deletedAtMs);
+                } else {
+                    delete rebasedCurrentData.deletedAt;
+                }
+                const rebasedBaselineData: Record<string, unknown> = {
+                    ...resolvedData,
+                    createdAt: cutoffIso,
+                };
+                if (deletedAtMs !== null && deletedAtMs > cutoffMs) {
+                    rebasedBaselineData.deletedAt = toIsoFromTimestamp(deletedAtMs);
+                } else {
+                    delete rebasedBaselineData.deletedAt;
+                }
+
+                const rebasedHistory: ParsedNodeHistoryEntry[] = [
+                    {
+                        atIso: cutoffIso,
+                        atMs: cutoffMs,
+                        kind: "data",
+                        data: rebasedBaselineData,
+                    },
+                    {
+                        atIso: cutoffIso,
+                        atMs: cutoffMs,
+                        kind: "position",
+                        position: {
+                            x: resolvedAtCutoff.position.x,
+                            y: resolvedAtCutoff.position.y,
+                        },
+                    },
+                    ...futureHistory,
+                ];
+
+                nextNodes.push({
+                    ...node,
+                    data: {
+                        ...(rebasedCurrentData as nodeType["data"]),
+                        [NODE_HISTORY_KEY]: serializeNodeHistoryEntries(rebasedHistory),
+                    } as nodeType["data"],
+                });
+                continue;
+            }
+
+            const createdAfterCutoff = createdAtMs !== null && createdAtMs > cutoffMs;
+            if (createdAfterCutoff) {
+                continue;
+            }
+            const activeAtCutoff =
+                (createdAtMs === null || createdAtMs <= cutoffMs) &&
+                (deletedAtMs === null || deletedAtMs > cutoffMs);
+            if (!activeAtCutoff) {
+                continue;
+            }
+
+            const resolvedAtCutoff = resolveNodeAtPlayback(node, cutoffMs);
+            const resolvedData = stripNodeMeta(nodeDataRecord(resolvedAtCutoff));
+            const createdAtIso = createdAtMs === null ? cutoffIso : toIsoFromTimestamp(createdAtMs);
+            const trimmedHistory = history
+                .filter((entry) => entry.atMs <= cutoffMs)
+                .map((entry) => {
+                    if (entry.kind !== "data") return entry;
+                    const nextEntryData = stripNodeMeta(entry.data ?? {});
+                    nextEntryData.createdAt = createdAtIso;
+                    return {
+                        ...entry,
+                        data: nextEntryData,
+                    };
+                });
+
+            let finalHistory = trimmedHistory;
+            if (finalHistory.length === 0) {
+                finalHistory = [
+                    {
+                        atIso: createdAtIso,
+                        atMs: cutoffMs,
+                        kind: "data",
+                        data: {
+                            ...resolvedData,
+                            createdAt: createdAtIso,
+                        },
+                    },
+                    {
+                        atIso: createdAtIso,
+                        atMs: cutoffMs,
+                        kind: "position",
+                        position: {
+                            x: resolvedAtCutoff.position.x,
+                            y: resolvedAtCutoff.position.y,
+                        },
+                    },
+                ];
+            }
+
+            const nextNodeData: Record<string, unknown> = {
+                ...resolvedData,
+                createdAt: createdAtIso,
+            };
+            delete nextNodeData.deletedAt;
+
+            nextNodes.push({
+                ...node,
+                position: {
+                    x: resolvedAtCutoff.position.x,
+                    y: resolvedAtCutoff.position.y,
+                },
+                data: {
+                    ...(nextNodeData as nodeType["data"]),
+                    [NODE_HISTORY_KEY]: serializeNodeHistoryEntries(finalHistory),
+                } as nodeType["data"],
+            });
+        }
+
+        const nextNodeIdSet = new Set(nextNodes.map((node) => node.id));
+        const nextEdges: edgeType[] = [];
+        for (const edge of edges) {
+            const relatedToKnowledge =
+                knowledgeNodeIds.has(edge.source) ||
+                knowledgeNodeIds.has(edge.target);
+            if (!relatedToKnowledge) {
+                if (!nextNodeIdSet.has(edge.source) || !nextNodeIdSet.has(edge.target)) {
+                    continue;
+                }
+                nextEdges.push(edge);
+                continue;
+            }
+
+            const edgeData = edgeDataRecord(edge);
+            const createdAtMs = toTimestampMs(edgeData.createdAt);
+            const deletedAtMs = toTimestampMs(edgeData.deletedAt);
+
+            if (direction === "before") {
+                const createdAfterCutoff = createdAtMs !== null && createdAtMs > cutoffMs;
+                const activeAtCutoff =
+                    (createdAtMs === null || createdAtMs <= cutoffMs) &&
+                    (deletedAtMs === null || deletedAtMs > cutoffMs);
+                if (!createdAfterCutoff && !activeAtCutoff) {
+                    continue;
+                }
+                const nextEdgeData = { ...edgeData };
+                if (!createdAfterCutoff) {
+                    nextEdgeData.createdAt = cutoffIso;
+                } else if (createdAtMs !== null) {
+                    nextEdgeData.createdAt = toIsoFromTimestamp(createdAtMs);
+                }
+                if (deletedAtMs !== null && deletedAtMs > cutoffMs) {
+                    nextEdgeData.deletedAt = toIsoFromTimestamp(deletedAtMs);
+                } else {
+                    delete nextEdgeData.deletedAt;
+                }
+                if (!nextNodeIdSet.has(edge.source) || !nextNodeIdSet.has(edge.target)) {
+                    continue;
+                }
+                nextEdges.push({
+                    ...edge,
+                    data: nextEdgeData,
+                });
+                continue;
+            }
+
+            if (createdAtMs !== null && createdAtMs > cutoffMs) {
+                continue;
+            }
+            if (deletedAtMs !== null && deletedAtMs <= cutoffMs) {
+                continue;
+            }
+
+            const nextEdgeData = { ...edgeData };
+            if (createdAtMs !== null) {
+                nextEdgeData.createdAt = toIsoFromTimestamp(createdAtMs);
+            }
+            if (deletedAtMs !== null && deletedAtMs > cutoffMs) {
+                delete nextEdgeData.deletedAt;
+            }
+            if (!nextNodeIdSet.has(edge.source) || !nextNodeIdSet.has(edge.target)) {
+                continue;
+            }
+            nextEdges.push({
+                ...edge,
+                data: nextEdgeData,
+            });
+        }
+
+        dispatch(setNodes(nextNodes));
+        dispatch(setEdges(nextEdges));
+
+        const nextKnowledgeNodes = nextNodes.filter((node) => isKnowledgeCardNode(node));
+        const nextKnowledgeNodeIdSet = new Set(nextKnowledgeNodes.map((node) => node.id));
+        const nextKnowledgeDeletedNodeIdSet = new Set<string>();
+        const nextKnowledgeCreatedAtByNodeId = new Map<string, string>();
+        for (const node of nextKnowledgeNodes) {
+            const nodeData = nodeDataRecord(node);
+            const createdAtMs = toTimestampMs(nodeData.createdAt);
+            if (createdAtMs !== null) {
+                nextKnowledgeCreatedAtByNodeId.set(node.id, toIsoFromTimestamp(createdAtMs));
+            }
+            if (toTimestampMs(nodeData.deletedAt) !== null) {
+                nextKnowledgeDeletedNodeIdSet.add(node.id);
+            }
+        }
+
+        setKnowledgeCreationEvents((previous) => previous
+            .filter((eventData) => nextKnowledgeNodeIdSet.has(String(eventData.nodeId ?? "")))
+            .map((eventData) => {
+                const nodeId = String(eventData.nodeId ?? "");
+                const nextOccurredAt = nextKnowledgeCreatedAtByNodeId.get(nodeId) ?? eventData.occurredAt;
+                const isDeleted = nextKnowledgeDeletedNodeIdSet.has(nodeId);
+                const metadata = isRecordValue(eventData.metadata) ? eventData.metadata : {};
+                return {
+                    ...eventData,
+                    occurredAt: nextOccurredAt,
+                    isDeleted,
+                    metadata: {
+                        ...metadata,
+                        deleted: isDeleted,
+                    },
+                };
+            })
+            .sort((a, b) => {
+                const delta = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+                if (delta !== 0) return delta;
+                return a.id.localeCompare(b.id);
+            })
+        );
+        setLocalDeletedKnowledgeCreationEvents((previous) => previous
+            .filter((eventData) => nextKnowledgeDeletedNodeIdSet.has(String(eventData.nodeId ?? "")))
+            .map((eventData) => {
+                const nodeId = String(eventData.nodeId ?? "");
+                const nextOccurredAt = nextKnowledgeCreatedAtByNodeId.get(nodeId) ?? eventData.occurredAt;
+                return {
+                    ...eventData,
+                    occurredAt: nextOccurredAt,
+                };
+            })
+            .sort((a, b) => {
+                const delta = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+                if (delta !== 0) return delta;
+                return a.id.localeCompare(b.id);
+            })
+        );
+        setKnowledgePills((previous) => {
+            const nextPills: KnowledgePill[] = [];
+            for (const pill of previous) {
+                const nextEvents = Array.isArray(pill.events)
+                    ? pill.events
+                        .filter((eventData) => nextKnowledgeNodeIdSet.has(String(eventData.nodeId ?? "")))
+                        .map((eventData) => {
+                            const nodeId = String(eventData.nodeId ?? "");
+                            const nextOccurredAt = nextKnowledgeCreatedAtByNodeId.get(nodeId) ?? eventData.occurredAt;
+                            return {
+                                ...eventData,
+                                occurredAt: nextOccurredAt,
+                                isDeleted: nextKnowledgeDeletedNodeIdSet.has(nodeId),
+                            };
+                        })
+                    : [];
+                if (nextEvents.length === 0) continue;
+                const earliestOccurredAt = nextEvents.reduce<string>((earliest, eventData) => {
+                    if (!earliest) return eventData.occurredAt;
+                    const currentTime = new Date(eventData.occurredAt).getTime();
+                    const earliestTime = new Date(earliest).getTime();
+                    return currentTime < earliestTime ? eventData.occurredAt : earliest;
+                }, "");
+                nextPills.push({
+                    ...pill,
+                    occurredAt: earliestOccurredAt || pill.occurredAt,
+                    events: nextEvents,
+                });
+            }
+            return nextPills;
+        });
+        setKnowledgeCrossTreeConnections((previous) => previous.filter((connection) => (
+            nextKnowledgeNodeIdSet.has(connection.sourceNodeId) &&
+            nextKnowledgeNodeIdSet.has(connection.targetNodeId)
+        )));
+        setKnowledgeBlueprintLinks((previous) => previous.filter((connection) => (
+            nextKnowledgeNodeIdSet.has(connection.cardNodeId)
+        )));
+    }, [dispatch, edges, nodes, resolveActionTimestamp, reviewOnly]);
+
+    const handleClearKnowledgePreviousEdits = useCallback(() => {
+        clearKnowledgeEditsAroundPlayback("before");
+    }, [clearKnowledgeEditsAroundPlayback]);
+
+    const handleClearKnowledgeNextEdits = useCallback(() => {
+        clearKnowledgeEditsAroundPlayback("after");
+    }, [clearKnowledgeEditsAroundPlayback]);
+
     const handlePlaybackAtChange = useCallback((value: string | null) => {
         if (!value) {
             setPlaybackAt(null);
@@ -3226,6 +3881,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 open={timelineOpen}
                 onToggleOpen={handleToggleTimeline}
                 readOnly={interactionLocked}
+                allowKnowledgeTrackClearMenu={!reviewOnly}
                 startMarker={timelineStartEnd.start}
                 endMarker={timelineStartEnd.end}
                 projectName={title}
@@ -3233,10 +3889,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 codebaseEvents={gitEvents}
                 knowledgeBaseEvents={knowledgeBaseEvents}
                 knowledgeTreePills={normalizedKnowledgeTreePills}
-                knowledgeCrossTreeConnections={knowledgeCrossTreeConnections}
-                knowledgeBlueprintLinks={knowledgeBlueprintLinks}
+                knowledgeCrossTreeConnections={filteredKnowledgeCrossTreeConnections}
+                knowledgeBlueprintLinks={filteredKnowledgeBlueprintLinks}
                 playbackAt={playbackAt}
                 onPlaybackAtChange={handlePlaybackAtChange}
+                onClearKnowledgePreviousEdits={handleClearKnowledgePreviousEdits}
+                onClearKnowledgeNextEdits={handleClearKnowledgeNextEdits}
                 designStudyEvents={designStudyEvents}
                 blueprintEvents={blueprintEvents}
                 blueprintEventConnections={blueprintEventConnections}

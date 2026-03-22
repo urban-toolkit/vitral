@@ -21,6 +21,7 @@ type TimelineDockProps = {
     open: boolean;
     onToggleOpen: () => void;
     readOnly?: boolean;
+    allowKnowledgeTrackClearMenu?: boolean;
     startMarker: Date | string;
     endMarker: Date | string;
     projectName?: string;
@@ -32,6 +33,8 @@ type TimelineDockProps = {
     knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];
     playbackAt?: Date | string | null;
     onPlaybackAtChange?: (value: string | null) => void;
+    onClearKnowledgePreviousEdits?: () => void;
+    onClearKnowledgeNextEdits?: () => void;
     designStudyEvents: DesignStudyEvent[];
     blueprintEvents?: BlueprintEvent[];
     blueprintEventConnections?: BlueprintEventConnection[];
@@ -51,6 +54,7 @@ export const TimelineDock = memo(function TimelineDock({
     open,
     onToggleOpen,
     readOnly = false,
+    allowKnowledgeTrackClearMenu = false,
     startMarker,
     endMarker,
     projectName,
@@ -62,6 +66,8 @@ export const TimelineDock = memo(function TimelineDock({
     knowledgeBlueprintLinks = [],
     playbackAt = null,
     onPlaybackAtChange,
+    onClearKnowledgePreviousEdits,
+    onClearKnowledgeNextEdits,
     designStudyEvents,
     blueprintEvents = [],
     blueprintEventConnections = [],
@@ -117,6 +123,7 @@ export const TimelineDock = memo(function TimelineDock({
                 <Timeline
                     projectId={projectId}
                     readOnly={readOnly}
+                    allowKnowledgeTrackClearMenu={allowKnowledgeTrackClearMenu}
                     startMarker={startMarker}
                     endMarker={endMarker}
                     projectName={projectName}
@@ -131,6 +138,8 @@ export const TimelineDock = memo(function TimelineDock({
                     knowledgeBlueprintLinks={knowledgeBlueprintLinks}
                     playbackAt={playbackAt}
                     onPlaybackAtChange={onPlaybackAtChange}
+                    onClearKnowledgePreviousEdits={onClearKnowledgePreviousEdits}
+                    onClearKnowledgeNextEdits={onClearKnowledgeNextEdits}
                     connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}
                     stages={stages}
                     defaultStages={defaultStages}

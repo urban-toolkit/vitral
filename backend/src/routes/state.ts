@@ -841,12 +841,21 @@ async function persistProvenanceEvolution(
     const previousSnapshot = extractProvenanceSnapshot(previousState);
     const currentSnapshot = extractProvenanceSnapshot(currentState);
     const diff = diffProvenanceSnapshots(previousSnapshot, currentSnapshot);
+    const hasChanges =
+        diff.cardCreated.length > 0 ||
+        diff.cardUpdated.length > 0 ||
+        diff.cardDeleted.length > 0 ||
+        diff.connectionCreated.length > 0 ||
+        diff.connectionUpdated.length > 0 ||
+        diff.connectionDeleted.length > 0;
+    if (!hasChanges) return;
 
     for (const card of diff.cardCreated) {
         const tree = resolveTreeForCard(currentSnapshot, card.nodeId);
+        const createdAt = card.createdAt || occurredAt;
         await insertCardEvent(pg, {
             docId,
-            occurredAt,
+            occurredAt: createdAt,
             nodeId: card.nodeId,
             cardLabel: card.label,
             cardTitle: card.title,
@@ -861,9 +870,10 @@ async function persistProvenanceEvolution(
     for (const item of diff.cardUpdated) {
         const card = item.current;
         const tree = resolveTreeForCard(currentSnapshot, card.nodeId);
+        const createdAt = card.createdAt || occurredAt;
         await upsertCardCreationEventState(pg, {
             docId,
-            occurredAt,
+            occurredAt: createdAt,
             nodeId: card.nodeId,
             cardLabel: card.label,
             cardTitle: card.title,
@@ -878,9 +888,10 @@ async function persistProvenanceEvolution(
     }
 
     for (const card of diff.cardDeleted) {
+        const createdAt = card.createdAt || occurredAt;
         await upsertCardCreationEventState(pg, {
             docId,
-            occurredAt,
+            occurredAt: createdAt,
             nodeId: card.nodeId,
             cardLabel: card.label,
             cardTitle: card.title,
@@ -2816,8 +2827,48 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             return reply.status(404).send({ error: "Document not found" });
         }
 
+        let previousState: unknown = undefined;
+        try {
+            const latestRevisionRes = await app.pg.query<{ state: unknown }>(
+                `
+                SELECT state
+                FROM document_state_revisions
+                WHERE document_id = $1
+                ORDER BY captured_at DESC
+                LIMIT 1
+                `,
+                [id],
+            );
+            if (latestRevisionRes.rows.length > 0) {
+                previousState = latestRevisionRes.rows[0].state;
+            } else {
+                const currentStateRes = await app.pg.query<{ state: unknown }>(
+                    `
+                    SELECT state
+                    FROM documents
+                    WHERE id = $1
+                    `,
+                    [id],
+                );
+                previousState = currentStateRes.rows[0]?.state;
+            }
+        } catch (error) {
+            request.log.error({ error }, "Failed to read previous revision state for provenance delta.");
+        }
+
         const version = Number(versionRes.rows[0]?.version ?? 1);
         await insertStateRevision(app.pg, id, version, body.state, body.timeline ?? {});
+        try {
+            await persistProvenanceEvolution(
+                app.pg,
+                id,
+                previousState,
+                body.state,
+                new Date().toISOString(),
+            );
+        } catch (error) {
+            request.log.error({ error }, "Failed to persist provenance from revision snapshot.");
+        }
         return reply.status(204).send();
     });
 

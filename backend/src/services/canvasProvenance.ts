@@ -15,6 +15,7 @@ export type ProvenanceCard = {
     title: string;
     description: string;
     relevant: boolean;
+    createdAt: string;
 };
 
 export type ProvenanceComponent = {
@@ -83,6 +84,19 @@ function toCardLabel(raw: unknown): ProvenanceCardLabel | null {
 
 function stringValue(raw: unknown): string {
     return typeof raw === "string" ? raw : "";
+}
+
+function normalizeIsoTimestamp(raw: unknown): string {
+    if (typeof raw !== "string" || raw.trim() === "") return "";
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return "";
+    return parsed.toISOString();
+}
+
+function isSoftDeleted(data: RecordValue): boolean {
+    const deletedAt = data.deletedAt;
+    if (typeof deletedAt !== "string") return false;
+    return deletedAt.trim() !== "";
 }
 
 function connectionKindFrom(label: string, kind: string): ProvenanceConnectionKind {
@@ -188,6 +202,7 @@ export function extractProvenanceSnapshot(state: unknown): ProvenanceSnapshot {
         const nodeId = stringValue(rawNode.id).trim();
         if (!nodeId) continue;
         const data = isRecord(rawNode.data) ? rawNode.data : {};
+        if (isSoftDeleted(data)) continue;
         const label = normalizeLabel(data.label);
         const title = stringValue(data.title).trim();
         nodeIndex.set(nodeId, { label, title });
@@ -200,6 +215,7 @@ export function extractProvenanceSnapshot(state: unknown): ProvenanceSnapshot {
                 title,
                 description: stringValue(data.description).trim(),
                 relevant: data.relevant !== false,
+                createdAt: normalizeIsoTimestamp(data.createdAt),
             });
             continue;
         }
@@ -220,6 +236,7 @@ export function extractProvenanceSnapshot(state: unknown): ProvenanceSnapshot {
         if (!edgeId || !sourceNodeId || !targetNodeId) continue;
 
         const data = isRecord(rawEdge.data) ? rawEdge.data : {};
+        if (isSoftDeleted(data)) continue;
         const rawLabel = stringValue(rawEdge.label).trim() || stringValue(data.label).trim();
         const rawKind = stringValue(data.kind);
         const sourceInfo = nodeIndex.get(sourceNodeId);
@@ -333,4 +350,3 @@ export function resolveTreeForCard(
         treeTitle: snapshot.treeTitleByActivityId.get(treeId) ?? null,
     };
 }
-

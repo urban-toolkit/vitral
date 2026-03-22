@@ -104,6 +104,7 @@ export type AnyEvent =
 export type TimelineProps = {
   projectId: string;
   readOnly?: boolean;
+  allowKnowledgeTrackClearMenu?: boolean;
   startMarker: Date | string;
   endMarker: Date | string;
   projectName?: string;
@@ -126,6 +127,8 @@ export type TimelineProps = {
   knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];
   playbackAt?: Date | string | null;
   onPlaybackAtChange?: (value: string | null) => void;
+  onClearKnowledgePreviousEdits?: () => void;
+  onClearKnowledgeNextEdits?: () => void;
   connectedBlueprintComponentNodeIds?: string[];
   margin?: { top: number; right: number; bottom: number; left: number };
 };

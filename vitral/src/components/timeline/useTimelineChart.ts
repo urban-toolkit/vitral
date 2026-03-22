@@ -53,6 +53,11 @@ type BlueprintCodebaseLinkMenuState = {
     linkId: string;
 } | null;
 
+type KnowledgeTrackMenuState = {
+    x: number;
+    y: number;
+} | null;
+
 type NameEditState = {
     id: string;
     x: number;
@@ -146,6 +151,7 @@ type UseTimelineChartParams = {
     hoveredBlueprintComponentNodeId: string | null;
     connectedBlueprintComponentNodeIds: string[];
     readOnly: boolean;
+    allowKnowledgeTrackClearMenu: boolean;
     dispatch: (action: any) => void;
     onStageBoundaryChange: (prevId: string, nextId: string, date: Date) => void;
     onStageLaneDeletion: (id: string) => void;
@@ -167,6 +173,7 @@ type UseTimelineChartParams = {
     setSelectedMilestone: Dispatch<SetStateAction<DesignStudyEvent | null>>;
     setBlueprintLinkMenu: Dispatch<SetStateAction<BlueprintLinkMenuState>>;
     setBlueprintCodebaseLinkMenu: Dispatch<SetStateAction<BlueprintCodebaseLinkMenuState>>;
+    setKnowledgeTrackMenu: Dispatch<SetStateAction<KnowledgeTrackMenuState>>;
     setTagPicker: Dispatch<SetStateAction<TagPickerState>>;
     setStageMenu: Dispatch<SetStateAction<StageMenuState>>;
     setNameEdit: Dispatch<SetStateAction<NameEditState>>;
@@ -212,6 +219,7 @@ export function useTimelineChart({
     hoveredBlueprintComponentNodeId,
     connectedBlueprintComponentNodeIds,
     readOnly,
+    allowKnowledgeTrackClearMenu,
     dispatch,
     onStageBoundaryChange,
     onStageLaneDeletion,
@@ -233,6 +241,7 @@ export function useTimelineChart({
     setSelectedMilestone,
     setBlueprintLinkMenu,
     setBlueprintCodebaseLinkMenu,
+    setKnowledgeTrackMenu,
     setTagPicker,
     setStageMenu,
     setNameEdit,
@@ -555,16 +564,40 @@ export function useTimelineChart({
             })),
         ];
 
+        const openKnowledgeTrackMenu = (event: any) => {
+            if (!allowKnowledgeTrackClearMenu) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const [sx, sy] = d3.pointer(event, containerRef.current);
+            setSelectedMilestone(null);
+            setMilestoneMenu(null);
+            setBlueprintLinkMenu(null);
+            setBlueprintCodebaseLinkMenu(null);
+            setKnowledgeTrackMenu({
+                x: sx,
+                y: sy,
+            });
+            setShowTooltip(false);
+        };
+
         lanes.forEach((lane) => {
             const y = laneY[lane.key];
 
-            laneBackgroundG
+            const laneBackground = laneBackgroundG
                 .append("rect")
                 .attr("class", classes.laneLine)
                 .attr("x", margin.left)
                 .attr("y", y)
                 .attr("width", totalTrackWidth)
                 .attr("height", 65);
+            if (lane.key === "knowledge") {
+                laneBackground
+                    .attr("data-timeline-interactive", allowKnowledgeTrackClearMenu ? "true" : null)
+                    .on("contextmenu", openKnowledgeTrackMenu);
+                if (allowKnowledgeTrackClearMenu) {
+                    laneBackground.style("cursor", "context-menu");
+                }
+            }
 
             lanesG
                 .append("rect")
@@ -1127,6 +1160,7 @@ export function useTimelineChart({
                 setSelectedMilestone(eventData);
                 setBlueprintLinkMenu(null);
                 setBlueprintCodebaseLinkMenu(null);
+                setKnowledgeTrackMenu(null);
                 setShowTooltip(false);
             };
 
@@ -1241,6 +1275,11 @@ export function useTimelineChart({
                         .attr("fill", stageColor(stageData.name))
                         .attr("opacity", 0.5)
                         .on("contextmenu", function (event: any, fillRow: { lane: LaneType | "codebaseSubtrack" | "knowledgeSubtrack" }) {
+                            const isKnowledgeLane = fillRow.lane === "knowledge" || fillRow.lane === "knowledgeSubtrack";
+                            if (isKnowledgeLane) {
+                                openKnowledgeTrackMenu(event);
+                                return;
+                            }
                             if (readOnly) return;
                             if (fillRow.lane !== "designStudy") return;
 
@@ -1248,6 +1287,7 @@ export function useTimelineChart({
                             const [sx, sy] = d3.pointer(event, containerRef.current);
                             setSelectedMilestone(null);
                             setMilestoneMenu({ x: sx, y: sy, date: fromDate(x.invert(sx)) });
+                            setKnowledgeTrackMenu(null);
                         });
                 });
 
@@ -2129,6 +2169,7 @@ export function useTimelineChart({
                         y: sy,
                         linkId: entry.link.id,
                     });
+                    setKnowledgeTrackMenu(null);
                     setShowTooltip(false);
                 });
 
@@ -2275,6 +2316,7 @@ export function useTimelineChart({
                             setSelectedMilestone(eventData);
                             setBlueprintCodebaseLinkMenu(null);
                             setBlueprintLinkMenu(null);
+                            setKnowledgeTrackMenu(null);
                             setShowTooltip(false);
                             return;
                         }
@@ -2292,6 +2334,7 @@ export function useTimelineChart({
                             y: sy,
                             blueprintEventId: eventData.id,
                         });
+                        setKnowledgeTrackMenu(null);
                         setShowTooltip(false);
                     });
 
@@ -2428,6 +2471,7 @@ export function useTimelineChart({
         hoveredBlueprintComponentNodeId,
         connectedBlueprintComponentNodeIds,
         readOnly,
+        allowKnowledgeTrackClearMenu,
         dispatch,
         onStageBoundaryChange,
         onStageLaneDeletion,
@@ -2449,6 +2493,7 @@ export function useTimelineChart({
         setSelectedMilestone,
         setBlueprintLinkMenu,
         setBlueprintCodebaseLinkMenu,
+        setKnowledgeTrackMenu,
         setTagPicker,
         setStageMenu,
         setNameEdit,
