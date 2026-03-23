@@ -449,12 +449,19 @@ export async function updateDocumentMeta(docId: string, payload: { title?: strin
     return res.json();
 }
 
-export async function createFile(docId: string, pending: filePendingUpload): Promise<{ fileId: string, createdAt: string, sha256: string, sizeBytes: number, bucket: string, key: string }> {
+export async function createFile(
+    docId: string,
+    pending: filePendingUpload,
+    createdAt?: string,
+): Promise<{ fileId: string, createdAt: string, sha256: string, sizeBytes: number, bucket: string, key: string }> {
 
     const fd = new FormData();
     fd.append("id", pending.id);
     fd.append("name", pending.name);
     fd.append("mimeType", pending.mimeType);
+    if (typeof createdAt === "string" && createdAt.trim() !== "") {
+        fd.append("createdAt", createdAt.trim());
+    }
     fd.append("file", pending.file); // binary
 
     const res = await fetch(`${API_BASE}/state/${docId}/files`, {

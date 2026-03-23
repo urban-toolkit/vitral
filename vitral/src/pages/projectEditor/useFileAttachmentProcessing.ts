@@ -119,7 +119,18 @@ export function useFileAttachmentProcessing({
                 ? fallbackCreatedAt
                 : parsedGeneratedAt.toISOString();
 
-            const { fileId, sha256, bucket, key } = await createFile(projectId, data);
+            const uploaded = await createFile(projectId, data, chosenCreatedAt);
+            const {
+                fileId,
+                createdAt: persistedCreatedAt,
+                sha256,
+                bucket,
+                key,
+            } = uploaded;
+            const parsedPersistedCreatedAt = new Date(persistedCreatedAt);
+            const resolvedCreatedAt = Number.isNaN(parsedPersistedCreatedAt.getTime())
+                ? chosenCreatedAt
+                : parsedPersistedCreatedAt.toISOString();
             const { name, mimeType, sizeBytes, ext } = data;
             const generatedEdges: edgeType[] = [];
 
@@ -130,13 +141,17 @@ export function useFileAttachmentProcessing({
                 mimeType,
                 sizeBytes,
                 ext,
-                createdAt: chosenCreatedAt,
+                createdAt: resolvedCreatedAt,
                 sha256,
                 storage: { bucket, key },
             }));
 
             // Attach as soon as upload metadata is available, independent of LLM success.
-            dispatch(attachFileIdToNode({ nodeId: rootActivityNodeId, fileId }));
+            dispatch(attachFileIdToNode({
+                nodeId: rootActivityNodeId,
+                fileId,
+                editAt: resolvedCreatedAt,
+            }));
 
             const rootNode = nodesRef.current.find((node) => node.id === rootActivityNodeId);
             if (rootNode) {
@@ -149,8 +164,9 @@ export function useFileAttachmentProcessing({
                     data: {
                         ...rootNode.data,
                         attachmentIds: Array.from(new Set([...currentAttachmentIds, fileId])),
-                        createdAt: chosenCreatedAt,
+                        createdAt: resolvedCreatedAt,
                         origin: fileId,
+                        __editAt: resolvedCreatedAt,
                     },
                 }));
             }
@@ -168,7 +184,7 @@ export function useFileAttachmentProcessing({
 
             if (response?.cards) {
                 const { nodes: generatedNodes, idMap } = llmCardsToNodes(response.cards, dropPosition, {
-                    createdAt: chosenCreatedAt,
+                    createdAt: resolvedCreatedAt,
                     origin: fileId,
                 });
                 const generatedNodeById = new Map(generatedNodes.map((node) => [node.id, node]));
@@ -236,7 +252,7 @@ export function useFileAttachmentProcessing({
                         ...edge,
                         data: {
                             ...(edge.data && typeof edge.data === "object" ? edge.data : {}),
-                            createdAt: chosenCreatedAt,
+                            createdAt: resolvedCreatedAt,
                         },
                     });
                 };
@@ -335,7 +351,19 @@ export function useFileAttachmentProcessing({
         }
 
         const parsedFile = await parseFile(file);
-        const { fileId, createdAt, sha256, bucket, key } = await createFile(projectId, parsedFile);
+        const chosenCreatedAt = resolveActionTimestamp();
+        const uploaded = await createFile(projectId, parsedFile, chosenCreatedAt);
+        const {
+            fileId,
+            createdAt: persistedCreatedAt,
+            sha256,
+            bucket,
+            key,
+        } = uploaded;
+        const parsedPersistedCreatedAt = new Date(persistedCreatedAt);
+        const resolvedCreatedAt = Number.isNaN(parsedPersistedCreatedAt.getTime())
+            ? chosenCreatedAt
+            : parsedPersistedCreatedAt.toISOString();
         const { name, mimeType, sizeBytes, ext } = parsedFile;
 
         dispatch(upsertFile({
@@ -345,11 +373,15 @@ export function useFileAttachmentProcessing({
             mimeType,
             sizeBytes,
             ext,
-            createdAt,
+            createdAt: resolvedCreatedAt,
             sha256,
             storage: { bucket, key },
         }));
-        dispatch(attachFileIdToNode({ nodeId, fileId }));
+        dispatch(attachFileIdToNode({
+            nodeId,
+            fileId,
+            editAt: resolvedCreatedAt,
+        }));
     }, [dispatch, projectId, resolveActionTimestamp]);
 
     const onAttachFileToCanvas = useCallback(async (file: File, dropPosition: { x: number; y: number }) => {
@@ -357,9 +389,20 @@ export function useFileAttachmentProcessing({
 
         try {
             const parsedFile = await parseFile(file);
-            const { fileId, sha256, bucket, key } = await createFile(projectId, parsedFile);
             const { name, mimeType, sizeBytes, ext } = parsedFile;
             const chosenCreatedAt = resolveActionTimestamp();
+            const uploaded = await createFile(projectId, parsedFile, chosenCreatedAt);
+            const {
+                fileId,
+                createdAt: persistedCreatedAt,
+                sha256,
+                bucket,
+                key,
+            } = uploaded;
+            const parsedPersistedCreatedAt = new Date(persistedCreatedAt);
+            const resolvedCreatedAt = Number.isNaN(parsedPersistedCreatedAt.getTime())
+                ? chosenCreatedAt
+                : parsedPersistedCreatedAt.toISOString();
 
             dispatch(upsertFile({
                 id: fileId,
@@ -368,7 +411,7 @@ export function useFileAttachmentProcessing({
                 mimeType,
                 sizeBytes,
                 ext,
-                createdAt: chosenCreatedAt,
+                createdAt: resolvedCreatedAt,
                 sha256,
                 storage: { bucket, key },
             }));
@@ -384,14 +427,18 @@ export function useFileAttachmentProcessing({
                         type: typeFromLabel("object"),
                         title: titleFromFilename(parsedFile.name),
                         description: "",
-                        createdAt: chosenCreatedAt,
+                        createdAt: resolvedCreatedAt,
                         origin: fileId,
                         autoGenerated: true,
                         relevant: true,
                         attachmentIds: [fileId],
                     },
                 }));
-                dispatch(attachFileIdToNode({ nodeId, fileId }));
+                dispatch(attachFileIdToNode({
+                    nodeId,
+                    fileId,
+                    editAt: resolvedCreatedAt,
+                }));
                 return;
             }
 
@@ -419,7 +466,7 @@ export function useFileAttachmentProcessing({
                     type: typeFromLabel(label),
                     title: artifact?.title?.trim() || titleFromFilename(parsedFile.name),
                     description,
-                    createdAt: chosenCreatedAt,
+                    createdAt: resolvedCreatedAt,
                     origin: fileId,
                     autoGenerated: true,
                     relevant: true,
@@ -427,7 +474,11 @@ export function useFileAttachmentProcessing({
                 },
             }));
 
-            dispatch(attachFileIdToNode({ nodeId, fileId }));
+            dispatch(attachFileIdToNode({
+                nodeId,
+                fileId,
+                editAt: resolvedCreatedAt,
+            }));
         } finally {
             setLoading(false);
         }

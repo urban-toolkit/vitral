@@ -1144,7 +1144,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         let active = true;
         const loadKnowledgeProvenanceSnapshot = async () => {
-            const at = new Date().toISOString();
+            const nowMs = Date.now();
+            const latestCanvasMs = latestCanvasChangeTime ?? nowMs;
+            const at = new Date(Math.max(nowMs, latestCanvasMs)).toISOString();
             try {
                 const provenance = await loadKnowledgeProvenance(projectId, at);
                 if (!active) return;
@@ -1172,7 +1174,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             window.clearTimeout(immediateTimerId);
             window.clearTimeout(settledTimerId);
         };
-    }, [knowledgeProvenanceTriggerKey, projectId, status]);
+    }, [knowledgeProvenanceTriggerKey, latestCanvasChangeTime, projectId, status]);
     const cardCreatedAtByNodeId = useMemo(() => {
         const byId = new Map<string, string>();
         for (const node of nodes) {
@@ -1857,8 +1859,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const onDetachFile = useCallback((nodeId: string, fileId: string) => {
         if (interactionLocked) return;
-        dispatch(detachFileIdFromNode({ nodeId, fileId }));
-    }, [dispatch, interactionLocked]);
+        dispatch(detachFileIdFromNode({
+            nodeId,
+            fileId,
+            editAt: resolveActionTimestamp(),
+        }));
+    }, [dispatch, interactionLocked, resolveActionTimestamp]);
 
     const participantNames = useMemo(() => {
         const seen = new Set<string>();

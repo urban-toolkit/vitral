@@ -353,58 +353,10 @@ async function loadSnapshotAt(
     at?: Date | null,
 ): Promise<LoadedSnapshot | null> {
     const parsedAt = at && !Number.isNaN(at.getTime()) ? at : null;
-    if (parsedAt) {
-        const latestAtOrBefore = await pg.query<{
-            state: unknown;
-            timeline: unknown;
-            captured_at: string;
-            version: number;
-        }>(
-            `
-            SELECT state, timeline, captured_at, version
-            FROM document_state_revisions
-            WHERE document_id = $1
-              AND captured_at <= $2
-            ORDER BY captured_at DESC
-            LIMIT 1
-            `,
-            [docId, parsedAt.toISOString()],
-        );
-        if (latestAtOrBefore.rows.length > 0) {
-            const row = latestAtOrBefore.rows[0];
-            return {
-                state: row.state,
-                timeline: row.timeline,
-                capturedAt: row.captured_at,
-                version: row.version,
-            };
-        }
-
-        const earliest = await pg.query<{
-            state: unknown;
-            timeline: unknown;
-            captured_at: string;
-            version: number;
-        }>(
-            `
-            SELECT state, timeline, captured_at, version
-            FROM document_state_revisions
-            WHERE document_id = $1
-            ORDER BY captured_at ASC
-            LIMIT 1
-            `,
-            [docId],
-        );
-        if (earliest.rows.length > 0) {
-            const row = earliest.rows[0];
-            return {
-                state: row.state,
-                timeline: row.timeline,
-                capturedAt: row.captured_at,
-                version: row.version,
-            };
-        }
-    }
+    const toTimeMs = (value: string): number | null => {
+        const ms = Date.parse(value);
+        return Number.isNaN(ms) ? null : ms;
+    };
 
     const current = await pg.query<DocumentSnapshotRow>(
         `
@@ -415,13 +367,111 @@ async function loadSnapshotAt(
         [docId],
     );
     if (current.rows.length === 0) return null;
-    const row = current.rows[0];
-    return {
-        state: row.state,
-        timeline: row.timeline,
-        capturedAt: row.updated_at,
-        version: row.version,
+    const currentRow = current.rows[0];
+    const currentSnapshot: LoadedSnapshot = {
+        state: currentRow.state,
+        timeline: currentRow.timeline,
+        capturedAt: currentRow.updated_at,
+        version: currentRow.version,
     };
+
+    if (!parsedAt) {
+        const latestRevision = await pg.query<{
+            state: unknown;
+            timeline: unknown;
+            captured_at: string;
+            version: number;
+        }>(
+            `
+            SELECT state, timeline, captured_at, version
+            FROM document_state_revisions
+            WHERE document_id = $1
+            ORDER BY captured_at DESC
+            LIMIT 1
+            `,
+            [docId],
+        );
+        if (latestRevision.rows.length === 0) return currentSnapshot;
+
+        const revisionRow = latestRevision.rows[0];
+        const revisionSnapshot: LoadedSnapshot = {
+            state: revisionRow.state,
+            timeline: revisionRow.timeline,
+            capturedAt: revisionRow.captured_at,
+            version: revisionRow.version,
+        };
+        const currentMs = toTimeMs(currentSnapshot.capturedAt);
+        const revisionMs = toTimeMs(revisionSnapshot.capturedAt);
+        if (currentMs === null) return revisionSnapshot;
+        if (revisionMs === null) return currentSnapshot;
+        return revisionMs > currentMs ? revisionSnapshot : currentSnapshot;
+    }
+
+    const latestRevisionAtOrBefore = await pg.query<{
+        state: unknown;
+        timeline: unknown;
+        captured_at: string;
+        version: number;
+    }>(
+        `
+        SELECT state, timeline, captured_at, version
+        FROM document_state_revisions
+        WHERE document_id = $1
+          AND captured_at <= $2
+        ORDER BY captured_at DESC
+        LIMIT 1
+        `,
+        [docId, parsedAt.toISOString()],
+    );
+
+    const currentMs = toTimeMs(currentSnapshot.capturedAt);
+    const parsedAtMs = parsedAt.getTime();
+    const currentValidForAt = currentMs !== null && currentMs <= parsedAtMs;
+
+    if (latestRevisionAtOrBefore.rows.length > 0) {
+        const revisionRow = latestRevisionAtOrBefore.rows[0];
+        const revisionSnapshot: LoadedSnapshot = {
+            state: revisionRow.state,
+            timeline: revisionRow.timeline,
+            capturedAt: revisionRow.captured_at,
+            version: revisionRow.version,
+        };
+        if (!currentValidForAt) return revisionSnapshot;
+        const revisionMs = toTimeMs(revisionSnapshot.capturedAt);
+        if (revisionMs === null) return currentSnapshot;
+        return revisionMs > (currentMs ?? Number.MIN_SAFE_INTEGER)
+            ? revisionSnapshot
+            : currentSnapshot;
+    }
+
+    if (currentValidForAt) return currentSnapshot;
+
+    const earliestRevision = await pg.query<{
+        state: unknown;
+        timeline: unknown;
+        captured_at: string;
+        version: number;
+    }>(
+        `
+        SELECT state, timeline, captured_at, version
+        FROM document_state_revisions
+        WHERE document_id = $1
+        ORDER BY captured_at ASC
+        LIMIT 1
+        `,
+        [docId],
+    );
+    if (earliestRevision.rows.length > 0) {
+        const row = earliestRevision.rows[0];
+        return {
+            state: row.state,
+            timeline: row.timeline,
+            capturedAt: row.captured_at,
+            version: row.version,
+        };
+    }
+
+    return currentSnapshot;
 }
 
 async function refreshProvenanceGraph(
@@ -1160,9 +1210,14 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.get("/state/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
 
-        const { rows } = await app.pg.query(
+        const { rows } = await app.pg.query<{
+            id: string;
+            title: string;
+            description: string | null;
+            review_only: boolean;
+        }>(
             `
-            SELECT id, title, description, state, timeline, version, updated_at, review_only
+            SELECT id, title, description, review_only
             FROM documents
             WHERE id = $1
             `,
@@ -1173,7 +1228,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             return reply.status(404).send({ error: "Document not found" });
         }
 
-        return rows[0];
+        const snapshot = await loadSnapshotAt(app.pg, id, null);
+        if (!snapshot) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return {
+            ...rows[0],
+            state: snapshot.state,
+            timeline: snapshot.timeline,
+            version: snapshot.version,
+            updated_at: snapshot.capturedAt,
+        };
     });
 
     /**
@@ -3139,6 +3205,13 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const id = fields.id;
         const name = fields.name ?? filePart.filename;
         const mimeType = fields.mimeType ?? filePart.mimetype;
+        const createdAtField = typeof fields.createdAt === "string"
+            ? fields.createdAt.trim()
+            : "";
+        const parsedCreatedAt = createdAtField !== "" ? new Date(createdAtField) : null;
+        const createdAt = parsedCreatedAt && !Number.isNaN(parsedCreatedAt.getTime())
+            ? parsedCreatedAt.toISOString()
+            : new Date().toISOString();
 
         if (!id || !name) {
             return reply.code(400).send({ error: "Missing required fields: id, name" });
@@ -3183,7 +3256,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     id, document_id, name, mime_type, ext, size_bytes, sha256,
                     storage_bucket, storage_key, created_at
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::timestamptz)
                 ON CONFLICT (document_id, sha256)
                 DO UPDATE SET
                     name = EXCLUDED.name,
@@ -3203,6 +3276,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     hash,
                     bucket,
                     objectKey,
+                    createdAt,
                 ]
             );
 
