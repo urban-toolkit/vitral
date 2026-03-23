@@ -14,7 +14,7 @@ import type {
 } from "@/config/types";
 
 const toDate = (d: Date | string) => (d instanceof Date ? d : new Date(d));
-const fromDate = (d: Date | string) => (d instanceof Date ? d.toString() : d);
+const fromDate = (d: Date | string) => (d instanceof Date ? d.toISOString() : d);
 const normalizePath = (value: string) => value.replace(/\\/g, "/").replace(/^\/+/, "").trim();
 
 function normalizeScreenshotZone(zone: unknown, index: number): SystemScreenshotZone | null {

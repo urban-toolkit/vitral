@@ -25,7 +25,7 @@ export function formatDate(iso: string) {
 export const toDate = (date: Date | string) => (date instanceof Date ? date : new Date(date));
 
 export const fromDate = (date: Date | string) =>
-  date instanceof Date ? date.toString() : date;
+  date instanceof Date ? date.toISOString() : date;
 
 export const setRefPos = (el: HTMLSpanElement | null, x: number, y: number) => {
   if (!el) return;

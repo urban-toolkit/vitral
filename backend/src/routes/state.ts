@@ -1230,12 +1230,17 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
 
         const effectiveAt = parsedAt ?? new Date();
-        const snapshot = await loadSnapshotAt(app.pg, id, effectiveAt);
-        if (!snapshot) {
+        const snapshotAt = await loadSnapshotAt(app.pg, id, effectiveAt);
+        if (!snapshotAt) {
             return reply.status(404).send({ error: "Document not found" });
         }
 
-        const snapshotGraph = extractProvenanceSnapshot(snapshot.state);
+        const currentSnapshot = await loadSnapshotAt(app.pg, id, null);
+        if (!currentSnapshot) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        const snapshotGraph = extractProvenanceSnapshot(currentSnapshot.state, { at: effectiveAt });
         const createdCardEventsRes = await app.pg.query<{
             id: string;
             occurred_at: string;
@@ -1353,8 +1358,8 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             });
 
         const fallbackCreatedAtByNodeId = new Map<string, string>();
-        if (isRecord(snapshot.state) && isRecord(snapshot.state.flow) && Array.isArray(snapshot.state.flow.nodes)) {
-            for (const rawNode of snapshot.state.flow.nodes) {
+        if (isRecord(currentSnapshot.state) && isRecord(currentSnapshot.state.flow) && Array.isArray(currentSnapshot.state.flow.nodes)) {
+            for (const rawNode of currentSnapshot.state.flow.nodes) {
                 if (!isRecord(rawNode)) continue;
                 const nodeId = typeof rawNode.id === "string" ? rawNode.id : "";
                 if (!nodeId) continue;
@@ -1364,7 +1369,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 const parsed = new Date(createdAt);
                 fallbackCreatedAtByNodeId.set(
                     nodeId,
-                    Number.isNaN(parsed.getTime()) ? snapshot.capturedAt : parsed.toISOString(),
+                    Number.isNaN(parsed.getTime()) ? effectiveAt.toISOString() : parsed.toISOString(),
                 );
             }
         }
@@ -1383,7 +1388,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 : null;
             return {
                 id: `synthetic-created:${card.nodeId}`,
-                occurredAt: fallbackCreatedAtByNodeId.get(card.nodeId) ?? snapshot.capturedAt,
+                occurredAt: fallbackCreatedAtByNodeId.get(card.nodeId) ?? effectiveAt.toISOString(),
                 eventType: "created" as const,
                 isDeleted: false,
                 nodeId: card.nodeId,
@@ -1561,7 +1566,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 return a.id.localeCompare(b.id);
             });
 
-        const timelineBlueprintEvents = extractBlueprintEventsFromTimeline(snapshot.timeline);
+        const timelineBlueprintEvents = extractBlueprintEventsFromTimeline(snapshotAt.timeline);
         const blueprintByComponentNodeId = new Map(
             timelineBlueprintEvents.map((event) => [event.componentNodeId, event] as const),
         );
@@ -1615,8 +1620,8 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         );
 
         const bounds = boundsRes.rows[0];
-        const minAt = bounds?.min_at ?? snapshot.capturedAt;
-        const maxAt = bounds?.max_at ?? snapshot.capturedAt;
+        const minAt = bounds?.min_at ?? snapshotAt.capturedAt;
+        const maxAt = bounds?.max_at ?? snapshotAt.capturedAt;
 
         const pills = Array.from(pillsByTreeId.values())
             .map((pill) => ({

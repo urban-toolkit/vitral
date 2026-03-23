@@ -33,8 +33,8 @@ type TimelineDockProps = {
     knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];
     playbackAt?: Date | string | null;
     onPlaybackAtChange?: (value: string | null) => void;
-    onClearKnowledgePreviousEdits?: () => void;
-    onClearKnowledgeNextEdits?: () => void;
+    onClearKnowledgePreviousEdits?: (cutoffIso?: string) => void;
+    onClearKnowledgeNextEdits?: (cutoffIso?: string) => void;
     designStudyEvents: DesignStudyEvent[];
     blueprintEvents?: BlueprintEvent[];
     blueprintEventConnections?: BlueprintEventConnection[];

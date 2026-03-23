@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import classes from "./Timeline.module.css";
@@ -56,7 +56,7 @@ import type {
 	TimelineProps,
 	KnowledgeBaseEvent,
 } from "./timelineTypes";
-import { formatDate, fromDate } from "./timelineUtils";
+import { formatDate, fromDate, toDate } from "./timelineUtils";
 import { useParsedTimelineData } from "./useParsedTimelineData";
 import { useTimelineChart } from "./useTimelineChart";
 
@@ -455,6 +455,19 @@ export const Timeline = ({
 		designStudyEvents,
 		blueprintEvents,
 	});
+	const resolveClearCutoffIso = useCallback((): string | undefined => {
+		const [domainStart, domainEnd] = parsed.domain;
+		const today = new Date();
+		const defaultPlaybackDate = today < domainStart
+			? domainStart
+			: (today > domainEnd ? domainEnd : today);
+		const playbackCandidate = playbackAt ? toDate(playbackAt) : defaultPlaybackDate;
+		const clampedPlaybackDate = new Date(
+			Math.min(domainEnd.getTime(), Math.max(domainStart.getTime(), playbackCandidate.getTime()))
+		);
+		if (Number.isNaN(clampedPlaybackDate.getTime())) return undefined;
+		return clampedPlaybackDate.toISOString();
+	}, [parsed.domain, playbackAt]);
 
 	useTimelineChart({
 		containerRef,
@@ -1066,7 +1079,7 @@ export const Timeline = ({
 							type="button"
 							className={classes.timelineContextMenuButton}
 							onClick={() => {
-								onClearKnowledgePreviousEdits?.();
+								onClearKnowledgePreviousEdits?.(resolveClearCutoffIso());
 								setKnowledgeTrackMenu(null);
 								setShowTooltip(false);
 							}}
@@ -1077,7 +1090,7 @@ export const Timeline = ({
 							type="button"
 							className={classes.timelineContextMenuButton}
 							onClick={() => {
-								onClearKnowledgeNextEdits?.();
+								onClearKnowledgeNextEdits?.(resolveClearCutoffIso());
 								setKnowledgeTrackMenu(null);
 								setShowTooltip(false);
 							}}

@@ -127,8 +127,8 @@ export type TimelineProps = {
   knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];
   playbackAt?: Date | string | null;
   onPlaybackAtChange?: (value: string | null) => void;
-  onClearKnowledgePreviousEdits?: () => void;
-  onClearKnowledgeNextEdits?: () => void;
+  onClearKnowledgePreviousEdits?: (cutoffIso?: string) => void;
+  onClearKnowledgeNextEdits?: (cutoffIso?: string) => void;
   connectedBlueprintComponentNodeIds?: string[];
   margin?: { top: number; right: number; bottom: number; left: number };
 };

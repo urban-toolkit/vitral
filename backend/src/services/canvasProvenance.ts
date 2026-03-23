@@ -93,10 +93,42 @@ function normalizeIsoTimestamp(raw: unknown): string {
     return parsed.toISOString();
 }
 
-function isSoftDeleted(data: RecordValue): boolean {
-    const deletedAt = data.deletedAt;
-    if (typeof deletedAt !== "string") return false;
-    return deletedAt.trim() !== "";
+function timestampMs(raw: unknown): number | null {
+    if (typeof raw !== "string" && !(raw instanceof Date) && typeof raw !== "number") return null;
+    const parsed = new Date(raw).getTime();
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+function isDeletedAt(data: RecordValue, atMs: number | null): boolean {
+    if (atMs === null) {
+        const deletedAt = data.deletedAt;
+        return typeof deletedAt === "string" && deletedAt.trim() !== "";
+    }
+    const deletedAtMs = timestampMs(data.deletedAt);
+    if (deletedAtMs === null) return false;
+    return deletedAtMs <= atMs;
+}
+
+function isCreatedAfterAt(data: RecordValue, atMs: number | null): boolean {
+    if (atMs === null) return false;
+    const createdAtMs = timestampMs(data.createdAt);
+    if (createdAtMs === null) return false;
+    return createdAtMs > atMs;
+}
+
+function isActiveAt(data: RecordValue, atMs: number | null): boolean {
+    if (isCreatedAfterAt(data, atMs)) return false;
+    if (isDeletedAt(data, atMs)) return false;
+    return true;
+}
+
+type ProvenanceSnapshotOptions = {
+    at?: Date | string | number | null;
+};
+
+function resolveAtMs(options: ProvenanceSnapshotOptions | undefined): number | null {
+    if (!options) return null;
+    return timestampMs(options.at);
 }
 
 function connectionKindFrom(label: string, kind: string): ProvenanceConnectionKind {
@@ -176,10 +208,11 @@ function resolveTreeMap(
     return { treeByCardId, treeTitleByActivityId };
 }
 
-export function extractProvenanceSnapshot(state: unknown): ProvenanceSnapshot {
+export function extractProvenanceSnapshot(state: unknown, options?: ProvenanceSnapshotOptions): ProvenanceSnapshot {
     const cards = new Map<string, ProvenanceCard>();
     const components = new Map<string, ProvenanceComponent>();
     const connections = new Map<string, ProvenanceConnection>();
+    const atMs = resolveAtMs(options);
 
     if (!isRecord(state)) {
         return {
@@ -202,7 +235,7 @@ export function extractProvenanceSnapshot(state: unknown): ProvenanceSnapshot {
         const nodeId = stringValue(rawNode.id).trim();
         if (!nodeId) continue;
         const data = isRecord(rawNode.data) ? rawNode.data : {};
-        if (isSoftDeleted(data)) continue;
+        if (!isActiveAt(data, atMs)) continue;
         const label = normalizeLabel(data.label);
         const title = stringValue(data.title).trim();
         nodeIndex.set(nodeId, { label, title });
@@ -236,7 +269,7 @@ export function extractProvenanceSnapshot(state: unknown): ProvenanceSnapshot {
         if (!edgeId || !sourceNodeId || !targetNodeId) continue;
 
         const data = isRecord(rawEdge.data) ? rawEdge.data : {};
-        if (isSoftDeleted(data)) continue;
+        if (!isActiveAt(data, atMs)) continue;
         const rawLabel = stringValue(rawEdge.label).trim() || stringValue(data.label).trim();
         const rawKind = stringValue(data.kind);
         const sourceInfo = nodeIndex.get(sourceNodeId);
