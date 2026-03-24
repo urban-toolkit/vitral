@@ -4010,7 +4010,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 title={title}
                 onSetTitle={handleSetTitle}
                 onGoHome={handleGoHome}
-                onOpenSettings={handleOpenSettings}
+                onOpenSettings={reviewOnly ? undefined : handleOpenSettings}
                 onExportProject={handleExportProject}
                 exportingProject={exportingProject}
                 onExportMarkdown={handleExportMarkdown}

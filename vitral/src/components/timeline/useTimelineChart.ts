@@ -752,6 +752,7 @@ export function useTimelineChart({
             .attr("x", timelineLeft + innerW - 14)
             .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
+            .style("display", readOnly ? "none" : "")
             .style("cursor", readOnly ? "default" : "pointer")
             .text("X")
             .on("click", (event: any, row: any) => {
@@ -1016,6 +1017,7 @@ export function useTimelineChart({
             .attr("x", timelineLeft + innerW - 14)
             .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
+            .style("display", readOnly ? "none" : "")
             .style("cursor", readOnly ? "default" : "pointer")
             .text("X")
             .on("click", (event: any, row: any) => {
@@ -1254,6 +1256,7 @@ export function useTimelineChart({
                         .attr("class", classes.subStageDelete)
                         .attr("x", x(stageData.end) - 20)
                         .attr("y", margin.top + 58)
+                        .style("display", readOnly ? "none" : "")
                         .text("X")
                         .style("cursor", readOnly ? "default" : "pointer")
                         .on("click", (event: any, stage: any) => {
@@ -1408,6 +1411,7 @@ export function useTimelineChart({
                 .attr("class", classes.subStageDelete)
                 .attr("x", (d: any) => x(d.end) - 16)
                 .attr("y", (d: any) => laneY[d.lane as LaneType] + 18)
+                .style("display", readOnly ? "none" : "")
                 .text("X")
                 .style("cursor", readOnly ? "default" : "pointer")
                 .on("click", (event: any, subStageData: any) => {
