@@ -1,6 +1,6 @@
 import { useRef, useState, type ChangeEvent } from 'react';
 
-import { loadDocuments, deleteDocument, importProjectVi, startDuplicateDocument, loadDuplicateDocumentJob } from "@/api/stateApi";
+import { loadDocuments, deleteDocument, importProjectVi, startDuplicateDocument, loadDuplicateDocumentJob, convertDocumentToReviewOnly } from "@/api/stateApi";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -18,6 +18,7 @@ export function ProjectsPage() {
     const [documents, setDocuments] = useState<DocumentResponse[]>([]);
     const [importingProject, setImportingProject] = useState(false);
     const [duplicatingProjectId, setDuplicatingProjectId] = useState<string | null>(null);
+    const [convertingProjectId, setConvertingProjectId] = useState<string | null>(null);
     const importInputRef = useRef<HTMLInputElement | null>(null);
 
     const fetchDocuments = async () => {
@@ -117,6 +118,34 @@ export function ProjectsPage() {
         }
     };
 
+    const handleConvertProjectToReviewMode = async (document: DocumentResponse) => {
+        if (convertingProjectId) return;
+        if (document.review_only) return;
+
+        const title = (document.title ?? "").trim() || "Untitled";
+        const confirmed = window.confirm(
+            `Convert "${title}" to review mode permanently?\n\n` +
+            `This cannot be undone and editing will be disabled forever.`,
+        );
+        if (!confirmed) return;
+
+        setConvertingProjectId(document.id);
+        try {
+            const updated = await convertDocumentToReviewOnly(document.id);
+            setDocuments((prevDocuments) => {
+                return prevDocuments.map((entry) => {
+                    if (entry.id !== updated.id) return entry;
+                    return { ...entry, ...updated };
+                });
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to convert project to review mode.";
+            window.alert(message);
+        } finally {
+            setConvertingProjectId(null);
+        }
+    };
+
     return (
         <div className={classes.pageContainer}>
             <div className={classes.innerContent}>
@@ -164,9 +193,16 @@ export function ProjectsPage() {
                                     <button
                                         type="button"
                                         onClick={() => void handleDuplicateProject(document.id)}
-                                        disabled={duplicatingProjectId !== null}
+                                        disabled={duplicatingProjectId !== null || convertingProjectId !== null}
                                     >
                                         {duplicatingProjectId === document.id ? "Duplicating..." : "Duplicate"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleConvertProjectToReviewMode(document)}
+                                        disabled={Boolean(document.review_only) || convertingProjectId !== null || duplicatingProjectId !== null}
+                                    >
+                                        {convertingProjectId === document.id ? "Converting..." : (document.review_only ? "Review only" : "Make review only")}
                                     </button>
                                 </div>
                             </div>

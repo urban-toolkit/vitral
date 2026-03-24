@@ -3639,6 +3639,32 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     });
 
     /**
+     * Convert a document to permanent review-only mode.
+     * POST /api/state/:id/review-only
+     */
+    app.post("/state/:id/review-only", async (request, reply) => {
+        const { id } = request.params as { id: string };
+
+        const { rows } = await app.pg.query(
+            `
+            UPDATE documents
+            SET
+                review_only = TRUE,
+                version = CASE WHEN review_only THEN version ELSE version + 1 END
+            WHERE id = $1
+            RETURNING id, title, description, version, updated_at, review_only
+            `,
+            [id],
+        );
+
+        if (rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return rows[0];
+    });
+
+    /**
      * Link Github repo to document
      * POST /api/state/:id/github/link
      */

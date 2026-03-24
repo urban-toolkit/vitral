@@ -488,6 +488,19 @@ export async function updateDocumentMeta(docId: string, payload: { title?: strin
     return res.json();
 }
 
+export async function convertDocumentToReviewOnly(docId: string): Promise<DocumentResponse> {
+    const res = await fetch(`${API_BASE}/state/${docId}/review-only`, {
+        method: "POST",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Convert to review mode failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
 export async function createFile(
     docId: string,
     pending: filePendingUpload,
