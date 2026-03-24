@@ -68,6 +68,10 @@ type CompareCardsSimilarityBody = {
 const TEXT_EXTENSIONS = new Set([
     "txt", "json", "ipynb", "csv", "py", "js", "ts", "tsx", "jsx", "html", "css", "md",
 ]);
+const DUPLICATE_FILES_INSERT_CHUNK_SIZE = 250;
+const DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE = 50;
+const DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY = 4;
+const MAX_VI_EXPORT_FILE_FETCH_CONCURRENCY = 16;
 
 type SetupTemplateDefinition = {
     id?: unknown;
@@ -257,6 +261,39 @@ function arraysEqual(a: string[], b: string[]): boolean {
         if (a[index] !== b[index]) return false;
     }
     return true;
+}
+
+function chunkItems<T>(items: T[], chunkSize: number): T[][] {
+    if (items.length === 0) return [];
+    const normalizedChunkSize = Math.max(1, Math.trunc(chunkSize));
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += normalizedChunkSize) {
+        chunks.push(items.slice(index, index + normalizedChunkSize));
+    }
+    return chunks;
+}
+
+async function mapWithConcurrencyLimit<T, R>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+    if (items.length === 0) return [];
+    const normalizedConcurrency = Math.max(1, Math.min(items.length, Math.trunc(concurrency)));
+    const results: R[] = new Array(items.length);
+    let nextIndex = 0;
+
+    const workers = Array.from({ length: normalizedConcurrency }, async () => {
+        while (true) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            if (currentIndex >= items.length) return;
+            results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+        }
+    });
+
+    await Promise.all(workers);
+    return results;
 }
 
 function remapFileReferencesInValue(value: unknown, fileIdMap: Map<string, string>): unknown {
@@ -2322,9 +2359,32 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 throw new Error("Failed to create duplicated document.");
             }
 
-            for (const sourceFile of sourceFilesResult.rows) {
-                const nextFileId = fileIdMap.get(sourceFile.id);
-                if (!nextFileId) continue;
+            for (const sourceFileChunk of chunkItems(sourceFilesResult.rows, DUPLICATE_FILES_INSERT_CHUNK_SIZE)) {
+                const placeholders: string[] = [];
+                const values: unknown[] = [];
+
+                for (const sourceFile of sourceFileChunk) {
+                    const nextFileId = fileIdMap.get(sourceFile.id);
+                    if (!nextFileId) continue;
+                    const offset = values.length;
+                    values.push(
+                        nextFileId,
+                        duplicatedDocument.id,
+                        sourceFile.name,
+                        sourceFile.mime_type,
+                        sourceFile.ext,
+                        sourceFile.size_bytes,
+                        sourceFile.sha256,
+                        sourceFile.storage_bucket,
+                        sourceFile.storage_key,
+                        sourceFile.created_at,
+                    );
+                    placeholders.push(
+                        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}::timestamptz)`,
+                    );
+                }
+
+                if (placeholders.length === 0) continue;
 
                 await client.query(
                     `
@@ -2340,20 +2400,9 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                         storage_key,
                         created_at
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz)
+                    VALUES ${placeholders.join(",\n")}
                     `,
-                    [
-                        nextFileId,
-                        duplicatedDocument.id,
-                        sourceFile.name,
-                        sourceFile.mime_type,
-                        sourceFile.ext,
-                        sourceFile.size_bytes,
-                        sourceFile.sha256,
-                        sourceFile.storage_bucket,
-                        sourceFile.storage_key,
-                        sourceFile.created_at,
-                    ],
+                    values,
                 );
             }
 
@@ -2379,11 +2428,29 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 sourceRevisionCount,
             }, "Starting project duplication.");
 
-            for (const sourceRevision of sourceRevisionRows.rows) {
-                const remappedRevisionState = remapStateFileReferences(sourceRevision.state, fileIdMap);
-                const revisionVersion = Number.isFinite(sourceRevision.version)
-                    ? Math.max(1, Math.trunc(sourceRevision.version))
-                    : 1;
+            for (const sourceRevisionChunk of chunkItems(sourceRevisionRows.rows, DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE)) {
+                const placeholders: string[] = [];
+                const values: unknown[] = [];
+
+                for (const sourceRevision of sourceRevisionChunk) {
+                    const remappedRevisionState = remapStateFileReferences(sourceRevision.state, fileIdMap);
+                    const revisionVersion = Number.isFinite(sourceRevision.version)
+                        ? Math.max(1, Math.trunc(sourceRevision.version))
+                        : 1;
+                    const offset = values.length;
+                    values.push(
+                        duplicatedDocument.id,
+                        revisionVersion,
+                        sourceRevision.captured_at,
+                        JSON.stringify(remappedRevisionState ?? {}),
+                        JSON.stringify(sourceRevision.timeline ?? {}),
+                    );
+                    placeholders.push(
+                        `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}::jsonb, $${offset + 5}::jsonb)`,
+                    );
+                }
+
+                if (placeholders.length === 0) continue;
 
                 await client.query(
                     `
@@ -2394,15 +2461,9 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                         state,
                         timeline
                     )
-                    VALUES ($1, $2, $3::timestamptz, $4::jsonb, $5::jsonb)
+                    VALUES ${placeholders.join(",\n")}
                     `,
-                    [
-                        duplicatedDocument.id,
-                        revisionVersion,
-                        sourceRevision.captured_at,
-                        JSON.stringify(remappedRevisionState ?? {}),
-                        JSON.stringify(sourceRevision.timeline ?? {}),
-                    ],
+                    values,
                 );
             }
 
@@ -2580,11 +2641,19 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             (sum, row) => sum + Math.max(0, row.size_bytes ?? 0),
             0,
         );
+        const exportFileFetchConcurrencyRaw = Number(
+            process.env.VI_EXPORT_FILE_FETCH_CONCURRENCY ?? DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY,
+        );
+        const exportFileFetchConcurrency = Number.isFinite(exportFileFetchConcurrencyRaw)
+            ? Math.min(MAX_VI_EXPORT_FILE_FETCH_CONCURRENCY, Math.max(1, Math.trunc(exportFileFetchConcurrencyRaw)))
+            : DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY;
+
         request.log.info({
             docId: id,
             revisionCount: revisionRows.rows.length,
             fileCount: fileRows.rows.length,
             totalFileBytes,
+            exportFileFetchConcurrency,
         }, "Starting project export.");
 
         const maxTotalFileBytesRaw = Number(process.env.VI_EXPORT_MAX_TOTAL_FILE_BYTES ?? 0);
@@ -2595,39 +2664,46 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             });
         }
 
-        const files: ProjectViBundleV1["files"] = [];
-        for (const row of fileRows.rows) {
-            if (!row.storage_bucket || !row.storage_key) {
-                return reply.status(500).send({
-                    error: `File "${row.name}" is missing storage metadata and cannot be exported.`,
-                });
-            }
+        let files: ProjectViBundleV1["files"];
+        try {
+            files = await mapWithConcurrencyLimit(
+                fileRows.rows,
+                exportFileFetchConcurrency,
+                async (row) => {
+                    if (!row.storage_bucket || !row.storage_key) {
+                        throw new Error(`File "${row.name}" is missing storage metadata and cannot be exported.`);
+                    }
 
-            const object = await app.s3.send(
-                new GetObjectCommand({
-                    Bucket: row.storage_bucket,
-                    Key: row.storage_key,
-                }),
+                    const object = await app.s3.send(
+                        new GetObjectCommand({
+                            Bucket: row.storage_bucket,
+                            Key: row.storage_key,
+                        }),
+                    );
+
+                    const body = object.Body as Readable | undefined;
+                    if (!body) {
+                        throw new Error(`File "${row.name}" could not be loaded from object storage.`);
+                    }
+
+                    const bytes = await streamToBuffer(body);
+                    return {
+                        oldId: row.id,
+                        name: row.name,
+                        mimeType: row.mime_type,
+                        ext: row.ext,
+                        sizeBytes: row.size_bytes,
+                        sha256: row.sha256,
+                        createdAt: new Date(row.created_at).toISOString(),
+                        bytesBase64: bytes.toString("base64"),
+                    };
+                },
             );
-
-            const body = object.Body as Readable | undefined;
-            if (!body) {
-                return reply.status(500).send({
-                    error: `File "${row.name}" could not be loaded from object storage.`,
-                });
-            }
-
-            const bytes = await streamToBuffer(body);
-            files.push({
-                oldId: row.id,
-                name: row.name,
-                mimeType: row.mime_type,
-                ext: row.ext,
-                sizeBytes: row.size_bytes,
-                sha256: row.sha256,
-                createdAt: new Date(row.created_at).toISOString(),
-                bytesBase64: bytes.toString("base64"),
-            });
+        } catch (error) {
+            const message = error instanceof Error
+                ? error.message
+                : "Failed to load project files for export.";
+            return reply.status(500).send({ error: message });
         }
 
         const embeddingTable = await app.pg.query<{ table_name: string | null }>(

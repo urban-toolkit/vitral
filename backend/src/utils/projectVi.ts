@@ -2,6 +2,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 const MAGIC = Buffer.from("VITRALVI", "ascii");
 const FORMAT_VERSION = 1;
+const DEFAULT_GZIP_LEVEL = 1;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -165,9 +166,18 @@ function normalizeRevisionEntry(value: unknown, index: number): ProjectViRevisio
     };
 }
 
+function resolveGzipLevel(): number {
+    const raw = Number(process.env.VI_GZIP_LEVEL ?? DEFAULT_GZIP_LEVEL);
+    if (!Number.isFinite(raw)) return DEFAULT_GZIP_LEVEL;
+    const normalized = Math.trunc(raw);
+    if (normalized < 0) return 0;
+    if (normalized > 9) return 9;
+    return normalized;
+}
+
 export function encodeProjectVi(bundle: ProjectViBundleV1): Buffer {
     const jsonBytes = Buffer.from(JSON.stringify(bundle), "utf8");
-    const compressed = gzipSync(jsonBytes);
+    const compressed = gzipSync(jsonBytes, { level: resolveGzipLevel() });
     const header = Buffer.alloc(MAGIC.length + 1);
     MAGIC.copy(header, 0);
     header.writeUInt8(FORMAT_VERSION, MAGIC.length);

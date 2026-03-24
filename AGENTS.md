@@ -102,8 +102,11 @@ These are concrete spots where the contracts are currently enforced. If behavior
 - `backend/src/routes/state.ts`: `POST /state/:id/duplicate` logs source file count, total file bytes, revision count, and elapsed time.
 - `backend/src/routes/state.ts`: `GET /state/:id/export-vi` logs file/revision counts, total file bytes, encoded bytes, and elapsed time.
 - `backend/src/routes/state.ts`: optional `VI_EXPORT_MAX_TOTAL_FILE_BYTES` can return `413` early for oversize exports.
+- `backend/src/routes/state.ts`: export file hydration uses bounded parallelism (`VI_EXPORT_FILE_FETCH_CONCURRENCY`, default `4`, capped at `16`) while preserving file order.
+- `backend/src/routes/state.ts`: duplication uses chunked multi-row inserts for files/revisions to reduce DB round-trips.
 - `vitral/nginx.conf`: `/vitral/api/` uses extended proxy timeouts and disables buffering for long-running responses.
 - `backend/Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`: `NODE_OPTIONS=--max-old-space-size=2048` increases backend heap budget.
+- `backend/src/utils/projectVi.ts`: `.vi` gzip level is configurable via `VI_GZIP_LEVEL` (default `1`) to trade smaller CPU time for larger output files when needed.
 
 ## Regression Watch-outs
 
@@ -112,3 +115,4 @@ These are concrete spots where the contracts are currently enforced. If behavior
 - Do not change duplicate-edge checks to include soft-deleted edges, or reconnect-after-delete will break.
 - Any change to attachment writes should preserve `editAt` history snapshots; direct mutation without history can break playback visibility.
 - If export/duplicate starts failing with 502 again, check nginx proxy timeout/buffering settings before changing application logic.
+- Keep export file fetch concurrency bounded; unbounded parallel S3 reads can cause memory spikes and upstream instability.
