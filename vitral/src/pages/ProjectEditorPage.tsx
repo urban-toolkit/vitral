@@ -1777,6 +1777,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const alreadyConnected = edges.some((edge) => (
                 edge.source === pending.sourceId &&
                 edge.target === pending.targetId &&
+                toTimestampMs((edge.data as Record<string, unknown> | undefined)?.deletedAt) === null &&
                 edgeLabelFrom(edge) === label
             ));
             if (!alreadyConnected) {
