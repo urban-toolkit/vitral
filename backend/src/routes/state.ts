@@ -1,11 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
 import { PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
-import type { Readable } from "node:stream";
+import { once } from "node:events";
+import { finished } from "node:stream/promises";
+import { PassThrough, type Readable, type Writable } from "node:stream";
 import path from "node:path";
 import OpenAI from "openai";
 import { fileURLToPath } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
+import { createGzip } from "node:zlib";
 import { streamToBuffer, streamToString } from "../utils/streams.js";
 import { safeFilename } from "../utils/files.js";
 import { computeNodeEmbeddingDelta, createNodeEmbeddingQueue } from "../services/nodeEmbeddings.js";
@@ -17,7 +20,12 @@ import {
     type ProvenanceConnection,
     type ProvenanceSnapshot,
 } from "../services/canvasProvenance.js";
-import { decodeProjectVi, encodeProjectVi, type ProjectViBundleV1 } from "../utils/projectVi.js";
+import {
+    createProjectViHeader,
+    decodeProjectVi,
+    resolveProjectViGzipLevel,
+    type ProjectViBundleV1,
+} from "../utils/projectVi.js";
 
 type SaveBody = {
     title?: string;
@@ -72,6 +80,9 @@ const DUPLICATE_FILES_INSERT_CHUNK_SIZE = 250;
 const DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE = 50;
 const DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY = 4;
 const MAX_VI_EXPORT_FILE_FETCH_CONCURRENCY = 16;
+const EXPORT_REVISIONS_BATCH_SIZE = 50;
+const EXPORT_EMBEDDINGS_BATCH_SIZE = 250;
+const EXPORT_GITHUB_EVENTS_BATCH_SIZE = 250;
 const DUPLICATE_JOB_RETENTION_MS = 60 * 60 * 1000;
 const MAX_DUPLICATE_JOBS = 500;
 const DUPLICATE_JOB_ERROR_MESSAGE = "Failed to duplicate project.";
@@ -319,6 +330,11 @@ async function mapWithConcurrencyLimit<T, R>(
 
     await Promise.all(workers);
     return results;
+}
+
+async function writeChunk(writable: Writable, chunk: string | Buffer): Promise<void> {
+    if (writable.write(chunk)) return;
+    await once(writable, "drain");
 }
 
 function pruneDuplicateJobs(duplicateJobs: Map<string, DuplicateJobRecord>): void {
@@ -2450,21 +2466,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 );
             }
 
-            const sourceRevisionRows = await client.query<{
-                version: number;
-                captured_at: string;
-                state: unknown;
-                timeline: unknown;
-            }>(
+            const sourceRevisionCountRes = await client.query<{ count: string }>(
                 `
-                SELECT version, captured_at, state, timeline
+                SELECT COUNT(*)::text AS count
                 FROM document_state_revisions
                 WHERE document_id = $1
-                ORDER BY captured_at ASC, version ASC, id ASC
                 `,
                 [sourceDocId],
             );
-            const sourceRevisionCount = sourceRevisionRows.rows.length;
+            const sourceRevisionCountRaw = Number(sourceRevisionCountRes.rows[0]?.count ?? 0);
+            const sourceRevisionCount = Number.isFinite(sourceRevisionCountRaw)
+                ? Math.max(0, Math.trunc(sourceRevisionCountRaw))
+                : 0;
             logger.info({
                 docId: sourceDocId,
                 sourceFileCount,
@@ -2472,7 +2485,26 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 sourceRevisionCount,
             }, "Starting project duplication.");
 
-            for (const sourceRevisionChunk of chunkItems(sourceRevisionRows.rows, DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE)) {
+            for (let offset = 0; ; ) {
+                const sourceRevisionChunkRes = await client.query<{
+                    version: number;
+                    captured_at: string;
+                    state: unknown;
+                    timeline: unknown;
+                }>(
+                    `
+                    SELECT version, captured_at, state, timeline
+                    FROM document_state_revisions
+                    WHERE document_id = $1
+                    ORDER BY captured_at ASC, version ASC, id ASC
+                    LIMIT $2
+                    OFFSET $3
+                    `,
+                    [sourceDocId, DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE, offset],
+                );
+                const sourceRevisionChunk = sourceRevisionChunkRes.rows;
+                if (sourceRevisionChunk.length === 0) break;
+
                 const placeholders: string[] = [];
                 const values: unknown[] = [];
 
@@ -2509,6 +2541,8 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     `,
                     values,
                 );
+
+                offset += sourceRevisionChunk.length;
             }
 
             await client.query(
@@ -2716,32 +2750,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             return reply.status(404).send({ error: "Document not found" });
         }
 
-        const revisionRows = await app.pg.query<{
-            version: number;
-            captured_at: string;
-            state: unknown;
-            timeline: unknown;
-        }>(
+        const revisionCountRes = await app.pg.query<{ count: string }>(
             `
-            SELECT version, captured_at, state, timeline
+            SELECT COUNT(*)::text AS count
             FROM document_state_revisions
             WHERE document_id = $1
-            ORDER BY captured_at ASC, version ASC, id ASC
             `,
             [id],
         );
-
-        const revisions: ProjectViBundleV1["revisions"] = revisionRows.rows.map((row: {
-            version: number;
-            captured_at: string;
-            state: unknown;
-            timeline: unknown;
-        }) => ({
-            version: Number.isFinite(row.version) ? Math.max(1, Math.trunc(row.version)) : 1,
-            capturedAt: new Date(row.captured_at).toISOString(),
-            state: row.state ?? {},
-            timeline: row.timeline ?? {},
-        }));
+        const revisionCountRaw = Number(revisionCountRes.rows[0]?.count ?? 0);
+        const revisionCount = Number.isFinite(revisionCountRaw)
+            ? Math.max(0, Math.trunc(revisionCountRaw))
+            : 0;
 
         const fileRows = await app.pg.query<{
             id: string;
@@ -2784,7 +2804,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         request.log.info({
             docId: id,
-            revisionCount: revisionRows.rows.length,
+            revisionCount,
             fileCount: fileRows.rows.length,
             totalFileBytes,
             exportFileFetchConcurrency,
@@ -2798,46 +2818,12 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             });
         }
 
-        let files: ProjectViBundleV1["files"];
-        try {
-            files = await mapWithConcurrencyLimit(
-                fileRows.rows,
-                exportFileFetchConcurrency,
-                async (row) => {
-                    if (!row.storage_bucket || !row.storage_key) {
-                        throw new Error(`File "${row.name}" is missing storage metadata and cannot be exported.`);
-                    }
-
-                    const object = await app.s3.send(
-                        new GetObjectCommand({
-                            Bucket: row.storage_bucket,
-                            Key: row.storage_key,
-                        }),
-                    );
-
-                    const body = object.Body as Readable | undefined;
-                    if (!body) {
-                        throw new Error(`File "${row.name}" could not be loaded from object storage.`);
-                    }
-
-                    const bytes = await streamToBuffer(body);
-                    return {
-                        oldId: row.id,
-                        name: row.name,
-                        mimeType: row.mime_type,
-                        ext: row.ext,
-                        sizeBytes: row.size_bytes,
-                        sha256: row.sha256,
-                        createdAt: new Date(row.created_at).toISOString(),
-                        bytesBase64: bytes.toString("base64"),
-                    };
-                },
-            );
-        } catch (error) {
-            const message = error instanceof Error
-                ? error.message
-                : "Failed to load project files for export.";
-            return reply.status(500).send({ error: message });
+        for (const row of fileRows.rows) {
+            if (!row.storage_bucket || !row.storage_key) {
+                return reply.status(500).send({
+                    error: `File "${row.name}" is missing storage metadata and cannot be exported.`,
+                });
+            }
         }
 
         const embeddingTable = await app.pg.query<{ table_name: string | null }>(
@@ -2845,137 +2831,253 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             SELECT to_regclass('public.document_node_embeddings') AS table_name
             `,
         );
+        const hasEmbeddingTable = Boolean(embeddingTable.rows[0]?.table_name);
 
-        let embeddings: ProjectViBundleV1["embeddings"] = [];
-        if (embeddingTable.rows[0]?.table_name) {
-            const embeddingRows = await app.pg.query<{
-                node_id: string;
-                node_text: string;
-                embedding: unknown;
-            }>(
-                `
-                SELECT node_id, node_text, embedding
-                FROM document_node_embeddings
-                WHERE doc_id = $1
-                ORDER BY node_id ASC
-                `,
-                [id],
-            );
-
-            embeddings = embeddingRows.rows.map((row: { node_id: string; node_text: string; embedding: unknown }) => ({
-                nodeId: row.node_id,
-                nodeText: row.node_text,
-                embedding: parseVectorValue(row.embedding),
-            }));
-        }
-
-        const githubEventRows = await app.pg.query<{
-            repo_owner: string;
-            repo_name: string;
-            event_type: string;
-            event_key: string;
-            actor_login: string | null;
-            title: string | null;
-            url: string | null;
-            occurred_at: string;
-            issue_number: number | null;
-            pr_number: number | null;
-            commit_sha: string | null;
-            branch_name: string | null;
-            payload: unknown;
-            inserted_at: string;
-        }>(
-            `
-            SELECT
-                repo_owner,
-                repo_name,
-                event_type,
-                event_key,
-                actor_login,
-                title,
-                url,
-                occurred_at,
-                issue_number,
-                pr_number,
-                commit_sha,
-                branch_name,
-                payload,
-                inserted_at
-            FROM document_github_events
-            WHERE document_id = $1
-            ORDER BY occurred_at ASC, event_key ASC
-            `,
-            [id],
-        );
-
-        const githubEvents: ProjectViBundleV1["githubEvents"] = githubEventRows.rows.map((row: {
-            repo_owner: string;
-            repo_name: string;
-            event_type: string;
-            event_key: string;
-            actor_login: string | null;
-            title: string | null;
-            url: string | null;
-            occurred_at: string;
-            issue_number: number | null;
-            pr_number: number | null;
-            commit_sha: string | null;
-            branch_name: string | null;
-            payload: unknown;
-            inserted_at: string;
-        }) => ({
-            repoOwner: row.repo_owner,
-            repoName: row.repo_name,
-            eventType: row.event_type,
-            eventKey: row.event_key,
-            actorLogin: row.actor_login,
-            title: row.title,
-            url: row.url,
-            occurredAt: new Date(row.occurred_at).toISOString(),
-            issueNumber: row.issue_number,
-            prNumber: row.pr_number,
-            commitSha: row.commit_sha,
-            branchName: row.branch_name,
-            payload: row.payload,
-            insertedAt: new Date(row.inserted_at).toISOString(),
-        }));
-
-        const bundle: ProjectViBundleV1 = {
-            format: "vitral-project",
-            version: 1,
-            exportedAt: new Date().toISOString(),
-            source: {
-                documentId: documentRow.id,
-                title: documentRow.title,
-            },
-            document: {
-                title: documentRow.title,
-                description: documentRow.description,
-                state: documentRow.state,
-                timeline: documentRow.timeline,
-                version: documentRow.version,
-                createdAt: new Date(documentRow.created_at).toISOString(),
-                updatedAt: new Date(documentRow.updated_at).toISOString(),
-            },
-            files,
-            embeddings,
-            githubEvents,
-            revisions,
-        };
-
-        const encoded = encodeProjectVi(bundle);
-        request.log.info({
-            docId: id,
-            encodedBytes: encoded.length,
-            elapsedMs: Date.now() - exportStartedAt,
-            revisionCount: revisionRows.rows.length,
-            fileCount: fileRows.rows.length,
-            totalFileBytes,
-        }, "Project export completed.");
         const fileName = `${sanitizeProjectFilename(documentRow.title)}.vi`;
         reply.header("Content-Type", "application/octet-stream");
         reply.header("Content-Disposition", `attachment; filename="${safeFilename(fileName)}"`);
-        return reply.send(encoded);
+
+        const responseStream = new PassThrough();
+        const gzipStream = createGzip({ level: resolveProjectViGzipLevel() });
+        const headerBytes = createProjectViHeader();
+        let encodedBytes = headerBytes.length;
+
+        gzipStream.on("data", (chunk: Buffer) => {
+            encodedBytes += chunk.length;
+        });
+        gzipStream.on("error", (error) => {
+            request.log.error({ error, docId: id }, "Streaming project export failed.");
+            if (!responseStream.destroyed) responseStream.destroy(error);
+        });
+
+        responseStream.write(headerBytes);
+        gzipStream.pipe(responseStream);
+
+        void (async () => {
+            try {
+                await writeChunk(gzipStream, '{"format":"vitral-project","version":1');
+                await writeChunk(gzipStream, `,"exportedAt":${JSON.stringify(new Date().toISOString())}`);
+                await writeChunk(
+                    gzipStream,
+                    `,"source":{"documentId":${JSON.stringify(documentRow.id)},"title":${JSON.stringify(documentRow.title)}}`,
+                );
+                await writeChunk(
+                    gzipStream,
+                    `,"document":${JSON.stringify({
+                        title: documentRow.title,
+                        description: documentRow.description,
+                        state: documentRow.state,
+                        timeline: documentRow.timeline,
+                        version: documentRow.version,
+                        createdAt: new Date(documentRow.created_at).toISOString(),
+                        updatedAt: new Date(documentRow.updated_at).toISOString(),
+                    })}`,
+                );
+
+                await writeChunk(gzipStream, ',"files":[');
+                let firstFile = true;
+                for (const metadataChunk of chunkItems(fileRows.rows, exportFileFetchConcurrency)) {
+                    const fileEntries = await mapWithConcurrencyLimit(
+                        metadataChunk,
+                        exportFileFetchConcurrency,
+                        async (row) => {
+                            const object = await app.s3.send(
+                                new GetObjectCommand({
+                                    Bucket: row.storage_bucket!,
+                                    Key: row.storage_key!,
+                                }),
+                            );
+                            const body = object.Body as Readable | undefined;
+                            if (!body) {
+                                throw new Error(`File "${row.name}" could not be loaded from object storage.`);
+                            }
+                            const bytes = await streamToBuffer(body);
+                            return {
+                                oldId: row.id,
+                                name: row.name,
+                                mimeType: row.mime_type,
+                                ext: row.ext,
+                                sizeBytes: row.size_bytes,
+                                sha256: row.sha256,
+                                createdAt: new Date(row.created_at).toISOString(),
+                                bytesBase64: bytes.toString("base64"),
+                            };
+                        },
+                    );
+
+                    for (const entry of fileEntries) {
+                        if (!firstFile) await writeChunk(gzipStream, ",");
+                        await writeChunk(gzipStream, JSON.stringify(entry));
+                        firstFile = false;
+                    }
+                }
+                await writeChunk(gzipStream, "]");
+
+                await writeChunk(gzipStream, ',"embeddings":[');
+                let firstEmbedding = true;
+                if (hasEmbeddingTable) {
+                    for (let offset = 0; ; ) {
+                        const embeddingRows = await app.pg.query<{
+                            node_id: string;
+                            node_text: string;
+                            embedding: unknown;
+                        }>(
+                            `
+                            SELECT node_id, node_text, embedding
+                            FROM document_node_embeddings
+                            WHERE doc_id = $1
+                            ORDER BY node_id ASC
+                            LIMIT $2
+                            OFFSET $3
+                            `,
+                            [id, EXPORT_EMBEDDINGS_BATCH_SIZE, offset],
+                        );
+                        if (embeddingRows.rows.length === 0) break;
+
+                        for (const row of embeddingRows.rows) {
+                            const entry = {
+                                nodeId: row.node_id,
+                                nodeText: row.node_text,
+                                embedding: parseVectorValue(row.embedding),
+                            };
+                            if (!firstEmbedding) await writeChunk(gzipStream, ",");
+                            await writeChunk(gzipStream, JSON.stringify(entry));
+                            firstEmbedding = false;
+                        }
+
+                        offset += embeddingRows.rows.length;
+                    }
+                }
+                await writeChunk(gzipStream, "]");
+
+                await writeChunk(gzipStream, ',"githubEvents":[');
+                let firstGithubEvent = true;
+                for (let offset = 0; ; ) {
+                    const githubEventRows = await app.pg.query<{
+                        repo_owner: string;
+                        repo_name: string;
+                        event_type: string;
+                        event_key: string;
+                        actor_login: string | null;
+                        title: string | null;
+                        url: string | null;
+                        occurred_at: string;
+                        issue_number: number | null;
+                        pr_number: number | null;
+                        commit_sha: string | null;
+                        branch_name: string | null;
+                        payload: unknown;
+                        inserted_at: string;
+                    }>(
+                        `
+                        SELECT
+                            repo_owner,
+                            repo_name,
+                            event_type,
+                            event_key,
+                            actor_login,
+                            title,
+                            url,
+                            occurred_at,
+                            issue_number,
+                            pr_number,
+                            commit_sha,
+                            branch_name,
+                            payload,
+                            inserted_at
+                        FROM document_github_events
+                        WHERE document_id = $1
+                        ORDER BY occurred_at ASC, event_key ASC
+                        LIMIT $2
+                        OFFSET $3
+                        `,
+                        [id, EXPORT_GITHUB_EVENTS_BATCH_SIZE, offset],
+                    );
+                    if (githubEventRows.rows.length === 0) break;
+
+                    for (const row of githubEventRows.rows) {
+                        const entry = {
+                            repoOwner: row.repo_owner,
+                            repoName: row.repo_name,
+                            eventType: row.event_type,
+                            eventKey: row.event_key,
+                            actorLogin: row.actor_login,
+                            title: row.title,
+                            url: row.url,
+                            occurredAt: new Date(row.occurred_at).toISOString(),
+                            issueNumber: row.issue_number,
+                            prNumber: row.pr_number,
+                            commitSha: row.commit_sha,
+                            branchName: row.branch_name,
+                            payload: row.payload,
+                            insertedAt: new Date(row.inserted_at).toISOString(),
+                        };
+                        if (!firstGithubEvent) await writeChunk(gzipStream, ",");
+                        await writeChunk(gzipStream, JSON.stringify(entry));
+                        firstGithubEvent = false;
+                    }
+
+                    offset += githubEventRows.rows.length;
+                }
+                await writeChunk(gzipStream, "]");
+
+                await writeChunk(gzipStream, ',"revisions":[');
+                let firstRevision = true;
+                for (let offset = 0; ; ) {
+                    const revisionRows = await app.pg.query<{
+                        version: number;
+                        captured_at: string;
+                        state: unknown;
+                        timeline: unknown;
+                    }>(
+                        `
+                        SELECT version, captured_at, state, timeline
+                        FROM document_state_revisions
+                        WHERE document_id = $1
+                        ORDER BY captured_at ASC, version ASC, id ASC
+                        LIMIT $2
+                        OFFSET $3
+                        `,
+                        [id, EXPORT_REVISIONS_BATCH_SIZE, offset],
+                    );
+                    if (revisionRows.rows.length === 0) break;
+
+                    for (const row of revisionRows.rows) {
+                        const entry = {
+                            version: Number.isFinite(row.version) ? Math.max(1, Math.trunc(row.version)) : 1,
+                            capturedAt: new Date(row.captured_at).toISOString(),
+                            state: row.state ?? {},
+                            timeline: row.timeline ?? {},
+                        };
+                        if (!firstRevision) await writeChunk(gzipStream, ",");
+                        await writeChunk(gzipStream, JSON.stringify(entry));
+                        firstRevision = false;
+                    }
+
+                    offset += revisionRows.rows.length;
+                }
+                await writeChunk(gzipStream, "]}");
+
+                gzipStream.end();
+                await finished(gzipStream);
+                request.log.info({
+                    docId: id,
+                    encodedBytes,
+                    elapsedMs: Date.now() - exportStartedAt,
+                    revisionCount,
+                    fileCount: fileRows.rows.length,
+                    totalFileBytes,
+                }, "Project export completed.");
+            } catch (error) {
+                request.log.error({ error, docId: id }, "Project export failed while streaming.");
+                gzipStream.destroy(error instanceof Error ? error : new Error(String(error)));
+                if (!responseStream.destroyed) {
+                    responseStream.destroy(error instanceof Error ? error : new Error(String(error)));
+                }
+            }
+        })();
+
+        return reply.send(responseStream);
     });
 
     /**

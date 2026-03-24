@@ -1,7 +1,7 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 
-const MAGIC = Buffer.from("VITRALVI", "ascii");
-const FORMAT_VERSION = 1;
+export const PROJECT_VI_MAGIC = Buffer.from("VITRALVI", "ascii");
+export const PROJECT_VI_FORMAT_VERSION = 1;
 const DEFAULT_GZIP_LEVEL = 1;
 
 type UnknownRecord = Record<string, unknown>;
@@ -166,7 +166,7 @@ function normalizeRevisionEntry(value: unknown, index: number): ProjectViRevisio
     };
 }
 
-function resolveGzipLevel(): number {
+export function resolveProjectViGzipLevel(): number {
     const raw = Number(process.env.VI_GZIP_LEVEL ?? DEFAULT_GZIP_LEVEL);
     if (!Number.isFinite(raw)) return DEFAULT_GZIP_LEVEL;
     const normalized = Math.trunc(raw);
@@ -175,33 +175,38 @@ function resolveGzipLevel(): number {
     return normalized;
 }
 
+export function createProjectViHeader(): Buffer {
+    const header = Buffer.alloc(PROJECT_VI_MAGIC.length + 1);
+    PROJECT_VI_MAGIC.copy(header, 0);
+    header.writeUInt8(PROJECT_VI_FORMAT_VERSION, PROJECT_VI_MAGIC.length);
+    return header;
+}
+
 export function encodeProjectVi(bundle: ProjectViBundleV1): Buffer {
     const jsonBytes = Buffer.from(JSON.stringify(bundle), "utf8");
-    const compressed = gzipSync(jsonBytes, { level: resolveGzipLevel() });
-    const header = Buffer.alloc(MAGIC.length + 1);
-    MAGIC.copy(header, 0);
-    header.writeUInt8(FORMAT_VERSION, MAGIC.length);
+    const compressed = gzipSync(jsonBytes, { level: resolveProjectViGzipLevel() });
+    const header = createProjectViHeader();
     return Buffer.concat([header, compressed]);
 }
 
 export function decodeProjectVi(bytes: Buffer): ProjectViBundleV1 {
-    if (!Buffer.isBuffer(bytes) || bytes.length <= MAGIC.length + 1) {
+    if (!Buffer.isBuffer(bytes) || bytes.length <= PROJECT_VI_MAGIC.length + 1) {
         throw new Error("Invalid .vi payload: file is empty or too short");
     }
 
-    const magic = bytes.subarray(0, MAGIC.length);
-    if (!magic.equals(MAGIC)) {
+    const magic = bytes.subarray(0, PROJECT_VI_MAGIC.length);
+    if (!magic.equals(PROJECT_VI_MAGIC)) {
         throw new Error("Invalid .vi file signature");
     }
 
-    const version = bytes.readUInt8(MAGIC.length);
-    if (version !== FORMAT_VERSION) {
+    const version = bytes.readUInt8(PROJECT_VI_MAGIC.length);
+    if (version !== PROJECT_VI_FORMAT_VERSION) {
         throw new Error(`Unsupported .vi format version: ${version}`);
     }
 
     let parsed: unknown;
     try {
-        const decompressed = gunzipSync(bytes.subarray(MAGIC.length + 1));
+        const decompressed = gunzipSync(bytes.subarray(PROJECT_VI_MAGIC.length + 1));
         parsed = JSON.parse(decompressed.toString("utf8"));
     } catch {
         throw new Error("Invalid .vi payload: unable to decode project data");
