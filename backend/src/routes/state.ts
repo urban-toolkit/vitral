@@ -72,6 +72,31 @@ const DUPLICATE_FILES_INSERT_CHUNK_SIZE = 250;
 const DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE = 50;
 const DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY = 4;
 const MAX_VI_EXPORT_FILE_FETCH_CONCURRENCY = 16;
+const DUPLICATE_JOB_RETENTION_MS = 60 * 60 * 1000;
+const MAX_DUPLICATE_JOBS = 500;
+const DUPLICATE_JOB_ERROR_MESSAGE = "Failed to duplicate project.";
+
+type DuplicatedDocumentSummary = {
+    id: string;
+    title: string;
+    description: string | null;
+    version: number;
+    updated_at: string;
+    review_only: boolean;
+};
+
+type DuplicateJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+type DuplicateJobRecord = {
+    jobId: string;
+    sourceDocId: string;
+    status: DuplicateJobStatus;
+    createdAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    result: DuplicatedDocumentSummary | null;
+    error: string | null;
+};
 
 type SetupTemplateDefinition = {
     id?: unknown;
@@ -294,6 +319,37 @@ async function mapWithConcurrencyLimit<T, R>(
 
     await Promise.all(workers);
     return results;
+}
+
+function pruneDuplicateJobs(duplicateJobs: Map<string, DuplicateJobRecord>): void {
+    const now = Date.now();
+    for (const [jobId, job] of duplicateJobs) {
+        const finishedAtMs = job.finishedAt ? Date.parse(job.finishedAt) : null;
+        if (finishedAtMs !== null && Number.isFinite(finishedAtMs)) {
+            if (finishedAtMs + DUPLICATE_JOB_RETENTION_MS < now) {
+                duplicateJobs.delete(jobId);
+            }
+        }
+    }
+
+    while (duplicateJobs.size > MAX_DUPLICATE_JOBS) {
+        const oldestKey = duplicateJobs.keys().next().value as string | undefined;
+        if (!oldestKey) break;
+        duplicateJobs.delete(oldestKey);
+    }
+}
+
+function createDuplicateJob(sourceDocId: string): DuplicateJobRecord {
+    return {
+        jobId: crypto.randomUUID(),
+        sourceDocId,
+        status: "queued",
+        createdAt: new Date().toISOString(),
+        startedAt: null,
+        finishedAt: null,
+        result: null,
+        error: null,
+    };
 }
 
 function remapFileReferencesInValue(value: unknown, fileIdMap: Map<string, string>): unknown {
@@ -2215,17 +2271,13 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         return rows;
     });
 
-    /**
-     * Duplicate a project with full state/history/assets fidelity.
-     * POST /api/state/:id/duplicate
-     */
-    app.post("/state/:id/duplicate", async (request, reply) => {
-        const { id } = request.params as { id: string };
-        if (!isUuid(id)) {
-            return reply.status(400).send({ error: "Invalid document id" });
-        }
-        const duplicateStartedAt = Date.now();
+    const duplicateJobs = new Map<string, DuplicateJobRecord>();
 
+    const duplicateProjectWithFullFidelity = async (
+        sourceDocId: string,
+        logger: Pick<typeof app.log, "info" | "error">,
+    ): Promise<DuplicatedDocumentSummary> => {
+        const duplicateStartedAt = Date.now();
         const client = await app.pg.connect();
         try {
             await client.query("BEGIN");
@@ -2261,12 +2313,11 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 FROM documents
                 WHERE id = $1
                 `,
-                [id],
+                [sourceDocId],
             );
             const sourceDocument = sourceDocumentResult.rows[0];
             if (!sourceDocument) {
-                await client.query("ROLLBACK");
-                return reply.status(404).send({ error: "Document not found" });
+                throw new Error("Document not found");
             }
 
             const sourceFilesResult = await client.query<{
@@ -2295,7 +2346,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 WHERE document_id = $1
                 ORDER BY created_at ASC, id ASC
                 `,
-                [id],
+                [sourceDocId],
             );
             const sourceFileCount = sourceFilesResult.rows.length;
             const sourceTotalFileBytes = sourceFilesResult.rows.reduce(
@@ -2315,14 +2366,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 ? Math.max(1, Math.trunc(sourceDocument.version))
                 : 1;
 
-            const duplicatedDocumentResult = await client.query<{
-                id: string;
-                title: string;
-                description: string | null;
-                version: number;
-                updated_at: string;
-                review_only: boolean;
-            }>(
+            const duplicatedDocumentResult = await client.query<DuplicatedDocumentSummary>(
                 `
                 INSERT INTO documents (
                     title,
@@ -2418,11 +2462,11 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 WHERE document_id = $1
                 ORDER BY captured_at ASC, version ASC, id ASC
                 `,
-                [id],
+                [sourceDocId],
             );
             const sourceRevisionCount = sourceRevisionRows.rows.length;
-            request.log.info({
-                docId: id,
+            logger.info({
+                docId: sourceDocId,
                 sourceFileCount,
                 sourceTotalFileBytes,
                 sourceRevisionCount,
@@ -2506,7 +2550,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 WHERE document_id = $2::uuid
                 ORDER BY occurred_at ASC, event_key ASC
                 `,
-                [duplicatedDocument.id, id],
+                [duplicatedDocument.id, sourceDocId],
             );
 
             const embeddingTable = await client.query<{ table_name: string | null }>(
@@ -2528,27 +2572,117 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                         embedding = EXCLUDED.embedding,
                         updated_at = now()
                     `,
-                    [duplicatedDocument.id, id],
+                    [duplicatedDocument.id, sourceDocId],
                 );
             }
 
             await client.query("COMMIT");
-            request.log.info({
-                sourceDocId: id,
+            logger.info({
+                sourceDocId,
                 duplicatedDocId: duplicatedDocument.id,
                 elapsedMs: Date.now() - duplicateStartedAt,
                 sourceFileCount,
                 sourceTotalFileBytes,
                 sourceRevisionCount,
             }, "Project duplication completed.");
-            return reply.status(201).send(duplicatedDocument);
+            return duplicatedDocument;
         } catch (error) {
             await client.query("ROLLBACK");
-            request.log.error({ error, docId: id, elapsedMs: Date.now() - duplicateStartedAt }, "Failed to duplicate project.");
-            return reply.status(500).send({ error: "Failed to duplicate project." });
+            logger.error({ error, docId: sourceDocId, elapsedMs: Date.now() - duplicateStartedAt }, "Failed to duplicate project.");
+            throw error;
         } finally {
             client.release();
         }
+    };
+
+    const runDuplicateJob = async (jobId: string): Promise<void> => {
+        const job = duplicateJobs.get(jobId);
+        if (!job) return;
+
+        job.status = "running";
+        job.startedAt = new Date().toISOString();
+        job.error = null;
+        job.result = null;
+
+        try {
+            const duplicatedDocument = await duplicateProjectWithFullFidelity(job.sourceDocId, app.log);
+            const current = duplicateJobs.get(jobId);
+            if (!current) return;
+            current.status = "succeeded";
+            current.finishedAt = new Date().toISOString();
+            current.result = duplicatedDocument;
+            current.error = null;
+        } catch (error) {
+            const current = duplicateJobs.get(jobId);
+            if (!current) return;
+            current.status = "failed";
+            current.finishedAt = new Date().toISOString();
+            current.result = null;
+            current.error = error instanceof Error && error.message.trim() !== ""
+                ? error.message
+                : DUPLICATE_JOB_ERROR_MESSAGE;
+        } finally {
+            pruneDuplicateJobs(duplicateJobs);
+        }
+    };
+
+    /**
+     * Start async project duplication with full state/history/assets fidelity.
+     * POST /api/state/:id/duplicate
+     */
+    app.post("/state/:id/duplicate", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        if (!isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document id" });
+        }
+        const exists = await app.pg.query<{ id: string }>(
+            `
+            SELECT id
+            FROM documents
+            WHERE id = $1
+            `,
+            [id],
+        );
+        if (exists.rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        pruneDuplicateJobs(duplicateJobs);
+        for (const existingJob of duplicateJobs.values()) {
+            if (existingJob.sourceDocId !== id) continue;
+            if (existingJob.status === "queued" || existingJob.status === "running") {
+                return reply.status(202).send(existingJob);
+            }
+        }
+
+        const job = createDuplicateJob(id);
+        duplicateJobs.set(job.jobId, job);
+        setImmediate(() => {
+            void runDuplicateJob(job.jobId);
+        });
+        return reply.status(202).send(job);
+    });
+
+    /**
+     * Poll async project duplication status.
+     * GET /api/state/duplicate-jobs/:jobId
+     */
+    app.get("/state/duplicate-jobs/:jobId", async (request, reply) => {
+        const { jobId } = request.params as { jobId: string };
+        if (!isUuid(jobId)) {
+            return reply.status(400).send({ error: "Invalid duplicate job id" });
+        }
+
+        pruneDuplicateJobs(duplicateJobs);
+        const job = duplicateJobs.get(jobId);
+        if (!job) {
+            return reply.status(404).send({ error: "Duplicate job not found" });
+        }
+
+        if (job.status === "queued" || job.status === "running") {
+            reply.header("Retry-After", "1");
+        }
+        return reply.send(job);
     });
 
     /**

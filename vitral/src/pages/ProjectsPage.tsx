@@ -1,6 +1,6 @@
 import { useRef, useState, type ChangeEvent } from 'react';
 
-import { loadDocuments, deleteDocument, duplicateDocument, importProjectVi } from "@/api/stateApi";
+import { loadDocuments, deleteDocument, importProjectVi, startDuplicateDocument, loadDuplicateDocumentJob } from "@/api/stateApi";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -45,8 +45,12 @@ export function ProjectsPage() {
     }
 
     useEffect(()=>{
-        fetchDocuments();
-        checkGitStatus();
+        void fetchDocuments().catch((error) => {
+            console.error("Failed to load documents", error);
+        });
+        void checkGitStatus().catch((error) => {
+            console.error("Failed to check GitHub status", error);
+        });
     }, []);
 
     const handleImportProject = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -72,7 +76,25 @@ export function ProjectsPage() {
 
         setDuplicatingProjectId(id);
         try {
-            await duplicateDocument(id);
+            const startedJob = await startDuplicateDocument(id);
+            let job = startedJob;
+            const pollStartedAt = Date.now();
+            const maxPollDurationMs = 10 * 60 * 1000;
+
+            while (job.status === "queued" || job.status === "running") {
+                await new Promise<void>((resolve) => {
+                    window.setTimeout(resolve, 1000);
+                });
+                job = await loadDuplicateDocumentJob(job.jobId);
+                if (Date.now() - pollStartedAt > maxPollDurationMs) {
+                    throw new Error("Duplication is still running. Please refresh this page in a moment.");
+                }
+            }
+
+            if (job.status === "failed") {
+                throw new Error(job.error || "Failed to duplicate project.");
+            }
+
             await fetchDocuments();
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to duplicate project.";

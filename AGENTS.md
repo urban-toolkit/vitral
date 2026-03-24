@@ -37,6 +37,11 @@ This file captures important project context from prior debugging/fix sessions s
 - Requests must not fail at the proxy layer from short upstream timeouts.
 - Backend runtime must have enough heap headroom for encode/copy operations over full project history.
 
+8. Async duplication contract
+- `POST /api/state/:id/duplicate` is async and should return `202` quickly with a `jobId`.
+- Duplication completion/failure is polled via `GET /api/state/duplicate-jobs/:jobId`.
+- Job result includes duplicated document metadata (`id`, `title`, etc.) once status is `succeeded`.
+
 ## Key Areas and Files
 
 - Timeline defaults / playhead / context menu cutoff:
@@ -107,6 +112,7 @@ These are concrete spots where the contracts are currently enforced. If behavior
 - `vitral/nginx.conf`: `/vitral/api/` uses extended proxy timeouts and disables buffering for long-running responses.
 - `backend/Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`: `NODE_OPTIONS=--max-old-space-size=2048` increases backend heap budget.
 - `backend/src/utils/projectVi.ts`: `.vi` gzip level is configurable via `VI_GZIP_LEVEL` (default `1`) to trade smaller CPU time for larger output files when needed.
+- `vitral/src/api/stateApi.ts` + `vitral/src/pages/ProjectsPage.tsx`: frontend duplicate flow starts async job and polls status until terminal state.
 
 ## Regression Watch-outs
 

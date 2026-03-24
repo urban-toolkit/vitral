@@ -7,7 +7,7 @@ export default defineConfig(({ command, mode }) => {
 
   const isDev = command === "serve"
   const base = env.VITE_BASE_PATH || "/"
-  const backendUrl = env.VITE_BACKEND_URL || "http://localhost:3000"
+  const devProxyTarget = env.VITE_DEV_PROXY_TARGET || "http://localhost:3000"
 
   return {
     base,
@@ -30,7 +30,7 @@ export default defineConfig(({ command, mode }) => {
         ? {
             proxy: {
               "/api": {
-                target: backendUrl,
+                target: devProxyTarget,
                 changeOrigin: true,
               },
             },

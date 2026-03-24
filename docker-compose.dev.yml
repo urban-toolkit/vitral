@@ -5,6 +5,7 @@ services:
       dockerfile: ./Dockerfile.dev
     environment:
       NODE_ENV: development
+      VITE_DEV_PROXY_TARGET: http://backend:3000
     env_file:
       - ./vitral/.env.development
       - .env.common
