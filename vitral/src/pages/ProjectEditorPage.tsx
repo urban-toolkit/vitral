@@ -270,6 +270,17 @@ function toIsoFromTimestamp(timestampMs: number): string {
     return new Date(timestampMs).toISOString();
 }
 
+function clampTimestampMsToRange(
+    timestampMs: number,
+    rangeStartMs: number | null,
+    rangeEndMs: number | null,
+): number {
+    if (rangeStartMs === null || rangeEndMs === null) return timestampMs;
+    const minMs = Math.min(rangeStartMs, rangeEndMs);
+    const maxMs = Math.max(rangeStartMs, rangeEndMs);
+    return Math.max(minMs, Math.min(maxMs, timestampMs));
+}
+
 function normalizeNodeHistoryEntries(node: nodeType): ParsedNodeHistoryEntry[] {
     const nodeData = (node.data ?? {}) as Record<string, unknown>;
     const normalized: ParsedNodeHistoryEntry[] = [];
@@ -1068,13 +1079,26 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return playbackAtTime < latestCanvasChangeTime;
     }, [latestCanvasChangeTime, playbackAtTime]);
     const interactionLocked = reviewOnly || isHistoricalPlayback;
+    const timelineRangeStartMs = useMemo(
+        () => toTimestampMs(timelineStartEnd.start),
+        [timelineStartEnd.start],
+    );
+    const timelineRangeEndMs = useMemo(
+        () => toTimestampMs(timelineStartEnd.end),
+        [timelineStartEnd.end],
+    );
     const resolveActionTimestamp = useCallback(() => {
         if (playbackAt) {
             const parsed = new Date(playbackAt);
             if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
         }
-        return new Date().toISOString();
-    }, [playbackAt]);
+        const clampedNowMs = clampTimestampMsToRange(
+            Date.now(),
+            timelineRangeStartMs,
+            timelineRangeEndMs,
+        );
+        return new Date(clampedNowMs).toISOString();
+    }, [playbackAt, timelineRangeEndMs, timelineRangeStartMs]);
     const timelineContextNodes = useMemo(() => {
         if (playbackAtTime === null) {
             return nodes.filter((node) => {
@@ -3467,13 +3491,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const handleAddSystemScreenshotMarker = useCallback(() => {
         if (interactionLocked) return;
-        const markerOccurredAt = playbackAt ?? new Date().toISOString();
+        const markerOccurredAt = resolveActionTimestamp();
         dispatch(addSystemScreenshotMarker({
             id: crypto.randomUUID(),
             occurredAt: markerOccurredAt,
             imageDataUrl: "",
         }));
-    }, [dispatch, interactionLocked, playbackAt]);
+    }, [dispatch, interactionLocked, resolveActionTimestamp]);
 
     const handleUploadSystemScreenshotForLatestMarker = useCallback(async (file: File) => {
         if (interactionLocked) return;
@@ -3482,7 +3506,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const imageDataUrl = await readImageFileAsDataUrl(file);
             const { width: imageWidth, height: imageHeight } = await readImageDimensionsFromDataUrl(imageDataUrl);
 
-            const markerOccurredAt = playbackAt ?? new Date().toISOString();
+            const markerOccurredAt = resolveActionTimestamp();
             let markerId = playbackAwareSystemScreenshotMarker?.id;
             if (!markerId) {
                 markerId = crypto.randomUUID();
@@ -3529,7 +3553,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setProcessingSystemScreenshot(false);
         }
-    }, [codebaseSubtracks, dispatch, interactionLocked, llmModel, playbackAt, playbackAwareSystemScreenshotMarker?.id, projectGoal, projectId, title]);
+    }, [codebaseSubtracks, dispatch, interactionLocked, llmModel, playbackAwareSystemScreenshotMarker?.id, projectGoal, projectId, resolveActionTimestamp, title]);
 
     const handleDeleteAsset = useCallback(async (file: { id: string; name: string }) => {
         if (interactionLocked) return;
@@ -3561,8 +3585,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 cutoffIso = parsedOverride.toISOString();
             }
         }
-        const cutoffMs = toTimestampMs(cutoffIso);
-        if (cutoffMs === null) return;
+        const rawCutoffMs = toTimestampMs(cutoffIso);
+        if (rawCutoffMs === null) return;
+        const cutoffMs = clampTimestampMsToRange(
+            rawCutoffMs,
+            timelineRangeStartMs,
+            timelineRangeEndMs,
+        );
+        cutoffIso = toIsoFromTimestamp(cutoffMs);
 
         const knowledgeNodeIds = new Set(
             nodes
@@ -3582,19 +3612,21 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const currentData = nodeDataRecord(node);
             const history = normalizeNodeHistoryEntries(node);
             const createdAtMs = toTimestampMs(currentData.createdAt);
+            const inferredCreatedAtMs = history.length > 0 ? history[0].atMs : null;
+            const effectiveCreatedAtMs = createdAtMs ?? inferredCreatedAtMs;
             const deletedAtMs = toTimestampMs(currentData.deletedAt);
 
             if (direction === "before") {
-                const createdAfterCutoff = createdAtMs !== null && createdAtMs > cutoffMs;
+                const createdAfterCutoff = effectiveCreatedAtMs !== null && effectiveCreatedAtMs > cutoffMs;
                 const activeAtCutoff =
-                    (createdAtMs === null || createdAtMs <= cutoffMs) &&
+                    (effectiveCreatedAtMs === null || effectiveCreatedAtMs <= cutoffMs) &&
                     (deletedAtMs === null || deletedAtMs > cutoffMs);
 
                 if (createdAfterCutoff) {
                     const trimmedHistory = history.filter((entry) => entry.atMs >= cutoffMs);
                     const nextData = stripNodeMeta(currentData);
-                    if (createdAtMs !== null) {
-                        nextData.createdAt = toIsoFromTimestamp(createdAtMs);
+                    if (effectiveCreatedAtMs !== null) {
+                        nextData.createdAt = toIsoFromTimestamp(effectiveCreatedAtMs);
                     }
                     if (deletedAtMs !== null) {
                         nextData.deletedAt = toIsoFromTimestamp(deletedAtMs);
@@ -3674,12 +3706,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 continue;
             }
 
-            const createdAfterCutoff = createdAtMs !== null && createdAtMs > cutoffMs;
+            const createdAfterCutoff = effectiveCreatedAtMs !== null && effectiveCreatedAtMs > cutoffMs;
             if (createdAfterCutoff) {
                 continue;
             }
             const activeAtCutoff =
-                (createdAtMs === null || createdAtMs <= cutoffMs) &&
+                (effectiveCreatedAtMs === null || effectiveCreatedAtMs <= cutoffMs) &&
                 (deletedAtMs === null || deletedAtMs > cutoffMs);
             if (!activeAtCutoff) {
                 continue;
@@ -3687,7 +3719,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
             const resolvedAtCutoff = resolveNodeAtPlayback(node, cutoffMs);
             const resolvedData = stripNodeMeta(nodeDataRecord(resolvedAtCutoff));
-            const createdAtIso = createdAtMs === null ? cutoffIso : toIsoFromTimestamp(createdAtMs);
+            const createdAtIso = effectiveCreatedAtMs === null ? cutoffIso : toIsoFromTimestamp(effectiveCreatedAtMs);
             const trimmedHistory = history
                 .filter((entry) => entry.atMs <= cutoffMs)
                 .map((entry) => {
@@ -3908,7 +3940,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         setKnowledgeBlueprintLinks((previous) => previous.filter((connection) => (
             nextKnowledgeNodeIdSet.has(connection.cardNodeId)
         )));
-    }, [dispatch, edges, nodes, resolveActionTimestamp, reviewOnly]);
+    }, [dispatch, edges, nodes, resolveActionTimestamp, reviewOnly, timelineRangeEndMs, timelineRangeStartMs]);
 
     const handleClearKnowledgePreviousEdits = useCallback((cutoffIso?: string) => {
         clearKnowledgeEditsAroundPlayback("before", cutoffIso);
