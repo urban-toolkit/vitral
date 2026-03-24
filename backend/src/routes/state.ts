@@ -2187,6 +2187,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         if (!isUuid(id)) {
             return reply.status(400).send({ error: "Invalid document id" });
         }
+        const duplicateStartedAt = Date.now();
 
         const client = await app.pg.connect();
         try {
@@ -2258,6 +2259,11 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 ORDER BY created_at ASC, id ASC
                 `,
                 [id],
+            );
+            const sourceFileCount = sourceFilesResult.rows.length;
+            const sourceTotalFileBytes = sourceFilesResult.rows.reduce(
+                (sum, fileRow) => sum + Math.max(0, fileRow.size_bytes ?? 0),
+                0,
             );
 
             const fileIdMap = new Map<string, string>();
@@ -2365,6 +2371,13 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 `,
                 [id],
             );
+            const sourceRevisionCount = sourceRevisionRows.rows.length;
+            request.log.info({
+                docId: id,
+                sourceFileCount,
+                sourceTotalFileBytes,
+                sourceRevisionCount,
+            }, "Starting project duplication.");
 
             for (const sourceRevision of sourceRevisionRows.rows) {
                 const remappedRevisionState = remapStateFileReferences(sourceRevision.state, fileIdMap);
@@ -2459,10 +2472,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             }
 
             await client.query("COMMIT");
+            request.log.info({
+                sourceDocId: id,
+                duplicatedDocId: duplicatedDocument.id,
+                elapsedMs: Date.now() - duplicateStartedAt,
+                sourceFileCount,
+                sourceTotalFileBytes,
+                sourceRevisionCount,
+            }, "Project duplication completed.");
             return reply.status(201).send(duplicatedDocument);
         } catch (error) {
             await client.query("ROLLBACK");
-            request.log.error({ error }, "Failed to duplicate project.");
+            request.log.error({ error, docId: id, elapsedMs: Date.now() - duplicateStartedAt }, "Failed to duplicate project.");
             return reply.status(500).send({ error: "Failed to duplicate project." });
         } finally {
             client.release();
@@ -2475,6 +2496,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.get("/state/:id/export-vi", async (request, reply) => {
         const { id } = request.params as { id: string };
+        const exportStartedAt = Date.now();
 
         const documentResult = await app.pg.query<{
             id: string;
@@ -2554,6 +2576,24 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             `,
             [id],
         );
+        const totalFileBytes = fileRows.rows.reduce(
+            (sum, row) => sum + Math.max(0, row.size_bytes ?? 0),
+            0,
+        );
+        request.log.info({
+            docId: id,
+            revisionCount: revisionRows.rows.length,
+            fileCount: fileRows.rows.length,
+            totalFileBytes,
+        }, "Starting project export.");
+
+        const maxTotalFileBytesRaw = Number(process.env.VI_EXPORT_MAX_TOTAL_FILE_BYTES ?? 0);
+        const maxTotalFileBytes = Number.isFinite(maxTotalFileBytesRaw) ? Math.max(0, Math.trunc(maxTotalFileBytesRaw)) : 0;
+        if (maxTotalFileBytes > 0 && totalFileBytes > maxTotalFileBytes) {
+            return reply.status(413).send({
+                error: `Project assets exceed export limit (${totalFileBytes} bytes > ${maxTotalFileBytes} bytes).`,
+            });
+        }
 
         const files: ProjectViBundleV1["files"] = [];
         for (const row of fileRows.rows) {
@@ -2714,6 +2754,14 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         };
 
         const encoded = encodeProjectVi(bundle);
+        request.log.info({
+            docId: id,
+            encodedBytes: encoded.length,
+            elapsedMs: Date.now() - exportStartedAt,
+            revisionCount: revisionRows.rows.length,
+            fileCount: fileRows.rows.length,
+            totalFileBytes,
+        }, "Project export completed.");
         const fileName = `${sanitizeProjectFilename(documentRow.title)}.vi`;
         reply.header("Content-Type", "application/octet-stream");
         reply.header("Content-Disposition", `attachment; filename="${safeFilename(fileName)}"`);

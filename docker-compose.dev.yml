@@ -24,6 +24,8 @@ services:
     build:
       context: ./backend
       dockerfile: ./Dockerfile.dev
+    environment:
+      NODE_OPTIONS: --max-old-space-size=2048
     env_file:
       - ./backend/.env.development
       - .env.common

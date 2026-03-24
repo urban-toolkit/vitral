@@ -32,6 +32,11 @@ This file captures important project context from prior debugging/fix sessions s
 - Upload/attach events should align with current timeline action timestamp (playback-aware).
 - Attachments should remain visible at any playback time after they were attached (not only at "today").
 
+7. Export/duplicate reliability for large projects
+- `.vi` export and project duplication should remain stable with many revisions and assets.
+- Requests must not fail at the proxy layer from short upstream timeouts.
+- Backend runtime must have enough heap headroom for encode/copy operations over full project history.
+
 ## Key Areas and Files
 
 - Timeline defaults / playhead / context menu cutoff:
@@ -49,6 +54,13 @@ This file captures important project context from prior debugging/fix sessions s
   - `backend/src/routes/state.ts`
   - `vitral/src/api/stateApi.ts`
   - `vitral/src/pages/projectEditor/useFileAttachmentProcessing.ts`
+
+- Export/duplicate runtime + proxy behavior:
+  - `backend/src/routes/state.ts`
+  - `backend/Dockerfile`
+  - `docker-compose.yml`
+  - `docker-compose.dev.yml`
+  - `vitral/nginx.conf`
 
 ## Implementation Anchors (Observed)
 
@@ -86,9 +98,17 @@ These are concrete spots where the contracts are currently enforced. If behavior
 - `backend/src/routes/state.ts`: `POST /state/:docId/files` parses optional `createdAt` and stores it as file `created_at` (falls back to now only if invalid/missing).
 - `flowSlice.ts`: `attachFileIdToNode` commits attachment through node history snapshot, making attachment visibility reconstructable during playback.
 
+7. Export/duplicate heavy-path safeguards
+- `backend/src/routes/state.ts`: `POST /state/:id/duplicate` logs source file count, total file bytes, revision count, and elapsed time.
+- `backend/src/routes/state.ts`: `GET /state/:id/export-vi` logs file/revision counts, total file bytes, encoded bytes, and elapsed time.
+- `backend/src/routes/state.ts`: optional `VI_EXPORT_MAX_TOTAL_FILE_BYTES` can return `413` early for oversize exports.
+- `vitral/nginx.conf`: `/vitral/api/` uses extended proxy timeouts and disables buffering for long-running responses.
+- `backend/Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`: `NODE_OPTIONS=--max-old-space-size=2048` increases backend heap budget.
+
 ## Regression Watch-outs
 
 - Keep timeline default logic mirrored between `Timeline.tsx` and `useTimelineChart.ts`; drift between them can cause mismatched needle behavior.
 - If you simplify clear-edits logic, do not scope `"after"` to only knowledge nodes, or playback lock can remain stuck due to non-knowledge future edits.
 - Do not change duplicate-edge checks to include soft-deleted edges, or reconnect-after-delete will break.
 - Any change to attachment writes should preserve `editAt` history snapshots; direct mutation without history can break playback visibility.
+- If export/duplicate starts failing with 502 again, check nginx proxy timeout/buffering settings before changing application logic.
