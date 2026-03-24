@@ -259,50 +259,56 @@ function arraysEqual(a: string[], b: string[]): boolean {
     return true;
 }
 
+function remapFileReferencesInValue(value: unknown, fileIdMap: Map<string, string>): unknown {
+    if (Array.isArray(value)) {
+        let changed = false;
+        const nextItems = value.map((item) => {
+            const nextItem = remapFileReferencesInValue(item, fileIdMap);
+            if (nextItem !== item) changed = true;
+            return nextItem;
+        });
+        return changed ? nextItems : value;
+    }
+
+    if (!isRecord(value)) return value;
+
+    let changed = false;
+    const nextValue: Record<string, unknown> = {};
+
+    for (const [key, raw] of Object.entries(value)) {
+        let mapped: unknown = raw;
+
+        if (key === "attachmentIds" && Array.isArray(raw)) {
+            const currentAttachmentIds = raw.filter((entry): entry is string => typeof entry === "string");
+            const nextAttachmentIds = currentAttachmentIds.map((entry) => fileIdMap.get(entry) ?? entry);
+            mapped = arraysEqual(currentAttachmentIds, nextAttachmentIds) ? raw : nextAttachmentIds;
+        } else if ((key === "origin" || key === "fileId") && typeof raw === "string") {
+            mapped = fileIdMap.get(raw) ?? raw;
+        } else {
+            mapped = remapFileReferencesInValue(raw, fileIdMap);
+        }
+
+        if (mapped !== raw) changed = true;
+        nextValue[key] = mapped;
+    }
+
+    return changed ? nextValue : value;
+}
+
 function remapStateFileReferences(state: unknown, fileIdMap: Map<string, string>): unknown {
     if (!isRecord(state)) return state;
     const flow = state.flow;
     if (!isRecord(flow)) return state;
     if (!Array.isArray(flow.nodes)) return state;
 
+    let changed = false;
     const remappedNodes = flow.nodes.map((rawNode) => {
-        if (!isRecord(rawNode)) return rawNode;
-        if (!isRecord(rawNode.data)) return rawNode;
-
-        const nodeData = rawNode.data;
-        let changed = false;
-        const nextData: Record<string, unknown> = { ...nodeData };
-
-        if (Array.isArray(nodeData.attachmentIds)) {
-            const nextAttachmentIds = nodeData.attachmentIds
-                .map((value) => {
-                    if (typeof value !== "string") return null;
-                    return fileIdMap.get(value) ?? value;
-                })
-                .filter((value): value is string => typeof value === "string");
-            const currentAttachmentIds = nodeData.attachmentIds.filter(
-                (value): value is string => typeof value === "string",
-            );
-            if (!arraysEqual(currentAttachmentIds, nextAttachmentIds)) {
-                nextData.attachmentIds = nextAttachmentIds;
-                changed = true;
-            }
-        }
-
-        if (typeof nodeData.origin === "string") {
-            const remappedOrigin = fileIdMap.get(nodeData.origin);
-            if (remappedOrigin && remappedOrigin !== nodeData.origin) {
-                nextData.origin = remappedOrigin;
-                changed = true;
-            }
-        }
-
-        if (!changed) return rawNode;
-        return {
-            ...rawNode,
-            data: nextData,
-        };
+        const remappedNode = remapFileReferencesInValue(rawNode, fileIdMap);
+        if (remappedNode !== rawNode) changed = true;
+        return remappedNode;
     });
+
+    if (!changed) return state;
 
     return {
         ...state,
@@ -2170,6 +2176,297 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         );
 
         return rows;
+    });
+
+    /**
+     * Duplicate a project with full state/history/assets fidelity.
+     * POST /api/state/:id/duplicate
+     */
+    app.post("/state/:id/duplicate", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        if (!isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document id" });
+        }
+
+        const client = await app.pg.connect();
+        try {
+            await client.query("BEGIN");
+
+            const sourceDocumentResult = await client.query<{
+                id: string;
+                title: string;
+                description: string | null;
+                state: unknown;
+                timeline: unknown;
+                version: number;
+                review_only: boolean;
+                github_owner: string | null;
+                github_repo: string | null;
+                github_default_branch: string | null;
+                github_linked_at: string | null;
+                github_last_synced_at: string | null;
+            }>(
+                `
+                SELECT
+                    id,
+                    title,
+                    description,
+                    state,
+                    timeline,
+                    version,
+                    review_only,
+                    github_owner,
+                    github_repo,
+                    github_default_branch,
+                    github_linked_at,
+                    github_last_synced_at
+                FROM documents
+                WHERE id = $1
+                `,
+                [id],
+            );
+            const sourceDocument = sourceDocumentResult.rows[0];
+            if (!sourceDocument) {
+                await client.query("ROLLBACK");
+                return reply.status(404).send({ error: "Document not found" });
+            }
+
+            const sourceFilesResult = await client.query<{
+                id: string;
+                name: string;
+                mime_type: string | null;
+                ext: string | null;
+                size_bytes: number | null;
+                sha256: string | null;
+                created_at: string;
+                storage_bucket: string | null;
+                storage_key: string | null;
+            }>(
+                `
+                SELECT
+                    id,
+                    name,
+                    mime_type,
+                    ext,
+                    size_bytes,
+                    sha256,
+                    created_at,
+                    storage_bucket,
+                    storage_key
+                FROM document_files
+                WHERE document_id = $1
+                ORDER BY created_at ASC, id ASC
+                `,
+                [id],
+            );
+
+            const fileIdMap = new Map<string, string>();
+            for (const sourceFile of sourceFilesResult.rows) {
+                fileIdMap.set(sourceFile.id, crypto.randomUUID());
+            }
+
+            const remappedState = remapStateFileReferences(sourceDocument.state, fileIdMap);
+            const sourceTitle = (sourceDocument.title ?? "").trim() || "Untitled";
+            const duplicatedTitle = `${sourceTitle} (copy)`;
+            const sourceVersion = Number.isFinite(sourceDocument.version)
+                ? Math.max(1, Math.trunc(sourceDocument.version))
+                : 1;
+
+            const duplicatedDocumentResult = await client.query<{
+                id: string;
+                title: string;
+                description: string | null;
+                version: number;
+                updated_at: string;
+                review_only: boolean;
+            }>(
+                `
+                INSERT INTO documents (
+                    title,
+                    description,
+                    state,
+                    timeline,
+                    version,
+                    review_only,
+                    github_owner,
+                    github_repo,
+                    github_default_branch,
+                    github_linked_at,
+                    github_last_synced_at
+                )
+                VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9, $10::timestamptz, $11::timestamptz)
+                RETURNING id, title, description, version, updated_at, review_only
+                `,
+                [
+                    duplicatedTitle,
+                    sourceDocument.description ?? null,
+                    JSON.stringify(remappedState ?? {}),
+                    JSON.stringify(sourceDocument.timeline ?? {}),
+                    sourceVersion,
+                    sourceDocument.review_only === true,
+                    sourceDocument.github_owner ?? null,
+                    sourceDocument.github_repo ?? null,
+                    sourceDocument.github_default_branch ?? null,
+                    sourceDocument.github_linked_at ?? null,
+                    sourceDocument.github_last_synced_at ?? null,
+                ],
+            );
+            const duplicatedDocument = duplicatedDocumentResult.rows[0];
+            if (!duplicatedDocument) {
+                throw new Error("Failed to create duplicated document.");
+            }
+
+            for (const sourceFile of sourceFilesResult.rows) {
+                const nextFileId = fileIdMap.get(sourceFile.id);
+                if (!nextFileId) continue;
+
+                await client.query(
+                    `
+                    INSERT INTO document_files (
+                        id,
+                        document_id,
+                        name,
+                        mime_type,
+                        ext,
+                        size_bytes,
+                        sha256,
+                        storage_bucket,
+                        storage_key,
+                        created_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz)
+                    `,
+                    [
+                        nextFileId,
+                        duplicatedDocument.id,
+                        sourceFile.name,
+                        sourceFile.mime_type,
+                        sourceFile.ext,
+                        sourceFile.size_bytes,
+                        sourceFile.sha256,
+                        sourceFile.storage_bucket,
+                        sourceFile.storage_key,
+                        sourceFile.created_at,
+                    ],
+                );
+            }
+
+            const sourceRevisionRows = await client.query<{
+                version: number;
+                captured_at: string;
+                state: unknown;
+                timeline: unknown;
+            }>(
+                `
+                SELECT version, captured_at, state, timeline
+                FROM document_state_revisions
+                WHERE document_id = $1
+                ORDER BY captured_at ASC, version ASC, id ASC
+                `,
+                [id],
+            );
+
+            for (const sourceRevision of sourceRevisionRows.rows) {
+                const remappedRevisionState = remapStateFileReferences(sourceRevision.state, fileIdMap);
+                const revisionVersion = Number.isFinite(sourceRevision.version)
+                    ? Math.max(1, Math.trunc(sourceRevision.version))
+                    : 1;
+
+                await client.query(
+                    `
+                    INSERT INTO document_state_revisions (
+                        document_id,
+                        version,
+                        captured_at,
+                        state,
+                        timeline
+                    )
+                    VALUES ($1, $2, $3::timestamptz, $4::jsonb, $5::jsonb)
+                    `,
+                    [
+                        duplicatedDocument.id,
+                        revisionVersion,
+                        sourceRevision.captured_at,
+                        JSON.stringify(remappedRevisionState ?? {}),
+                        JSON.stringify(sourceRevision.timeline ?? {}),
+                    ],
+                );
+            }
+
+            await client.query(
+                `
+                INSERT INTO document_github_events (
+                    document_id,
+                    repo_owner,
+                    repo_name,
+                    event_type,
+                    event_key,
+                    actor_login,
+                    title,
+                    url,
+                    occurred_at,
+                    issue_number,
+                    pr_number,
+                    commit_sha,
+                    branch_name,
+                    payload,
+                    inserted_at
+                )
+                SELECT
+                    $1::uuid AS document_id,
+                    repo_owner,
+                    repo_name,
+                    event_type,
+                    event_key,
+                    actor_login,
+                    title,
+                    url,
+                    occurred_at,
+                    issue_number,
+                    pr_number,
+                    commit_sha,
+                    branch_name,
+                    payload,
+                    inserted_at
+                FROM document_github_events
+                WHERE document_id = $2::uuid
+                ORDER BY occurred_at ASC, event_key ASC
+                `,
+                [duplicatedDocument.id, id],
+            );
+
+            const embeddingTable = await client.query<{ table_name: string | null }>(
+                `
+                SELECT to_regclass('public.document_node_embeddings') AS table_name
+                `,
+            );
+
+            if (embeddingTable.rows[0]?.table_name) {
+                await client.query(
+                    `
+                    INSERT INTO document_node_embeddings (doc_id, node_id, node_text, embedding)
+                    SELECT $1::uuid, node_id, node_text, embedding
+                    FROM document_node_embeddings
+                    WHERE doc_id = $2::uuid
+                    ON CONFLICT (doc_id, node_id) DO UPDATE
+                    SET
+                        node_text = EXCLUDED.node_text,
+                        embedding = EXCLUDED.embedding,
+                        updated_at = now()
+                    `,
+                    [duplicatedDocument.id, id],
+                );
+            }
+
+            await client.query("COMMIT");
+            return reply.status(201).send(duplicatedDocument);
+        } catch (error) {
+            await client.query("ROLLBACK");
+            request.log.error({ error }, "Failed to duplicate project.");
+            return reply.status(500).send({ error: "Failed to duplicate project." });
+        } finally {
+            client.release();
+        }
     });
 
     /**

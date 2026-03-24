@@ -435,6 +435,19 @@ export async function deleteDocument(docId: string) {
     }
 }
 
+export async function duplicateDocument(docId: string): Promise<DocumentResponse> {
+    const res = await fetch(`${API_BASE}/state/${docId}/duplicate`, {
+        method: "POST",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Duplicate failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
 export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string | null }) {
     const res = await fetch(`${API_BASE}/state/${docId}`, {
         method: "PATCH",

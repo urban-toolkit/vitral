@@ -1,6 +1,6 @@
 import { useRef, useState, type ChangeEvent } from 'react';
 
-import { loadDocuments, deleteDocument, importProjectVi } from "@/api/stateApi";
+import { loadDocuments, deleteDocument, duplicateDocument, importProjectVi } from "@/api/stateApi";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -17,6 +17,7 @@ export function ProjectsPage() {
 
     const [documents, setDocuments] = useState<DocumentResponse[]>([]);
     const [importingProject, setImportingProject] = useState(false);
+    const [duplicatingProjectId, setDuplicatingProjectId] = useState<string | null>(null);
     const importInputRef = useRef<HTMLInputElement | null>(null);
 
     const fetchDocuments = async () => {
@@ -66,6 +67,21 @@ export function ProjectsPage() {
         }
     };
 
+    const handleDuplicateProject = async (id: string) => {
+        if (duplicatingProjectId) return;
+
+        setDuplicatingProjectId(id);
+        try {
+            await duplicateDocument(id);
+            await fetchDocuments();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to duplicate project.";
+            window.alert(message);
+        } finally {
+            setDuplicatingProjectId(null);
+        }
+    };
+
     return (
         <div className={classes.pageContainer}>
             <div className={classes.innerContent}>
@@ -99,7 +115,21 @@ export function ProjectsPage() {
                                 <p>{document.description}</p>
                                 <p>{document.id}</p>
                                 <FontAwesomeIcon className={classes.removeIcon} icon={faXmark} onClick={() => {removeDocument(document.id)}}/>
-                                <button onClick={() => navigate("/project/"+document.id)}>Open</button>
+                                <div className={classes.cardActions}>
+                                    <button
+                                        type="button"
+                                        onClick={() => navigate("/project/"+document.id)}
+                                    >
+                                        Open
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleDuplicateProject(document.id)}
+                                        disabled={duplicatingProjectId !== null}
+                                    >
+                                        {duplicatingProjectId === document.id ? "Duplicating..." : "Duplicate"}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     })}

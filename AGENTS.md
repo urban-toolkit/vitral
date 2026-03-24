@@ -50,48 +50,45 @@ This file captures important project context from prior debugging/fix sessions s
   - `vitral/src/api/stateApi.ts`
   - `vitral/src/pages/projectEditor/useFileAttachmentProcessing.ts`
 
-## Known Pitfalls (Observed)
+## Implementation Anchors (Observed)
 
-1. Soft-delete vs active checks
-- Many operations preserve rows with `deletedAt` for playback.
-- Any "already exists" or filtering logic must explicitly exclude deleted entities when checking active state.
+These are concrete spots where the contracts are currently enforced. If behavior regresses, start here first.
 
-2. Timestamp source mismatch
-- Using raw `new Date().toISOString()` can conflict with playback semantics.
-- Prefer shared action timestamp resolution logic used in `ProjectEditorPage.tsx`.
+1. Timeline playhead defaults
+- `Timeline.tsx`: `resolveClearCutoffIso` computes default playback from latest knowledge event (`parsed.kb`), otherwise start/today fallback clamped to timeline domain.
+- `useTimelineChart.ts`: mirrored playhead default logic for rendered needle position (`latestKnowledgeDate` + start/today fallback + clamp).
 
-3. Clear-next partial scope
-- If clear-next only trims knowledge entities, future blueprint edits can still force `isHistoricalPlayback`.
-- Ensure clear-next trims future edits on the broader canvas graph when intended.
+2. Playback lock semantics
+- `ProjectEditorPage.tsx`: `latestCanvasChangeTime` includes node/edge `createdAt` and `deletedAt`, plus node history timestamps.
+- `ProjectEditorPage.tsx`: `latestCanvasChangeTimeForLock` clamps latest change into timeline range before comparing with `playbackAtTime`.
+- `ProjectEditorPage.tsx`: `isHistoricalPlayback` only locks when `playbackAtTime` is explicitly set and earlier than clamped latest change.
 
-4. Performance sensitivity
-- Avoid expensive per-render full-string hashing / deep stringify when possible.
-- Avoid `Date.now()` in memo paths that should remain stable across renders in "live" mode.
+3. Clear edits semantics
+- `ProjectEditorPage.tsx`: `clearKnowledgeEditsAroundPlayback(direction, cutoffOverrideIso)` is the central implementation for clear previous/next.
+- For `"after"` (`Clear next edits`), node processing intentionally applies broadly (`knowledge node OR direction === "after"`), so non-knowledge future changes are also removed.
+- For edges in `"after"`, entries created after cutoff are removed; deleted flags after cutoff are rebased/cleared to keep state coherent at new present.
+- Timeline menu in `Timeline.tsx` calls `onClearKnowledgePreviousEdits` / `onClearKnowledgeNextEdits` with `resolveClearCutoffIso()`.
 
-## Operational Notes
+4. Edge soft-delete + reconnect
+- `ProjectEditorPage.tsx`: edge removal from canvas (`handleEdgesChange`) soft-deletes by setting `edge.data.deletedAt`.
+- `ProjectEditorPage.tsx`: duplicate-connect guard checks only active edges (`deletedAt === null`), allowing reconnect after soft-delete.
+- `flowSlice.ts`: dedupe key includes active/deleted state (`deleted` token), preventing active/deleted edge collisions.
 
-1. Production upload failures
-- A prior production issue showed `413 Request Entity Too Large`.
-- Local app/backend limits were higher; likely external ingress/proxy cap in production.
-- If this reappears, check upstream reverse proxy / ingress body-size settings.
+5. Blueprint parent resize and deleted children
+- `flowSlice.ts`: `resizeSystemBlueprintGroups` skips inactive nodes via `isNodeActive` (based on `node.data.deletedAt`).
+- `flowSlice.ts`: `compactBlueprintChildren` + size recomputation updates both width and height from active children extents.
+- Resize is triggered on relevant updates/removals and node-change removals.
 
-2. Existing projects compatibility
-- Fixes were designed to work with existing projects (especially soft-deleted edges), assuming timestamps are parseable ISO strings.
+6. Asset upload and playback-aware timestamps
+- `useFileAttachmentProcessing.ts`: `resolveActionTimestamp` uses `actionTimestamp` (wired from `playbackAt`) when valid.
+- `useFileAttachmentProcessing.ts`: upload path passes `createdAt` into `createFile`, then uses persisted `createdAt` for node/file updates and `attachFileIdToNode(editAt)`.
+- `stateApi.ts`: `createFile` appends `createdAt` form field when provided.
+- `backend/src/routes/state.ts`: `POST /state/:docId/files` parses optional `createdAt` and stores it as file `created_at` (falls back to now only if invalid/missing).
+- `flowSlice.ts`: `attachFileIdToNode` commits attachment through node history snapshot, making attachment visibility reconstructable during playback.
 
-## Quick Regression Checklist
+## Regression Watch-outs
 
-1. Open project with no explicit playback:
-- Needle lands on latest knowledge edit.
-
-2. Clear next edits at playhead:
-- Future knowledge + blueprint edits are trimmed.
-- Editing is immediately possible at current needle position.
-
-3. Delete and reconnect blueprint component edge:
-- Reconnect succeeds even if prior edge exists as soft-deleted history.
-
-4. Delete blueprint components inside parent groups:
-- Parent boxes shrink in width and height to fit remaining active content.
-
-5. Attach file at historical/current playback:
-- Attachment event and visibility align with timeline position.
+- Keep timeline default logic mirrored between `Timeline.tsx` and `useTimelineChart.ts`; drift between them can cause mismatched needle behavior.
+- If you simplify clear-edits logic, do not scope `"after"` to only knowledge nodes, or playback lock can remain stuck due to non-knowledge future edits.
+- Do not change duplicate-edge checks to include soft-deleted edges, or reconnect-after-delete will break.
+- Any change to attachment writes should preserve `editAt` history snapshots; direct mutation without history can break playback visibility.
