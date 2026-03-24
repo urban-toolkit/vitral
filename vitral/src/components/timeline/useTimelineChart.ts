@@ -1535,9 +1535,17 @@ export function useTimelineChart({
 
             const timelineDomainStart = parsed.domain[0];
             const timelineDomainEnd = parsed.domain[1];
-            const defaultPlaybackDate = today < timelineDomainStart
-                ? timelineDomainStart
-                : (today > timelineDomainEnd ? timelineDomainStart : today);
+            const latestKnowledgeDate = parsed.kb.reduce<Date | null>((latest, eventData) => {
+                const candidate = eventData.date;
+                if (Number.isNaN(candidate.getTime())) return latest;
+                if (!latest) return candidate;
+                return candidate.getTime() > latest.getTime() ? candidate : latest;
+            }, null);
+            const defaultPlaybackDate = latestKnowledgeDate ?? (
+                today < timelineDomainStart
+                    ? timelineDomainStart
+                    : (today > timelineDomainEnd ? timelineDomainStart : today)
+            );
             const playbackCandidate = playbackAt ? toDate(playbackAt) : defaultPlaybackDate;
             const clampedPlaybackDate = new Date(
                 Math.min(timelineDomainEnd.getTime(), Math.max(timelineDomainStart.getTime(), playbackCandidate.getTime())),
