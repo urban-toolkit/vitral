@@ -35,6 +35,19 @@ export function ProjectsPage() {
         });
     };
 
+    const handleRemoveProject = async (document: DocumentResponse) => {
+        const title = (document.title ?? "").trim() || "Untitled";
+        const confirmed = window.confirm(`Delete project "${title}"? This action cannot be undone.`);
+        if (!confirmed) return;
+
+        try {
+            await removeDocument(document.id);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to delete project.";
+            window.alert(message);
+        }
+    };
+
     const checkGitStatus = async () => {
         const status = await githubStatus();
         if (status.connected) {
@@ -136,7 +149,11 @@ export function ProjectsPage() {
                                 <p className={classes.documentTitle}>{document.title}</p>
                                 <p>{document.description}</p>
                                 <p>{document.id}</p>
-                                <FontAwesomeIcon className={classes.removeIcon} icon={faXmark} onClick={() => {removeDocument(document.id)}}/>
+                                <FontAwesomeIcon
+                                    className={classes.removeIcon}
+                                    icon={faXmark}
+                                    onClick={() => { void handleRemoveProject(document); }}
+                                />
                                 <div className={classes.cardActions}>
                                     <button
                                         type="button"
