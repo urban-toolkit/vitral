@@ -460,7 +460,7 @@ export const Timeline = ({
 		const today = new Date();
 		const defaultPlaybackDate = today < domainStart
 			? domainStart
-			: (today > domainEnd ? domainEnd : today);
+			: (today > domainEnd ? domainStart : today);
 		const playbackCandidate = playbackAt ? toDate(playbackAt) : defaultPlaybackDate;
 		const clampedPlaybackDate = new Date(
 			Math.min(domainEnd.getTime(), Math.max(domainStart.getTime(), playbackCandidate.getTime()))

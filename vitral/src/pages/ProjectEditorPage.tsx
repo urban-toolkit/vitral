@@ -1047,6 +1047,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return toTimestampMs(playbackAt);
     }, [playbackAt]);
     const effectivePlaybackTime = playbackAtTime ?? Number.POSITIVE_INFINITY;
+    const timelineRangeStartMs = useMemo(
+        () => toTimestampMs(timelineStartEnd.start),
+        [timelineStartEnd.start],
+    );
+    const timelineRangeEndMs = useMemo(
+        () => toTimestampMs(timelineStartEnd.end),
+        [timelineStartEnd.end],
+    );
     const latestCanvasChangeTime = useMemo(() => {
         let latest: number | null = null;
 
@@ -1072,32 +1080,34 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         return latest;
     }, [edges, nodes]);
+    const latestCanvasChangeTimeForLock = useMemo(() => {
+        if (latestCanvasChangeTime === null) return null;
+        return clampTimestampMsToRange(
+            latestCanvasChangeTime,
+            timelineRangeStartMs,
+            timelineRangeEndMs,
+        );
+    }, [latestCanvasChangeTime, timelineRangeEndMs, timelineRangeStartMs]);
     const isHistoricalPlayback = useMemo(() => {
         // Only lock while explicitly inspecting a historical playback point.
         if (playbackAtTime === null) return false;
-        if (latestCanvasChangeTime === null) return false;
-        return playbackAtTime < latestCanvasChangeTime;
-    }, [latestCanvasChangeTime, playbackAtTime]);
+        if (latestCanvasChangeTimeForLock === null) return false;
+        return playbackAtTime < latestCanvasChangeTimeForLock;
+    }, [latestCanvasChangeTimeForLock, playbackAtTime]);
     const interactionLocked = reviewOnly || isHistoricalPlayback;
-    const timelineRangeStartMs = useMemo(
-        () => toTimestampMs(timelineStartEnd.start),
-        [timelineStartEnd.start],
-    );
-    const timelineRangeEndMs = useMemo(
-        () => toTimestampMs(timelineStartEnd.end),
-        [timelineStartEnd.end],
-    );
     const resolveActionTimestamp = useCallback(() => {
         if (playbackAt) {
             const parsed = new Date(playbackAt);
             if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
         }
-        const clampedNowMs = clampTimestampMsToRange(
-            Date.now(),
-            timelineRangeStartMs,
-            timelineRangeEndMs,
-        );
-        return new Date(clampedNowMs).toISOString();
+        const nowMs = Date.now();
+        if (timelineRangeStartMs === null || timelineRangeEndMs === null) {
+            return new Date(nowMs).toISOString();
+        }
+        const minMs = Math.min(timelineRangeStartMs, timelineRangeEndMs);
+        const maxMs = Math.max(timelineRangeStartMs, timelineRangeEndMs);
+        const defaultMs = (nowMs < minMs || nowMs > maxMs) ? minMs : nowMs;
+        return new Date(defaultMs).toISOString();
     }, [playbackAt, timelineRangeEndMs, timelineRangeStartMs]);
     const timelineContextNodes = useMemo(() => {
         if (playbackAtTime === null) {
@@ -3604,7 +3614,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const nextNodes: nodeType[] = [];
 
         for (const node of nodes) {
-            if (!knowledgeNodeIds.has(node.id)) {
+            const shouldProcessNode = knowledgeNodeIds.has(node.id) || direction === "after";
+            if (!shouldProcessNode) {
                 nextNodes.push(node);
                 continue;
             }
@@ -3781,7 +3792,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const relatedToKnowledge =
                 knowledgeNodeIds.has(edge.source) ||
                 knowledgeNodeIds.has(edge.target);
-            if (!relatedToKnowledge) {
+            if (!relatedToKnowledge && direction === "before") {
                 if (!nextNodeIdSet.has(edge.source) || !nextNodeIdSet.has(edge.target)) {
                     continue;
                 }

@@ -1537,7 +1537,7 @@ export function useTimelineChart({
             const timelineDomainEnd = parsed.domain[1];
             const defaultPlaybackDate = today < timelineDomainStart
                 ? timelineDomainStart
-                : (today > timelineDomainEnd ? timelineDomainEnd : today);
+                : (today > timelineDomainEnd ? timelineDomainStart : today);
             const playbackCandidate = playbackAt ? toDate(playbackAt) : defaultPlaybackDate;
             const clampedPlaybackDate = new Date(
                 Math.min(timelineDomainEnd.getTime(), Math.max(timelineDomainStart.getTime(), playbackCandidate.getTime())),
