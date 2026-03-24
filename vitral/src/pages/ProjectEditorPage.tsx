@@ -217,6 +217,26 @@ function toTimestampMs(value: unknown): number | null {
     return null;
 }
 
+function latestHistoryEntryTimestamp(history: NodeHistoryEntry[]): number | null {
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+        const timestamp = toTimestampMs(history[index]?.at);
+        if (timestamp !== null) return timestamp;
+    }
+    return null;
+}
+
+function hashFold(seed: number, value: unknown): number {
+    const text = typeof value === "string"
+        ? value
+        : (value === null || value === undefined ? "" : String(value));
+    let hash = seed >>> 0;
+    for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+}
+
 type NodeHistoryEntry = {
     at?: unknown;
     kind?: unknown;
@@ -1015,22 +1035,24 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (!playbackAt) return null;
         return toTimestampMs(playbackAt);
     }, [playbackAt]);
-    const effectivePlaybackTime = playbackAtTime ?? Date.now();
+    const effectivePlaybackTime = playbackAtTime ?? Number.POSITIVE_INFINITY;
     const latestCanvasChangeTime = useMemo(() => {
         let latest: number | null = null;
 
         const addCandidate = (value: unknown) => {
-            const timestamp = toTimestampMs(value);
+            const timestamp = typeof value === "number" && Number.isFinite(value)
+                ? value
+                : toTimestampMs(value);
             if (timestamp === null) return;
             latest = latest === null ? timestamp : Math.max(latest, timestamp);
         };
 
         for (const node of nodes) {
-            addCandidate((node.data as Record<string, unknown>)?.createdAt);
+            const nodeData = (node.data ?? {}) as Record<string, unknown>;
+            addCandidate(nodeData.createdAt);
+            addCandidate(nodeData.deletedAt);
             const dataRecord = (node.data ?? {}) as Record<string, unknown>;
-            for (const entry of nodeHistoryFrom(dataRecord)) {
-                addCandidate(entry.at);
-            }
+            addCandidate(latestHistoryEntryTimestamp(nodeHistoryFrom(dataRecord)));
         }
         for (const edge of edges) {
             addCandidate((edge.data as Record<string, unknown> | undefined)?.createdAt);
@@ -1054,6 +1076,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return new Date().toISOString();
     }, [playbackAt]);
     const timelineContextNodes = useMemo(() => {
+        if (playbackAtTime === null) {
+            return nodes.filter((node) => {
+                const deletedAt = toTimestampMs((node.data as Record<string, unknown>)?.deletedAt);
+                return deletedAt === null;
+            });
+        }
+
         const cutoffTime = effectivePlaybackTime;
         return nodes
             .filter((node) => {
@@ -1064,11 +1093,22 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 return true;
             })
             .map((node) => resolveNodeAtPlayback(node, cutoffTime));
-    }, [effectivePlaybackTime, nodes]);
+    }, [effectivePlaybackTime, nodes, playbackAtTime]);
     const timelineContextEdges = useMemo(() => {
-        const cutoffTime = effectivePlaybackTime;
         const visibleNodeIds = new Set(timelineContextNodes.map((node) => node.id));
 
+        if (playbackAtTime === null) {
+            return edges.filter((edge) => {
+                if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) {
+                    return false;
+                }
+                const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
+                const deletedAt = toTimestampMs(edgeData.deletedAt);
+                return deletedAt === null;
+            });
+        }
+
+        const cutoffTime = effectivePlaybackTime;
         return edges.filter((edge) => {
             if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) {
                 return false;
@@ -1085,43 +1125,47 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             }
             return true;
         });
-    }, [edges, effectivePlaybackTime, timelineContextNodes]);
+    }, [edges, effectivePlaybackTime, playbackAtTime, timelineContextNodes]);
     const knowledgeProvenanceTriggerKey = useMemo(() => {
-        const nodeParts = nodes
-            .map((node) => {
-                const nodeData = (node.data ?? {}) as Record<string, unknown>;
-                const label = normalizeNodeLabel(String(nodeData.label ?? ""));
-                const titleValue = typeof nodeData.title === "string" ? nodeData.title : "";
-                const descriptionValue = typeof nodeData.description === "string" ? nodeData.description : "";
-                const relevantValue = nodeData.relevant === false ? "0" : "1";
-                const parentValue = typeof node.parentId === "string" ? node.parentId : "";
-                const createdAtValue = typeof nodeData.createdAt === "string" ? nodeData.createdAt : "";
-                const deletedAtValue = typeof nodeData.deletedAt === "string" ? nodeData.deletedAt : "";
-                return `${node.id}|${label}|${titleValue}|${descriptionValue}|${relevantValue}|${parentValue}|${createdAtValue}|${deletedAtValue}`;
-            })
-            .sort();
-        const edgeParts = edges
-            .map((edge) => {
-                const edgeData = (edge.data ?? {}) as Record<string, unknown>;
-                const labelValue = typeof edgeData.label === "string"
+        let hash = 2166136261;
+
+        for (const node of nodes) {
+            const nodeData = (node.data ?? {}) as Record<string, unknown>;
+            hash = hashFold(hash, node.id);
+            hash = hashFold(hash, node.parentId ?? "");
+            hash = hashFold(hash, normalizeNodeLabel(String(nodeData.label ?? "")));
+            hash = hashFold(hash, typeof nodeData.title === "string" ? nodeData.title : "");
+            hash = hashFold(hash, nodeData.relevant === false ? "0" : "1");
+            hash = hashFold(hash, nodeData.createdAt);
+            hash = hashFold(hash, nodeData.deletedAt);
+        }
+
+        for (const edge of edges) {
+            const edgeData = (edge.data ?? {}) as Record<string, unknown>;
+            hash = hashFold(hash, edge.id);
+            hash = hashFold(hash, edge.source);
+            hash = hashFold(hash, edge.target);
+            hash = hashFold(
+                hash,
+                typeof edgeData.label === "string"
                     ? edgeData.label
-                    : (typeof edge.label === "string" ? edge.label : "");
-                const sourceLabel = typeof edgeData.from === "string" ? edgeData.from : "";
-                const targetLabel = typeof edgeData.to === "string" ? edgeData.to : "";
-                const createdAtValue = typeof edgeData.createdAt === "string" ? edgeData.createdAt : "";
-                const deletedAtValue = typeof edgeData.deletedAt === "string" ? edgeData.deletedAt : "";
-                return `${edge.id}|${edge.source}|${edge.target}|${labelValue}|${sourceLabel}|${targetLabel}|${createdAtValue}|${deletedAtValue}`;
-            })
-            .sort();
-        const blueprintParts = blueprintEvents
-            .map((eventData) => `${eventData.id}|${eventData.componentNodeId ?? ""}|${eventData.name ?? ""}|${eventData.occurredAt}`)
-            .sort();
-        return [
-            nodeParts.join("~"),
-            edgeParts.join("~"),
-            blueprintParts.join("~"),
-        ].join("||");
-    }, [blueprintEvents, edges, nodes]);
+                    : (typeof edge.label === "string" ? edge.label : ""),
+            );
+            hash = hashFold(hash, edgeData.from);
+            hash = hashFold(hash, edgeData.to);
+            hash = hashFold(hash, edgeData.createdAt);
+            hash = hashFold(hash, edgeData.deletedAt);
+        }
+
+        for (const eventData of blueprintEvents) {
+            hash = hashFold(hash, eventData.id);
+            hash = hashFold(hash, eventData.componentNodeId ?? "");
+            hash = hashFold(hash, eventData.name ?? "");
+            hash = hashFold(hash, eventData.occurredAt);
+        }
+
+        return `${nodes.length}|${edges.length}|${blueprintEvents.length}|${latestCanvasChangeTime ?? 0}|${hash.toString(16)}`;
+    }, [blueprintEvents, edges, latestCanvasChangeTime, nodes]);
     const lastKnowledgeProvenanceKeyRef = useRef<string>("");
     const lastKnowledgeProvenanceRequestKeyRef = useRef<string>("");
     const previousKnowledgeSyncStatusRef = useRef<string>(status);

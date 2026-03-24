@@ -45,6 +45,17 @@ function nodeLabel(node: nodeType): string {
     return String((node.data as Record<string, unknown>)?.label ?? "").toLowerCase();
 }
 
+function nodeDeletedAtTimestamp(node: nodeType): number | null {
+    const deletedAt = (node.data as Record<string, unknown>)?.deletedAt;
+    if (typeof deletedAt !== "string" || deletedAt.trim() === "") return null;
+    const parsed = new Date(deletedAt).getTime();
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+function isNodeActive(node: nodeType): boolean {
+    return nodeDeletedAtTimestamp(node) === null;
+}
+
 function nodeSize(node: nodeType): { width: number; height: number } {
     const style = node.style as Record<string, unknown> | undefined;
     const fallback = nodeLabel(node) === "blueprint_component" ? 112 : 120;
@@ -234,6 +245,7 @@ function resizeSystemBlueprintGroups(nodes: nodeType[]): void {
     const childrenByParent = new Map<string, nodeType[]>();
 
     for (const node of nodes) {
+        if (!isNodeActive(node)) continue;
         if (!node.parentId) continue;
         if (!childrenByParent.has(node.parentId)) {
             childrenByParent.set(node.parentId, []);
@@ -257,6 +269,7 @@ function resizeSystemBlueprintGroups(nodes: nodeType[]): void {
 
     const groups = nodes
         .filter((node) => {
+            if (!isNodeActive(node)) return false;
             if (nodeLabel(node) !== "blueprint_group") return false;
             const data = node.data as Record<string, unknown>;
             return typeof data.blueprintFileName === "string" && data.blueprintFileName.trim() !== "";
@@ -515,6 +528,14 @@ const flowSlice = createSlice({
                 position: nextPosition,
                 data: nextData as nodeType["data"],
             };
+
+            const updatedNode = state.nodes[index];
+            const existingWasBlueprintScoped = nodeLabel(existing) === "blueprint_group" || nodeLabel(existing) === "blueprint_component";
+            const updatedIsBlueprintScoped = nodeLabel(updatedNode) === "blueprint_group" || nodeLabel(updatedNode) === "blueprint_component";
+            const belongsToBlueprintParent = typeof existing.parentId === "string" || typeof updatedNode.parentId === "string";
+            if ((dataChanged || positionChanged) && (existingWasBlueprintScoped || updatedIsBlueprintScoped || belongsToBlueprintParent)) {
+                resizeSystemBlueprintGroups(state.nodes);
+            }
         },
         removeNode: (state, action) => {
             state.nodes = state.nodes.filter(n => n.id !== action.payload);
