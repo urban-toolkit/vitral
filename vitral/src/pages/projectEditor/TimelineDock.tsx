@@ -33,6 +33,7 @@ type TimelineDockProps = {
     knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];
     playbackAt?: Date | string | null;
     onPlaybackAtChange?: (value: string | null) => void;
+    onKnowledgeEventNavigate?: (event: KnowledgeBaseEvent) => void;
     onClearKnowledgePreviousEdits?: (cutoffIso?: string) => void;
     onClearKnowledgeNextEdits?: (cutoffIso?: string) => void;
     designStudyEvents: DesignStudyEvent[];
@@ -66,6 +67,7 @@ export const TimelineDock = memo(function TimelineDock({
     knowledgeBlueprintLinks = [],
     playbackAt = null,
     onPlaybackAtChange,
+    onKnowledgeEventNavigate,
     onClearKnowledgePreviousEdits,
     onClearKnowledgeNextEdits,
     designStudyEvents,
@@ -138,6 +140,7 @@ export const TimelineDock = memo(function TimelineDock({
                     knowledgeBlueprintLinks={knowledgeBlueprintLinks}
                     playbackAt={playbackAt}
                     onPlaybackAtChange={onPlaybackAtChange}
+                    onKnowledgeEventNavigate={onKnowledgeEventNavigate}
                     onClearKnowledgePreviousEdits={onClearKnowledgePreviousEdits}
                     onClearKnowledgeNextEdits={onClearKnowledgeNextEdits}
                     connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}

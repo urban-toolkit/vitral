@@ -127,6 +127,7 @@ export type TimelineProps = {
   knowledgeBlueprintLinks?: KnowledgeBlueprintLink[];
   playbackAt?: Date | string | null;
   onPlaybackAtChange?: (value: string | null) => void;
+  onKnowledgeEventNavigate?: (event: KnowledgeBaseEvent) => void;
   onClearKnowledgePreviousEdits?: (cutoffIso?: string) => void;
   onClearKnowledgeNextEdits?: (cutoffIso?: string) => void;
   connectedBlueprintComponentNodeIds?: string[];

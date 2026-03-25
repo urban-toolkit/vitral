@@ -206,6 +206,7 @@ export const Timeline = ({
 	knowledgeBlueprintLinks = [],
 	playbackAt = null,
 	onPlaybackAtChange,
+	onKnowledgeEventNavigate,
 	onClearKnowledgePreviousEdits,
 	onClearKnowledgeNextEdits,
 	connectedBlueprintComponentNodeIds = [],
@@ -285,6 +286,10 @@ export const Timeline = ({
 		x: number;
 		y: number;
 		key: "designStudyEvent" | "subStage" | "codebaseSubtrack" | "knowledgeSubtrack";
+		value: string;
+	} | null>(null);
+	const [milestoneTitleEdit, setMilestoneTitleEdit] = useState<{
+		id: string;
 		value: string;
 	} | null>(null);
 
@@ -508,6 +513,7 @@ export const Timeline = ({
 		systemScreenshotMarkers,
 		playbackAt,
 		onPlaybackAtChange,
+		onKnowledgeEventNavigate,
 		pendingBlueprintLinkEventId,
 		hoveredCodebaseFilePath,
 		highlightedCodebaseFilePaths,
@@ -766,6 +772,59 @@ export const Timeline = ({
 		}
 	};
 
+	const commitMilestoneTitleEdit = useCallback(() => {
+		if (!milestoneTitleEdit) return;
+		if (readOnly) {
+			setMilestoneTitleEdit(null);
+			return;
+		}
+
+		const nextName = milestoneTitleEdit.value.trim();
+		if (!nextName) {
+			setMilestoneTitleEdit(null);
+			return;
+		}
+
+		const eventToUpdate = parsed.ds.find((eventData) => eventData.id === milestoneTitleEdit.id);
+		if (!eventToUpdate) {
+			setMilestoneTitleEdit(null);
+			return;
+		}
+
+		dispatch(
+			updateDesignStudyEvent({
+				...eventToUpdate,
+				occurredAt: fromDate(eventToUpdate.date),
+				name: nextName,
+			})
+		);
+
+		setSelectedEvent((previous) => {
+			if (!previous || previous.kind !== "designStudy") return previous;
+			const previousEvent = previous.event as DesignStudyEvent;
+			if (previousEvent.id !== milestoneTitleEdit.id) return previous;
+			return {
+				...previous,
+				event: {
+					...previousEvent,
+					name: nextName,
+				},
+			};
+		});
+
+		setMilestoneTitleEdit(null);
+	}, [dispatch, milestoneTitleEdit, parsed.ds, readOnly]);
+
+	useEffect(() => {
+		if (!milestoneTitleEdit) return;
+		const selectedDesignStudyEventId = selectedEvent?.kind === "designStudy"
+			? (selectedEvent.event as DesignStudyEvent).id
+			: null;
+		if (selectedDesignStudyEventId !== milestoneTitleEdit.id) {
+			setMilestoneTitleEdit(null);
+		}
+	}, [milestoneTitleEdit, selectedEvent]);
+
 	const visualEvolutionFloatingStyle = useMemo(() => {
 		if (!visualEvolutionPanel || !containerRef.current || typeof window === "undefined") {
 			return null;
@@ -839,9 +898,42 @@ export const Timeline = ({
 			return (
 				<div className={classes.codeBaseTooltip}>
 					<div className={classes.tooltipHeader}>
-						<p style={{ fontWeight: "bold", fontSize: "var(--font-size-md)" }}>
-							{event.name || "Milestone"}
-						</p>
+						{milestoneTitleEdit?.id === event.id ? (
+							<input
+								type="text"
+								value={milestoneTitleEdit.value}
+								autoFocus
+								onClick={(clickEvent) => clickEvent.stopPropagation()}
+								onChange={(changeEvent) => {
+									setMilestoneTitleEdit((previous) =>
+										previous ? { ...previous, value: changeEvent.target.value } : previous
+									);
+								}}
+								onBlur={commitMilestoneTitleEdit}
+								onKeyDown={(keyEvent) => {
+									if (keyEvent.key === "Enter") {
+										commitMilestoneTitleEdit();
+									}
+									if (keyEvent.key === "Escape") {
+										setMilestoneTitleEdit(null);
+									}
+								}}
+							/>
+						) : (
+							<p
+								style={{ fontWeight: "bold", fontSize: "var(--font-size-md)", cursor: readOnly ? "default" : "text" }}
+								onClick={(clickEvent) => {
+									clickEvent.stopPropagation();
+									if (readOnly) return;
+									setMilestoneTitleEdit({
+										id: event.id,
+										value: event.name || "Milestone",
+									});
+								}}
+							>
+								{event.name || "Milestone"}
+							</p>
+						)}
 					</div>
 					<p style={{ fontSize: "var(--font-size-xs)", color: "var(--subtitle-color)" }}>
 						{formatDate(event.occurredAt)}
@@ -874,7 +966,7 @@ export const Timeline = ({
 		}
 
 		return null;
-	}, [selectedEvent]);
+	}, [commitMilestoneTitleEdit, milestoneTitleEdit, readOnly, selectedEvent]);
 
 	return (
 		<>
@@ -1114,9 +1206,10 @@ export const Timeline = ({
 				style={{
 					left: tooltipPosition.x,
 					top: tooltipPosition.y,
-					pointerEvents: "none",
+					pointerEvents: selectedEvent?.kind === "designStudy" ? "auto" : "none",
 					...(showTooltip ? { display: "block" } : { display: "none" }),
 				}}
+				onClick={(event) => event.stopPropagation()}
 			>
 				{tooltipInner}
 			</div>

@@ -3443,6 +3443,45 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         navigate("/projects");
     }, [navigate]);
 
+    const handleKnowledgeEventNavigate = useCallback((eventData: KnowledgeBaseEvent) => {
+        const candidateIds: string[] = [];
+        const treeId = typeof eventData.treeId === "string" ? eventData.treeId.trim() : "";
+        if (treeId) candidateIds.push(treeId);
+
+        const cardEvents = Array.isArray(eventData.events) ? eventData.events : [];
+        for (const cardEvent of cardEvents) {
+            const nodeId = typeof cardEvent.nodeId === "string" ? cardEvent.nodeId.trim() : "";
+            if (!nodeId) continue;
+            candidateIds.push(nodeId);
+        }
+
+        if (candidateIds.length === 0) return;
+
+        const existingNodeIds = new Set(nodes.map((node) => String(node.id ?? "")));
+        const targetNodeId = candidateIds.find((nodeId) => existingNodeIds.has(nodeId));
+        if (!targetNodeId) return;
+
+        const focusNode = () => {
+            void fitView({
+                nodes: [{ id: targetNodeId }],
+                padding: 0.28,
+                duration: 360,
+            });
+        };
+
+        if (viewMode !== "explore") {
+            setViewMode("explore");
+            window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                    focusNode();
+                });
+            });
+            return;
+        }
+
+        focusNode();
+    }, [fitView, nodes, viewMode]);
+
     const handleFreeInputClicked = useCallback(() => {
         if (interactionLocked) return;
         setCursorMode("text");
@@ -4132,6 +4171,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 knowledgeBlueprintLinks={filteredKnowledgeBlueprintLinks}
                 playbackAt={playbackAt}
                 onPlaybackAtChange={handlePlaybackAtChange}
+                onKnowledgeEventNavigate={handleKnowledgeEventNavigate}
                 onClearKnowledgePreviousEdits={handleClearKnowledgePreviousEdits}
                 onClearKnowledgeNextEdits={handleClearKnowledgeNextEdits}
                 designStudyEvents={designStudyEvents}
