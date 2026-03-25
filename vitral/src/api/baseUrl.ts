@@ -17,14 +17,16 @@ export function resolveAppBasePath(): string {
 export function resolveApiBaseUrl(): string {
     const configured = import.meta.env.VITE_BACKEND_URL;
 
-    if (typeof configured === "string" && configured.trim() !== "") {
-        return trimTrailingSlash(configured.trim());
-    }
-
     const appBasePath = resolveAppBasePath();
 
     if (import.meta.env.NODE_ENV == "development") {
+        // Always route dev API requests through Vite proxy to avoid browser-side
+        // localhost resolution mismatches across host/container/remote setups.
         return "/api";
+    }
+
+    if (typeof configured === "string" && configured.trim() !== "") {
+        return trimTrailingSlash(configured.trim());
     }
 
     // In prod with BASE_URL="/vitral/" this becomes "/vitral/api"

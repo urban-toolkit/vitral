@@ -23,6 +23,7 @@ import classes from "./Timeline.module.css";
 import type {
     BlueprintEventConnection,
     CodebaseSubtrack,
+    KnowledgeBaseEvent,
     KnowledgeBlueprintLink,
     KnowledgeCrossTreeConnection,
     KnowledgeTreePill,
@@ -145,6 +146,7 @@ type UseTimelineChartParams = {
     systemScreenshotMarkers: SystemScreenshotMarker[];
     playbackAt: Date | string | null;
     onPlaybackAtChange?: (value: string | null) => void;
+    onKnowledgeEventNavigate?: (event: KnowledgeBaseEvent) => void;
     pendingBlueprintLinkEventId: string | null;
     hoveredCodebaseFilePath: string | null;
     highlightedCodebaseFilePaths: string[];
@@ -213,6 +215,7 @@ export function useTimelineChart({
     systemScreenshotMarkers,
     playbackAt,
     onPlaybackAtChange,
+    onKnowledgeEventNavigate,
     pendingBlueprintLinkEventId,
     hoveredCodebaseFilePath,
     highlightedCodebaseFilePaths,
@@ -752,6 +755,7 @@ export function useTimelineChart({
             .attr("x", timelineLeft + innerW - 14)
             .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
+            .style("display", readOnly ? "none" : "")
             .style("cursor", readOnly ? "default" : "pointer")
             .text("X")
             .on("click", (event: any, row: any) => {
@@ -1016,6 +1020,7 @@ export function useTimelineChart({
             .attr("x", timelineLeft + innerW - 14)
             .attr("y", (row: any) => row.top + 16)
             .attr("data-timeline-interactive", "true")
+            .style("display", readOnly ? "none" : "")
             .style("cursor", readOnly ? "default" : "pointer")
             .text("X")
             .on("click", (event: any, row: any) => {
@@ -1254,6 +1259,7 @@ export function useTimelineChart({
                         .attr("class", classes.subStageDelete)
                         .attr("x", x(stageData.end) - 20)
                         .attr("y", margin.top + 58)
+                        .style("display", readOnly ? "none" : "")
                         .text("X")
                         .style("cursor", readOnly ? "default" : "pointer")
                         .on("click", (event: any, stage: any) => {
@@ -1408,6 +1414,7 @@ export function useTimelineChart({
                 .attr("class", classes.subStageDelete)
                 .attr("x", (d: any) => x(d.end) - 16)
                 .attr("y", (d: any) => laneY[d.lane as LaneType] + 18)
+                .style("display", readOnly ? "none" : "")
                 .text("X")
                 .style("cursor", readOnly ? "default" : "pointer")
                 .on("click", (event: any, subStageData: any) => {
@@ -1660,17 +1667,22 @@ export function useTimelineChart({
                 const lines = events.map((eventData: any) =>
                     `${eventData.eventType}: ${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
                 );
+                const selectedKnowledgeEvent: KnowledgeBaseEvent = {
+                    id: `knowledge-pill:${pillData.treeId}`,
+                    occurredAt: pillData.occurredAt,
+                    kind: "knowledge",
+                    subtype: "tree",
+                    label: pillData.treeTitle || "Knowledge tree",
+                    description: lines.join("\n"),
+                    treeId: typeof pillData.treeId === "string" ? pillData.treeId : undefined,
+                    treeTitle: typeof pillData.treeTitle === "string" ? pillData.treeTitle : undefined,
+                    events,
+                };
                 setSelectedEvent({
                     kind: "knowledge",
-                    event: {
-                        id: `knowledge-pill:${pillData.treeId}`,
-                        occurredAt: pillData.occurredAt,
-                        kind: "knowledge",
-                        subtype: "tree",
-                        label: pillData.treeTitle || "Knowledge tree",
-                        description: lines.join("\n"),
-                    },
+                    event: selectedKnowledgeEvent,
                 });
+                onKnowledgeEventNavigate?.(selectedKnowledgeEvent);
                 setTooltipPosition({ x: clampedX, y: clampedY });
                 setShowTooltip(true);
             };
@@ -1798,6 +1810,8 @@ export function useTimelineChart({
                     .attr("data-timeline-interactive", "true")
                     .style("cursor", "pointer")
                     .on("click", (event: any, eventData: any) => {
+                        event.preventDefault();
+                        event.stopPropagation();
                         hideKnowledgePillTooltip();
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
@@ -1805,17 +1819,22 @@ export function useTimelineChart({
                         const clampedX = Math.min(Math.max(event.clientX, 0), window.innerWidth - 300);
                         const clampedY =
                             Math.min(Math.max(event.clientY, 0), window.innerHeight - 160) - heightOffset;
-                        setSelectedEvent({
-                            kind: "knowledge",
-                            event: {
-                                id: eventData.id,
+                        const selectedKnowledgeEvent: KnowledgeBaseEvent = {
+                            id: eventData.id,
                             occurredAt: eventData.occurredAt,
                             kind: "knowledge",
                             subtype: eventData.eventType,
                             label: `${eventData.eventType.toUpperCase()} - ${eventData.cardTitle || "Untitled"}`,
                             description: `Card label: ${eventData.cardLabel}\nCard title: ${eventData.cardTitle || "Untitled"}\n${eventData.cardDescription || ""}`.trim(),
-                        },
-                    });
+                            treeId: typeof pillData.treeId === "string" ? pillData.treeId : undefined,
+                            treeTitle: typeof pillData.treeTitle === "string" ? pillData.treeTitle : undefined,
+                            events: [eventData],
+                        };
+                        setSelectedEvent({
+                            kind: "knowledge",
+                            event: selectedKnowledgeEvent,
+                        });
+                        onKnowledgeEventNavigate?.(selectedKnowledgeEvent);
                         setTooltipPosition({ x: clampedX, y: clampedY });
                         setShowTooltip(true);
                     });
@@ -2291,7 +2310,9 @@ export function useTimelineChart({
                         dispatch(setHoveredBlueprintComponentNodeId(null));
                     })
                     .on("click", (event: any, eventData: any) => {
-                        if (kind !== "codebase" && kind !== "blueprint" && kind !== "designStudy") return;
+                        if (kind !== "codebase" && kind !== "blueprint" && kind !== "designStudy" && kind !== "knowledge") return;
+                        event.preventDefault();
+                        event.stopPropagation();
                         hideKnowledgePillTooltip();
 
                         const heightOffset = containerRef.current
@@ -2311,6 +2332,9 @@ export function useTimelineChart({
                         }
 
                         setSelectedEvent({ kind, event: eventData });
+                        if (kind === "knowledge") {
+                            onKnowledgeEventNavigate?.(eventData as KnowledgeBaseEvent);
+                        }
                         setTooltipPosition({ x: clampedX, y: clampedY });
                         setShowTooltip(true);
                     })

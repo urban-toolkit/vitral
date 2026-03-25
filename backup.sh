@@ -1,0 +1,1 @@
+ docker compose exec -T postgres sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "../backups/${TS}_vitral.dump"

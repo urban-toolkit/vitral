@@ -1,11 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
 import { PutObjectCommand, HeadObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "node:crypto";
-import type { Readable } from "node:stream";
+import { once } from "node:events";
+import { finished } from "node:stream/promises";
+import { PassThrough, type Readable, type Writable } from "node:stream";
 import path from "node:path";
 import OpenAI from "openai";
 import { fileURLToPath } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
+import { createGzip } from "node:zlib";
 import { streamToBuffer, streamToString } from "../utils/streams.js";
 import { safeFilename } from "../utils/files.js";
 import { computeNodeEmbeddingDelta, createNodeEmbeddingQueue } from "../services/nodeEmbeddings.js";
@@ -17,7 +20,12 @@ import {
     type ProvenanceConnection,
     type ProvenanceSnapshot,
 } from "../services/canvasProvenance.js";
-import { decodeProjectVi, encodeProjectVi, type ProjectViBundleV1 } from "../utils/projectVi.js";
+import {
+    createProjectViHeader,
+    decodeProjectVi,
+    resolveProjectViGzipLevel,
+    type ProjectViBundleV1,
+} from "../utils/projectVi.js";
 
 type SaveBody = {
     title?: string;
@@ -68,6 +76,38 @@ type CompareCardsSimilarityBody = {
 const TEXT_EXTENSIONS = new Set([
     "txt", "json", "ipynb", "csv", "py", "js", "ts", "tsx", "jsx", "html", "css", "md",
 ]);
+const DUPLICATE_FILES_INSERT_CHUNK_SIZE = 250;
+const DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE = 50;
+const DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY = 4;
+const MAX_VI_EXPORT_FILE_FETCH_CONCURRENCY = 16;
+const EXPORT_REVISIONS_BATCH_SIZE = 50;
+const EXPORT_EMBEDDINGS_BATCH_SIZE = 250;
+const EXPORT_GITHUB_EVENTS_BATCH_SIZE = 250;
+const DUPLICATE_JOB_RETENTION_MS = 60 * 60 * 1000;
+const MAX_DUPLICATE_JOBS = 500;
+const DUPLICATE_JOB_ERROR_MESSAGE = "Failed to duplicate project.";
+
+type DuplicatedDocumentSummary = {
+    id: string;
+    title: string;
+    description: string | null;
+    version: number;
+    updated_at: string;
+    review_only: boolean;
+};
+
+type DuplicateJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+type DuplicateJobRecord = {
+    jobId: string;
+    sourceDocId: string;
+    status: DuplicateJobStatus;
+    createdAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    result: DuplicatedDocumentSummary | null;
+    error: string | null;
+};
 
 type SetupTemplateDefinition = {
     id?: unknown;
@@ -259,50 +299,125 @@ function arraysEqual(a: string[], b: string[]): boolean {
     return true;
 }
 
+function chunkItems<T>(items: T[], chunkSize: number): T[][] {
+    if (items.length === 0) return [];
+    const normalizedChunkSize = Math.max(1, Math.trunc(chunkSize));
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += normalizedChunkSize) {
+        chunks.push(items.slice(index, index + normalizedChunkSize));
+    }
+    return chunks;
+}
+
+async function mapWithConcurrencyLimit<T, R>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+    if (items.length === 0) return [];
+    const normalizedConcurrency = Math.max(1, Math.min(items.length, Math.trunc(concurrency)));
+    const results: R[] = new Array(items.length);
+    let nextIndex = 0;
+
+    const workers = Array.from({ length: normalizedConcurrency }, async () => {
+        while (true) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            if (currentIndex >= items.length) return;
+            results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+        }
+    });
+
+    await Promise.all(workers);
+    return results;
+}
+
+async function writeChunk(writable: Writable, chunk: string | Buffer): Promise<void> {
+    if (writable.write(chunk)) return;
+    await once(writable, "drain");
+}
+
+function pruneDuplicateJobs(duplicateJobs: Map<string, DuplicateJobRecord>): void {
+    const now = Date.now();
+    for (const [jobId, job] of duplicateJobs) {
+        const finishedAtMs = job.finishedAt ? Date.parse(job.finishedAt) : null;
+        if (finishedAtMs !== null && Number.isFinite(finishedAtMs)) {
+            if (finishedAtMs + DUPLICATE_JOB_RETENTION_MS < now) {
+                duplicateJobs.delete(jobId);
+            }
+        }
+    }
+
+    while (duplicateJobs.size > MAX_DUPLICATE_JOBS) {
+        const oldestKey = duplicateJobs.keys().next().value as string | undefined;
+        if (!oldestKey) break;
+        duplicateJobs.delete(oldestKey);
+    }
+}
+
+function createDuplicateJob(sourceDocId: string): DuplicateJobRecord {
+    return {
+        jobId: crypto.randomUUID(),
+        sourceDocId,
+        status: "queued",
+        createdAt: new Date().toISOString(),
+        startedAt: null,
+        finishedAt: null,
+        result: null,
+        error: null,
+    };
+}
+
+function remapFileReferencesInValue(value: unknown, fileIdMap: Map<string, string>): unknown {
+    if (Array.isArray(value)) {
+        let changed = false;
+        const nextItems = value.map((item) => {
+            const nextItem = remapFileReferencesInValue(item, fileIdMap);
+            if (nextItem !== item) changed = true;
+            return nextItem;
+        });
+        return changed ? nextItems : value;
+    }
+
+    if (!isRecord(value)) return value;
+
+    let changed = false;
+    const nextValue: Record<string, unknown> = {};
+
+    for (const [key, raw] of Object.entries(value)) {
+        let mapped: unknown = raw;
+
+        if (key === "attachmentIds" && Array.isArray(raw)) {
+            const currentAttachmentIds = raw.filter((entry): entry is string => typeof entry === "string");
+            const nextAttachmentIds = currentAttachmentIds.map((entry) => fileIdMap.get(entry) ?? entry);
+            mapped = arraysEqual(currentAttachmentIds, nextAttachmentIds) ? raw : nextAttachmentIds;
+        } else if ((key === "origin" || key === "fileId") && typeof raw === "string") {
+            mapped = fileIdMap.get(raw) ?? raw;
+        } else {
+            mapped = remapFileReferencesInValue(raw, fileIdMap);
+        }
+
+        if (mapped !== raw) changed = true;
+        nextValue[key] = mapped;
+    }
+
+    return changed ? nextValue : value;
+}
+
 function remapStateFileReferences(state: unknown, fileIdMap: Map<string, string>): unknown {
     if (!isRecord(state)) return state;
     const flow = state.flow;
     if (!isRecord(flow)) return state;
     if (!Array.isArray(flow.nodes)) return state;
 
+    let changed = false;
     const remappedNodes = flow.nodes.map((rawNode) => {
-        if (!isRecord(rawNode)) return rawNode;
-        if (!isRecord(rawNode.data)) return rawNode;
-
-        const nodeData = rawNode.data;
-        let changed = false;
-        const nextData: Record<string, unknown> = { ...nodeData };
-
-        if (Array.isArray(nodeData.attachmentIds)) {
-            const nextAttachmentIds = nodeData.attachmentIds
-                .map((value) => {
-                    if (typeof value !== "string") return null;
-                    return fileIdMap.get(value) ?? value;
-                })
-                .filter((value): value is string => typeof value === "string");
-            const currentAttachmentIds = nodeData.attachmentIds.filter(
-                (value): value is string => typeof value === "string",
-            );
-            if (!arraysEqual(currentAttachmentIds, nextAttachmentIds)) {
-                nextData.attachmentIds = nextAttachmentIds;
-                changed = true;
-            }
-        }
-
-        if (typeof nodeData.origin === "string") {
-            const remappedOrigin = fileIdMap.get(nodeData.origin);
-            if (remappedOrigin && remappedOrigin !== nodeData.origin) {
-                nextData.origin = remappedOrigin;
-                changed = true;
-            }
-        }
-
-        if (!changed) return rawNode;
-        return {
-            ...rawNode,
-            data: nextData,
-        };
+        const remappedNode = remapFileReferencesInValue(rawNode, fileIdMap);
+        if (remappedNode !== rawNode) changed = true;
+        return remappedNode;
     });
+
+    if (!changed) return state;
 
     return {
         ...state,
@@ -2172,12 +2287,445 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         return rows;
     });
 
+    const duplicateJobs = new Map<string, DuplicateJobRecord>();
+
+    const duplicateProjectWithFullFidelity = async (
+        sourceDocId: string,
+        logger: Pick<typeof app.log, "info" | "error">,
+    ): Promise<DuplicatedDocumentSummary> => {
+        const duplicateStartedAt = Date.now();
+        const client = await app.pg.connect();
+        try {
+            await client.query("BEGIN");
+
+            const sourceDocumentResult = await client.query<{
+                id: string;
+                title: string;
+                description: string | null;
+                state: unknown;
+                timeline: unknown;
+                version: number;
+                review_only: boolean;
+                github_owner: string | null;
+                github_repo: string | null;
+                github_default_branch: string | null;
+                github_linked_at: string | null;
+                github_last_synced_at: string | null;
+            }>(
+                `
+                SELECT
+                    id,
+                    title,
+                    description,
+                    state,
+                    timeline,
+                    version,
+                    review_only,
+                    github_owner,
+                    github_repo,
+                    github_default_branch,
+                    github_linked_at,
+                    github_last_synced_at
+                FROM documents
+                WHERE id = $1
+                `,
+                [sourceDocId],
+            );
+            const sourceDocument = sourceDocumentResult.rows[0];
+            if (!sourceDocument) {
+                throw new Error("Document not found");
+            }
+
+            const sourceFilesResult = await client.query<{
+                id: string;
+                name: string;
+                mime_type: string | null;
+                ext: string | null;
+                size_bytes: number | null;
+                sha256: string | null;
+                created_at: string;
+                storage_bucket: string | null;
+                storage_key: string | null;
+            }>(
+                `
+                SELECT
+                    id,
+                    name,
+                    mime_type,
+                    ext,
+                    size_bytes,
+                    sha256,
+                    created_at,
+                    storage_bucket,
+                    storage_key
+                FROM document_files
+                WHERE document_id = $1
+                ORDER BY created_at ASC, id ASC
+                `,
+                [sourceDocId],
+            );
+            const sourceFileCount = sourceFilesResult.rows.length;
+            const sourceTotalFileBytes = sourceFilesResult.rows.reduce(
+                (sum, fileRow) => sum + Math.max(0, fileRow.size_bytes ?? 0),
+                0,
+            );
+
+            const fileIdMap = new Map<string, string>();
+            for (const sourceFile of sourceFilesResult.rows) {
+                fileIdMap.set(sourceFile.id, crypto.randomUUID());
+            }
+
+            const remappedState = remapStateFileReferences(sourceDocument.state, fileIdMap);
+            const sourceTitle = (sourceDocument.title ?? "").trim() || "Untitled";
+            const duplicatedTitle = `${sourceTitle} (copy)`;
+            const sourceVersion = Number.isFinite(sourceDocument.version)
+                ? Math.max(1, Math.trunc(sourceDocument.version))
+                : 1;
+
+            const duplicatedDocumentResult = await client.query<DuplicatedDocumentSummary>(
+                `
+                INSERT INTO documents (
+                    title,
+                    description,
+                    state,
+                    timeline,
+                    version,
+                    review_only,
+                    github_owner,
+                    github_repo,
+                    github_default_branch,
+                    github_linked_at,
+                    github_last_synced_at
+                )
+                VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9, $10::timestamptz, $11::timestamptz)
+                RETURNING id, title, description, version, updated_at, review_only
+                `,
+                [
+                    duplicatedTitle,
+                    sourceDocument.description ?? null,
+                    JSON.stringify(remappedState ?? {}),
+                    JSON.stringify(sourceDocument.timeline ?? {}),
+                    sourceVersion,
+                    sourceDocument.review_only === true,
+                    sourceDocument.github_owner ?? null,
+                    sourceDocument.github_repo ?? null,
+                    sourceDocument.github_default_branch ?? null,
+                    sourceDocument.github_linked_at ?? null,
+                    sourceDocument.github_last_synced_at ?? null,
+                ],
+            );
+            const duplicatedDocument = duplicatedDocumentResult.rows[0];
+            if (!duplicatedDocument) {
+                throw new Error("Failed to create duplicated document.");
+            }
+
+            for (const sourceFileChunk of chunkItems(sourceFilesResult.rows, DUPLICATE_FILES_INSERT_CHUNK_SIZE)) {
+                const placeholders: string[] = [];
+                const values: unknown[] = [];
+
+                for (const sourceFile of sourceFileChunk) {
+                    const nextFileId = fileIdMap.get(sourceFile.id);
+                    if (!nextFileId) continue;
+                    const offset = values.length;
+                    values.push(
+                        nextFileId,
+                        duplicatedDocument.id,
+                        sourceFile.name,
+                        sourceFile.mime_type,
+                        sourceFile.ext,
+                        sourceFile.size_bytes,
+                        sourceFile.sha256,
+                        sourceFile.storage_bucket,
+                        sourceFile.storage_key,
+                        sourceFile.created_at,
+                    );
+                    placeholders.push(
+                        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}::timestamptz)`,
+                    );
+                }
+
+                if (placeholders.length === 0) continue;
+
+                await client.query(
+                    `
+                    INSERT INTO document_files (
+                        id,
+                        document_id,
+                        name,
+                        mime_type,
+                        ext,
+                        size_bytes,
+                        sha256,
+                        storage_bucket,
+                        storage_key,
+                        created_at
+                    )
+                    VALUES ${placeholders.join(",\n")}
+                    `,
+                    values,
+                );
+            }
+
+            const sourceRevisionCountRes = await client.query<{ count: string }>(
+                `
+                SELECT COUNT(*)::text AS count
+                FROM document_state_revisions
+                WHERE document_id = $1
+                `,
+                [sourceDocId],
+            );
+            const sourceRevisionCountRaw = Number(sourceRevisionCountRes.rows[0]?.count ?? 0);
+            const sourceRevisionCount = Number.isFinite(sourceRevisionCountRaw)
+                ? Math.max(0, Math.trunc(sourceRevisionCountRaw))
+                : 0;
+            logger.info({
+                docId: sourceDocId,
+                sourceFileCount,
+                sourceTotalFileBytes,
+                sourceRevisionCount,
+            }, "Starting project duplication.");
+
+            for (let offset = 0; ; ) {
+                const sourceRevisionChunkRes = await client.query<{
+                    version: number;
+                    captured_at: string;
+                    state: unknown;
+                    timeline: unknown;
+                }>(
+                    `
+                    SELECT version, captured_at, state, timeline
+                    FROM document_state_revisions
+                    WHERE document_id = $1
+                    ORDER BY captured_at ASC, version ASC, id ASC
+                    LIMIT $2
+                    OFFSET $3
+                    `,
+                    [sourceDocId, DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE, offset],
+                );
+                const sourceRevisionChunk = sourceRevisionChunkRes.rows;
+                if (sourceRevisionChunk.length === 0) break;
+
+                const placeholders: string[] = [];
+                const values: unknown[] = [];
+
+                for (const sourceRevision of sourceRevisionChunk) {
+                    const remappedRevisionState = remapStateFileReferences(sourceRevision.state, fileIdMap);
+                    const revisionVersion = Number.isFinite(sourceRevision.version)
+                        ? Math.max(1, Math.trunc(sourceRevision.version))
+                        : 1;
+                    const offset = values.length;
+                    values.push(
+                        duplicatedDocument.id,
+                        revisionVersion,
+                        sourceRevision.captured_at,
+                        JSON.stringify(remappedRevisionState ?? {}),
+                        JSON.stringify(sourceRevision.timeline ?? {}),
+                    );
+                    placeholders.push(
+                        `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}::jsonb, $${offset + 5}::jsonb)`,
+                    );
+                }
+
+                if (placeholders.length === 0) continue;
+
+                await client.query(
+                    `
+                    INSERT INTO document_state_revisions (
+                        document_id,
+                        version,
+                        captured_at,
+                        state,
+                        timeline
+                    )
+                    VALUES ${placeholders.join(",\n")}
+                    `,
+                    values,
+                );
+
+                offset += sourceRevisionChunk.length;
+            }
+
+            await client.query(
+                `
+                INSERT INTO document_github_events (
+                    document_id,
+                    repo_owner,
+                    repo_name,
+                    event_type,
+                    event_key,
+                    actor_login,
+                    title,
+                    url,
+                    occurred_at,
+                    issue_number,
+                    pr_number,
+                    commit_sha,
+                    branch_name,
+                    payload,
+                    inserted_at
+                )
+                SELECT
+                    $1::uuid AS document_id,
+                    repo_owner,
+                    repo_name,
+                    event_type,
+                    event_key,
+                    actor_login,
+                    title,
+                    url,
+                    occurred_at,
+                    issue_number,
+                    pr_number,
+                    commit_sha,
+                    branch_name,
+                    payload,
+                    inserted_at
+                FROM document_github_events
+                WHERE document_id = $2::uuid
+                ORDER BY occurred_at ASC, event_key ASC
+                `,
+                [duplicatedDocument.id, sourceDocId],
+            );
+
+            const embeddingTable = await client.query<{ table_name: string | null }>(
+                `
+                SELECT to_regclass('public.document_node_embeddings') AS table_name
+                `,
+            );
+
+            if (embeddingTable.rows[0]?.table_name) {
+                await client.query(
+                    `
+                    INSERT INTO document_node_embeddings (doc_id, node_id, node_text, embedding)
+                    SELECT $1::uuid, node_id, node_text, embedding
+                    FROM document_node_embeddings
+                    WHERE doc_id = $2::uuid
+                    ON CONFLICT (doc_id, node_id) DO UPDATE
+                    SET
+                        node_text = EXCLUDED.node_text,
+                        embedding = EXCLUDED.embedding,
+                        updated_at = now()
+                    `,
+                    [duplicatedDocument.id, sourceDocId],
+                );
+            }
+
+            await client.query("COMMIT");
+            logger.info({
+                sourceDocId,
+                duplicatedDocId: duplicatedDocument.id,
+                elapsedMs: Date.now() - duplicateStartedAt,
+                sourceFileCount,
+                sourceTotalFileBytes,
+                sourceRevisionCount,
+            }, "Project duplication completed.");
+            return duplicatedDocument;
+        } catch (error) {
+            await client.query("ROLLBACK");
+            logger.error({ error, docId: sourceDocId, elapsedMs: Date.now() - duplicateStartedAt }, "Failed to duplicate project.");
+            throw error;
+        } finally {
+            client.release();
+        }
+    };
+
+    const runDuplicateJob = async (jobId: string): Promise<void> => {
+        const job = duplicateJobs.get(jobId);
+        if (!job) return;
+
+        job.status = "running";
+        job.startedAt = new Date().toISOString();
+        job.error = null;
+        job.result = null;
+
+        try {
+            const duplicatedDocument = await duplicateProjectWithFullFidelity(job.sourceDocId, app.log);
+            const current = duplicateJobs.get(jobId);
+            if (!current) return;
+            current.status = "succeeded";
+            current.finishedAt = new Date().toISOString();
+            current.result = duplicatedDocument;
+            current.error = null;
+        } catch (error) {
+            const current = duplicateJobs.get(jobId);
+            if (!current) return;
+            current.status = "failed";
+            current.finishedAt = new Date().toISOString();
+            current.result = null;
+            current.error = error instanceof Error && error.message.trim() !== ""
+                ? error.message
+                : DUPLICATE_JOB_ERROR_MESSAGE;
+        } finally {
+            pruneDuplicateJobs(duplicateJobs);
+        }
+    };
+
+    /**
+     * Start async project duplication with full state/history/assets fidelity.
+     * POST /api/state/:id/duplicate
+     */
+    app.post("/state/:id/duplicate", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        if (!isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document id" });
+        }
+        const exists = await app.pg.query<{ id: string }>(
+            `
+            SELECT id
+            FROM documents
+            WHERE id = $1
+            `,
+            [id],
+        );
+        if (exists.rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        pruneDuplicateJobs(duplicateJobs);
+        for (const existingJob of duplicateJobs.values()) {
+            if (existingJob.sourceDocId !== id) continue;
+            if (existingJob.status === "queued" || existingJob.status === "running") {
+                return reply.status(202).send(existingJob);
+            }
+        }
+
+        const job = createDuplicateJob(id);
+        duplicateJobs.set(job.jobId, job);
+        setImmediate(() => {
+            void runDuplicateJob(job.jobId);
+        });
+        return reply.status(202).send(job);
+    });
+
+    /**
+     * Poll async project duplication status.
+     * GET /api/state/duplicate-jobs/:jobId
+     */
+    app.get("/state/duplicate-jobs/:jobId", async (request, reply) => {
+        const { jobId } = request.params as { jobId: string };
+        if (!isUuid(jobId)) {
+            return reply.status(400).send({ error: "Invalid duplicate job id" });
+        }
+
+        pruneDuplicateJobs(duplicateJobs);
+        const job = duplicateJobs.get(jobId);
+        if (!job) {
+            return reply.status(404).send({ error: "Duplicate job not found" });
+        }
+
+        if (job.status === "queued" || job.status === "running") {
+            reply.header("Retry-After", "1");
+        }
+        return reply.send(job);
+    });
+
     /**
      * Export a project as a portable .vi binary bundle.
      * GET /api/state/:id/export-vi
      */
     app.get("/state/:id/export-vi", async (request, reply) => {
         const { id } = request.params as { id: string };
+        const exportStartedAt = Date.now();
 
         const documentResult = await app.pg.query<{
             id: string;
@@ -2202,32 +2750,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             return reply.status(404).send({ error: "Document not found" });
         }
 
-        const revisionRows = await app.pg.query<{
-            version: number;
-            captured_at: string;
-            state: unknown;
-            timeline: unknown;
-        }>(
+        const revisionCountRes = await app.pg.query<{ count: string }>(
             `
-            SELECT version, captured_at, state, timeline
+            SELECT COUNT(*)::text AS count
             FROM document_state_revisions
             WHERE document_id = $1
-            ORDER BY captured_at ASC, version ASC, id ASC
             `,
             [id],
         );
-
-        const revisions: ProjectViBundleV1["revisions"] = revisionRows.rows.map((row: {
-            version: number;
-            captured_at: string;
-            state: unknown;
-            timeline: unknown;
-        }) => ({
-            version: Number.isFinite(row.version) ? Math.max(1, Math.trunc(row.version)) : 1,
-            capturedAt: new Date(row.captured_at).toISOString(),
-            state: row.state ?? {},
-            timeline: row.timeline ?? {},
-        }));
+        const revisionCountRaw = Number(revisionCountRes.rows[0]?.count ?? 0);
+        const revisionCount = Number.isFinite(revisionCountRaw)
+            ? Math.max(0, Math.trunc(revisionCountRaw))
+            : 0;
 
         const fileRows = await app.pg.query<{
             id: string;
@@ -2257,40 +2791,39 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             `,
             [id],
         );
+        const totalFileBytes = fileRows.rows.reduce(
+            (sum, row) => sum + Math.max(0, row.size_bytes ?? 0),
+            0,
+        );
+        const exportFileFetchConcurrencyRaw = Number(
+            process.env.VI_EXPORT_FILE_FETCH_CONCURRENCY ?? DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY,
+        );
+        const exportFileFetchConcurrency = Number.isFinite(exportFileFetchConcurrencyRaw)
+            ? Math.min(MAX_VI_EXPORT_FILE_FETCH_CONCURRENCY, Math.max(1, Math.trunc(exportFileFetchConcurrencyRaw)))
+            : DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY;
 
-        const files: ProjectViBundleV1["files"] = [];
+        request.log.info({
+            docId: id,
+            revisionCount,
+            fileCount: fileRows.rows.length,
+            totalFileBytes,
+            exportFileFetchConcurrency,
+        }, "Starting project export.");
+
+        const maxTotalFileBytesRaw = Number(process.env.VI_EXPORT_MAX_TOTAL_FILE_BYTES ?? 0);
+        const maxTotalFileBytes = Number.isFinite(maxTotalFileBytesRaw) ? Math.max(0, Math.trunc(maxTotalFileBytesRaw)) : 0;
+        if (maxTotalFileBytes > 0 && totalFileBytes > maxTotalFileBytes) {
+            return reply.status(413).send({
+                error: `Project assets exceed export limit (${totalFileBytes} bytes > ${maxTotalFileBytes} bytes).`,
+            });
+        }
+
         for (const row of fileRows.rows) {
             if (!row.storage_bucket || !row.storage_key) {
                 return reply.status(500).send({
                     error: `File "${row.name}" is missing storage metadata and cannot be exported.`,
                 });
             }
-
-            const object = await app.s3.send(
-                new GetObjectCommand({
-                    Bucket: row.storage_bucket,
-                    Key: row.storage_key,
-                }),
-            );
-
-            const body = object.Body as Readable | undefined;
-            if (!body) {
-                return reply.status(500).send({
-                    error: `File "${row.name}" could not be loaded from object storage.`,
-                });
-            }
-
-            const bytes = await streamToBuffer(body);
-            files.push({
-                oldId: row.id,
-                name: row.name,
-                mimeType: row.mime_type,
-                ext: row.ext,
-                sizeBytes: row.size_bytes,
-                sha256: row.sha256,
-                createdAt: new Date(row.created_at).toISOString(),
-                bytesBase64: bytes.toString("base64"),
-            });
         }
 
         const embeddingTable = await app.pg.query<{ table_name: string | null }>(
@@ -2298,129 +2831,253 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             SELECT to_regclass('public.document_node_embeddings') AS table_name
             `,
         );
+        const hasEmbeddingTable = Boolean(embeddingTable.rows[0]?.table_name);
 
-        let embeddings: ProjectViBundleV1["embeddings"] = [];
-        if (embeddingTable.rows[0]?.table_name) {
-            const embeddingRows = await app.pg.query<{
-                node_id: string;
-                node_text: string;
-                embedding: unknown;
-            }>(
-                `
-                SELECT node_id, node_text, embedding
-                FROM document_node_embeddings
-                WHERE doc_id = $1
-                ORDER BY node_id ASC
-                `,
-                [id],
-            );
-
-            embeddings = embeddingRows.rows.map((row: { node_id: string; node_text: string; embedding: unknown }) => ({
-                nodeId: row.node_id,
-                nodeText: row.node_text,
-                embedding: parseVectorValue(row.embedding),
-            }));
-        }
-
-        const githubEventRows = await app.pg.query<{
-            repo_owner: string;
-            repo_name: string;
-            event_type: string;
-            event_key: string;
-            actor_login: string | null;
-            title: string | null;
-            url: string | null;
-            occurred_at: string;
-            issue_number: number | null;
-            pr_number: number | null;
-            commit_sha: string | null;
-            branch_name: string | null;
-            payload: unknown;
-            inserted_at: string;
-        }>(
-            `
-            SELECT
-                repo_owner,
-                repo_name,
-                event_type,
-                event_key,
-                actor_login,
-                title,
-                url,
-                occurred_at,
-                issue_number,
-                pr_number,
-                commit_sha,
-                branch_name,
-                payload,
-                inserted_at
-            FROM document_github_events
-            WHERE document_id = $1
-            ORDER BY occurred_at ASC, event_key ASC
-            `,
-            [id],
-        );
-
-        const githubEvents: ProjectViBundleV1["githubEvents"] = githubEventRows.rows.map((row: {
-            repo_owner: string;
-            repo_name: string;
-            event_type: string;
-            event_key: string;
-            actor_login: string | null;
-            title: string | null;
-            url: string | null;
-            occurred_at: string;
-            issue_number: number | null;
-            pr_number: number | null;
-            commit_sha: string | null;
-            branch_name: string | null;
-            payload: unknown;
-            inserted_at: string;
-        }) => ({
-            repoOwner: row.repo_owner,
-            repoName: row.repo_name,
-            eventType: row.event_type,
-            eventKey: row.event_key,
-            actorLogin: row.actor_login,
-            title: row.title,
-            url: row.url,
-            occurredAt: new Date(row.occurred_at).toISOString(),
-            issueNumber: row.issue_number,
-            prNumber: row.pr_number,
-            commitSha: row.commit_sha,
-            branchName: row.branch_name,
-            payload: row.payload,
-            insertedAt: new Date(row.inserted_at).toISOString(),
-        }));
-
-        const bundle: ProjectViBundleV1 = {
-            format: "vitral-project",
-            version: 1,
-            exportedAt: new Date().toISOString(),
-            source: {
-                documentId: documentRow.id,
-                title: documentRow.title,
-            },
-            document: {
-                title: documentRow.title,
-                description: documentRow.description,
-                state: documentRow.state,
-                timeline: documentRow.timeline,
-                version: documentRow.version,
-                createdAt: new Date(documentRow.created_at).toISOString(),
-                updatedAt: new Date(documentRow.updated_at).toISOString(),
-            },
-            files,
-            embeddings,
-            githubEvents,
-            revisions,
-        };
-
-        const encoded = encodeProjectVi(bundle);
         const fileName = `${sanitizeProjectFilename(documentRow.title)}.vi`;
         reply.header("Content-Type", "application/octet-stream");
         reply.header("Content-Disposition", `attachment; filename="${safeFilename(fileName)}"`);
-        return reply.send(encoded);
+
+        const responseStream = new PassThrough();
+        const gzipStream = createGzip({ level: resolveProjectViGzipLevel() });
+        const headerBytes = createProjectViHeader();
+        let encodedBytes = headerBytes.length;
+
+        gzipStream.on("data", (chunk: Buffer) => {
+            encodedBytes += chunk.length;
+        });
+        gzipStream.on("error", (error) => {
+            request.log.error({ error, docId: id }, "Streaming project export failed.");
+            if (!responseStream.destroyed) responseStream.destroy(error);
+        });
+
+        responseStream.write(headerBytes);
+        gzipStream.pipe(responseStream);
+
+        void (async () => {
+            try {
+                await writeChunk(gzipStream, '{"format":"vitral-project","version":1');
+                await writeChunk(gzipStream, `,"exportedAt":${JSON.stringify(new Date().toISOString())}`);
+                await writeChunk(
+                    gzipStream,
+                    `,"source":{"documentId":${JSON.stringify(documentRow.id)},"title":${JSON.stringify(documentRow.title)}}`,
+                );
+                await writeChunk(
+                    gzipStream,
+                    `,"document":${JSON.stringify({
+                        title: documentRow.title,
+                        description: documentRow.description,
+                        state: documentRow.state,
+                        timeline: documentRow.timeline,
+                        version: documentRow.version,
+                        createdAt: new Date(documentRow.created_at).toISOString(),
+                        updatedAt: new Date(documentRow.updated_at).toISOString(),
+                    })}`,
+                );
+
+                await writeChunk(gzipStream, ',"files":[');
+                let firstFile = true;
+                for (const metadataChunk of chunkItems(fileRows.rows, exportFileFetchConcurrency)) {
+                    const fileEntries = await mapWithConcurrencyLimit(
+                        metadataChunk,
+                        exportFileFetchConcurrency,
+                        async (row) => {
+                            const object = await app.s3.send(
+                                new GetObjectCommand({
+                                    Bucket: row.storage_bucket!,
+                                    Key: row.storage_key!,
+                                }),
+                            );
+                            const body = object.Body as Readable | undefined;
+                            if (!body) {
+                                throw new Error(`File "${row.name}" could not be loaded from object storage.`);
+                            }
+                            const bytes = await streamToBuffer(body);
+                            return {
+                                oldId: row.id,
+                                name: row.name,
+                                mimeType: row.mime_type,
+                                ext: row.ext,
+                                sizeBytes: row.size_bytes,
+                                sha256: row.sha256,
+                                createdAt: new Date(row.created_at).toISOString(),
+                                bytesBase64: bytes.toString("base64"),
+                            };
+                        },
+                    );
+
+                    for (const entry of fileEntries) {
+                        if (!firstFile) await writeChunk(gzipStream, ",");
+                        await writeChunk(gzipStream, JSON.stringify(entry));
+                        firstFile = false;
+                    }
+                }
+                await writeChunk(gzipStream, "]");
+
+                await writeChunk(gzipStream, ',"embeddings":[');
+                let firstEmbedding = true;
+                if (hasEmbeddingTable) {
+                    for (let offset = 0; ; ) {
+                        const embeddingRows = await app.pg.query<{
+                            node_id: string;
+                            node_text: string;
+                            embedding: unknown;
+                        }>(
+                            `
+                            SELECT node_id, node_text, embedding
+                            FROM document_node_embeddings
+                            WHERE doc_id = $1
+                            ORDER BY node_id ASC
+                            LIMIT $2
+                            OFFSET $3
+                            `,
+                            [id, EXPORT_EMBEDDINGS_BATCH_SIZE, offset],
+                        );
+                        if (embeddingRows.rows.length === 0) break;
+
+                        for (const row of embeddingRows.rows) {
+                            const entry = {
+                                nodeId: row.node_id,
+                                nodeText: row.node_text,
+                                embedding: parseVectorValue(row.embedding),
+                            };
+                            if (!firstEmbedding) await writeChunk(gzipStream, ",");
+                            await writeChunk(gzipStream, JSON.stringify(entry));
+                            firstEmbedding = false;
+                        }
+
+                        offset += embeddingRows.rows.length;
+                    }
+                }
+                await writeChunk(gzipStream, "]");
+
+                await writeChunk(gzipStream, ',"githubEvents":[');
+                let firstGithubEvent = true;
+                for (let offset = 0; ; ) {
+                    const githubEventRows = await app.pg.query<{
+                        repo_owner: string;
+                        repo_name: string;
+                        event_type: string;
+                        event_key: string;
+                        actor_login: string | null;
+                        title: string | null;
+                        url: string | null;
+                        occurred_at: string;
+                        issue_number: number | null;
+                        pr_number: number | null;
+                        commit_sha: string | null;
+                        branch_name: string | null;
+                        payload: unknown;
+                        inserted_at: string;
+                    }>(
+                        `
+                        SELECT
+                            repo_owner,
+                            repo_name,
+                            event_type,
+                            event_key,
+                            actor_login,
+                            title,
+                            url,
+                            occurred_at,
+                            issue_number,
+                            pr_number,
+                            commit_sha,
+                            branch_name,
+                            payload,
+                            inserted_at
+                        FROM document_github_events
+                        WHERE document_id = $1
+                        ORDER BY occurred_at ASC, event_key ASC
+                        LIMIT $2
+                        OFFSET $3
+                        `,
+                        [id, EXPORT_GITHUB_EVENTS_BATCH_SIZE, offset],
+                    );
+                    if (githubEventRows.rows.length === 0) break;
+
+                    for (const row of githubEventRows.rows) {
+                        const entry = {
+                            repoOwner: row.repo_owner,
+                            repoName: row.repo_name,
+                            eventType: row.event_type,
+                            eventKey: row.event_key,
+                            actorLogin: row.actor_login,
+                            title: row.title,
+                            url: row.url,
+                            occurredAt: new Date(row.occurred_at).toISOString(),
+                            issueNumber: row.issue_number,
+                            prNumber: row.pr_number,
+                            commitSha: row.commit_sha,
+                            branchName: row.branch_name,
+                            payload: row.payload,
+                            insertedAt: new Date(row.inserted_at).toISOString(),
+                        };
+                        if (!firstGithubEvent) await writeChunk(gzipStream, ",");
+                        await writeChunk(gzipStream, JSON.stringify(entry));
+                        firstGithubEvent = false;
+                    }
+
+                    offset += githubEventRows.rows.length;
+                }
+                await writeChunk(gzipStream, "]");
+
+                await writeChunk(gzipStream, ',"revisions":[');
+                let firstRevision = true;
+                for (let offset = 0; ; ) {
+                    const revisionRows = await app.pg.query<{
+                        version: number;
+                        captured_at: string;
+                        state: unknown;
+                        timeline: unknown;
+                    }>(
+                        `
+                        SELECT version, captured_at, state, timeline
+                        FROM document_state_revisions
+                        WHERE document_id = $1
+                        ORDER BY captured_at ASC, version ASC, id ASC
+                        LIMIT $2
+                        OFFSET $3
+                        `,
+                        [id, EXPORT_REVISIONS_BATCH_SIZE, offset],
+                    );
+                    if (revisionRows.rows.length === 0) break;
+
+                    for (const row of revisionRows.rows) {
+                        const entry = {
+                            version: Number.isFinite(row.version) ? Math.max(1, Math.trunc(row.version)) : 1,
+                            capturedAt: new Date(row.captured_at).toISOString(),
+                            state: row.state ?? {},
+                            timeline: row.timeline ?? {},
+                        };
+                        if (!firstRevision) await writeChunk(gzipStream, ",");
+                        await writeChunk(gzipStream, JSON.stringify(entry));
+                        firstRevision = false;
+                    }
+
+                    offset += revisionRows.rows.length;
+                }
+                await writeChunk(gzipStream, "]}");
+
+                gzipStream.end();
+                await finished(gzipStream);
+                request.log.info({
+                    docId: id,
+                    encodedBytes,
+                    elapsedMs: Date.now() - exportStartedAt,
+                    revisionCount,
+                    fileCount: fileRows.rows.length,
+                    totalFileBytes,
+                }, "Project export completed.");
+            } catch (error) {
+                request.log.error({ error, docId: id }, "Project export failed while streaming.");
+                gzipStream.destroy(error instanceof Error ? error : new Error(String(error)));
+                if (!responseStream.destroyed) {
+                    responseStream.destroy(error instanceof Error ? error : new Error(String(error)));
+                }
+            }
+        })();
+
+        return reply.send(responseStream);
     });
 
     /**
@@ -2972,6 +3629,32 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             RETURNING id, title, description, version, updated_at, review_only
             `,
             [id, title ?? null, description ?? null]
+        );
+
+        if (rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return rows[0];
+    });
+
+    /**
+     * Convert a document to permanent review-only mode.
+     * POST /api/state/:id/review-only
+     */
+    app.post("/state/:id/review-only", async (request, reply) => {
+        const { id } = request.params as { id: string };
+
+        const { rows } = await app.pg.query(
+            `
+            UPDATE documents
+            SET
+                review_only = TRUE,
+                version = CASE WHEN review_only THEN version ELSE version + 1 END
+            WHERE id = $1
+            RETURNING id, title, description, version, updated_at, review_only
+            `,
+            [id],
         );
 
         if (rows.length === 0) {

@@ -19,6 +19,19 @@ export type DocumentResponse = {
     timeline?: TimelineStatePayload;
 };
 
+export type DuplicateDocumentJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export type DuplicateDocumentJobResponse = {
+    jobId: string;
+    sourceDocId: string;
+    status: DuplicateDocumentJobStatus;
+    createdAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    result: DocumentResponse | null;
+    error: string | null;
+};
+
 export type LiteratureSetupTemplate = {
     id: string;
     name: string;
@@ -435,6 +448,32 @@ export async function deleteDocument(docId: string) {
     }
 }
 
+export async function startDuplicateDocument(docId: string): Promise<DuplicateDocumentJobResponse> {
+    const res = await fetch(`${API_BASE}/state/${docId}/duplicate`, {
+        method: "POST",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Duplicate start failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function loadDuplicateDocumentJob(jobId: string): Promise<DuplicateDocumentJobResponse> {
+    const res = await fetch(`${API_BASE}/state/duplicate-jobs/${jobId}`, {
+        method: "GET",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Duplicate job failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
 export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string | null }) {
     const res = await fetch(`${API_BASE}/state/${docId}`, {
         method: "PATCH",
@@ -444,6 +483,19 @@ export async function updateDocumentMeta(docId: string, payload: { title?: strin
 
     if (!res.ok) {
         throw new Error(`Update failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function convertDocumentToReviewOnly(docId: string): Promise<DocumentResponse> {
+    const res = await fetch(`${API_BASE}/state/${docId}/review-only`, {
+        method: "POST",
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Convert to review mode failed: ${res.status}`);
     }
 
     return res.json();

@@ -493,8 +493,10 @@ const flowSlice = createSlice({
             const existing = ensureNodeHistory(state.nodes[index]);
             const existingData = nodeDataRecord(existing);
             const incomingData = isObjectRecord(action.payload.data)
-                ? action.payload.data as Record<string, unknown>
+                ? { ...(action.payload.data as Record<string, unknown>) }
                 : {};
+            // Keep canonical history from store; UI payloads can be stale.
+            delete incomingData[NODE_HISTORY_KEY];
             const mergedData = {
                 ...existingData,
                 ...incomingData,
