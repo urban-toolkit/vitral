@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { EdgeProps } from '@xyflow/react';
 import { getBezierPath } from '@xyflow/react';
 
@@ -40,7 +41,7 @@ function resolveEdgeVisual(kind: string, label: string | undefined): EdgeVisualS
   };
 }
 
-export function RelationEdge(props: EdgeProps) {
+function RelationEdgeImpl(props: EdgeProps) {
   const {
     id,
     sourceX,
@@ -131,4 +132,6 @@ export function RelationEdge(props: EdgeProps) {
     </>
   );
 }
+
+export const RelationEdge = memo(RelationEdgeImpl);
 

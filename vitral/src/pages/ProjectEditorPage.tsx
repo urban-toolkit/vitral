@@ -2174,11 +2174,20 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 const isHoveredByFile = normalizedHoveredCodebasePath !== "" &&
                     attachedCodebasePaths.includes(normalizedHoveredCodebasePath);
                 const isEmphasized = emphasizedBlueprintComponentIds.has(node.id) || isHoveredByFile;
+                const desiredOpacity = isEmphasized ? 1 : 0.5;
+                const currentOpacity = typeof node.style?.opacity === "number"
+                    ? node.style.opacity
+                    : typeof node.style?.opacity === "string"
+                        ? Number.parseFloat(node.style.opacity)
+                        : undefined;
+                if (currentOpacity === desiredOpacity) {
+                    return node;
+                }
                 return {
                     ...node,
                     style: {
                         ...(node.style ?? {}),
-                        opacity: isEmphasized ? 1 : 0.5,
+                        opacity: desiredOpacity,
                     },
                 };
             }
@@ -2322,13 +2331,27 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const isHoveredByFile = normalizedHoveredCodebasePath !== "" &&
                 attachedCodebasePaths.includes(normalizedHoveredCodebasePath);
             const isEmphasized = emphasizedBlueprintComponentIds.has(node.id) || isHoveredByFile;
-            const nextStyle: Record<string, string | number> = { ...(node.style ?? {}) };
+            let nextStyle = node.style as Record<string, string | number> | undefined;
+            let styleChanged = false;
             if (nodeLabel === "blueprint_component") {
-                nextStyle.opacity = isEmphasized ? 1 : 0.5;
+                const desiredOpacity = isEmphasized ? 1 : 0.5;
+                const currentOpacity = typeof node.style?.opacity === "number"
+                    ? node.style.opacity
+                    : typeof node.style?.opacity === "string"
+                        ? Number.parseFloat(node.style.opacity)
+                        : undefined;
+                if (currentOpacity !== desiredOpacity) {
+                    nextStyle = {
+                        ...(node.style as Record<string, string | number> ?? {}),
+                        opacity: desiredOpacity,
+                    };
+                    styleChanged = true;
+                }
             }
 
             const newRootAbsolute = newRootAbsolutePositions.get(node.id);
             if (!newRootAbsolute) {
+                if (!styleChanged) return node;
                 return {
                     ...node,
                     style: nextStyle,
@@ -2336,12 +2359,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             }
 
             if (node.parentId && visibleById.has(node.parentId)) {
+                if (!styleChanged) return node;
                 return {
                     ...node,
                     style: nextStyle,
                 };
             }
 
+            const positionChanged = (
+                node.position.x !== newRootAbsolute.x ||
+                node.position.y !== newRootAbsolute.y
+            );
+            if (!styleChanged && !positionChanged) return node;
             return {
                 ...node,
                 position: newRootAbsolute,

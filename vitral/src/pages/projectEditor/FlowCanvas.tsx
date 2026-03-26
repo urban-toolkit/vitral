@@ -50,6 +50,7 @@ export const FlowCanvas = memo(function FlowCanvas({
             className={`${styles.flowCanvas} ${cursorClassName}`}
             nodes={nodes}
             edges={edges}
+            onlyRenderVisibleElements
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
