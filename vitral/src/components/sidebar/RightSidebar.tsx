@@ -30,18 +30,12 @@ export function RightSidebar({
         <aside className={styles.root} style={{ height: sidebarHeight }}>
             <div className={styles.panel}>
                 <div className={styles.section}>
-                    {reviewOnly ? (
-                        <div className={`${styles.sectionCard} ${styles.reviewNotice}`}>
-                            <p className={styles.reviewTitle}>GitHub</p>
-                            <p className={styles.reviewMessage}>This is a review project</p>
-                        </div>
-                    ) : (
-                        <GitHubFiles
-                            projectId={projectId}
-                            connectionStatus={connectionStatus}
-                            className={styles.sectionCard}
-                        />
-                    )}
+                    <GitHubFiles
+                        projectId={projectId}
+                        connectionStatus={connectionStatus}
+                        reviewOnly={reviewOnly}
+                        className={styles.sectionCard}
+                    />
                 </div>
 
                 <div className={`${styles.section} ${styles.assetsSection}`}>

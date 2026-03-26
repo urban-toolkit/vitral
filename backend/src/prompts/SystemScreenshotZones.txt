@@ -20,7 +20,7 @@ Task:
 
 Output requirements:
 - Return strict JSON only (no markdown, no prose).
-- Use this exact schema:
+- Use this schema:
 {
   "zones": [
     {
@@ -36,10 +36,8 @@ Output requirements:
   ]
 }
 
-Important constraints:
-- Coordinates are pixels relative to the provided imageResolution.
-- Return roughly 3 to 10 major zones.
+Additional rules:
+- Coordinates are pixels relative to imageResolution (not percentages in final output).
 - Every file path must exist in repositoryTree.
 - Paths must be repository-root-relative and use forward slashes.
 - Never invent files.
-- If unsure about files for a zone, return an empty filePaths array for that zone.

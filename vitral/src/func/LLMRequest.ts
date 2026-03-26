@@ -1222,6 +1222,14 @@ type SystemScreenshotZonesContext = {
     codebaseSubtracks: Array<Pick<CodebaseSubtrack, "id" | "name" | "filePaths">>;
 };
 
+type RawScreenshotZonePayload = {
+    zones?: unknown;
+};
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
 function parseCoordinate(value: unknown, axisSize: number): number | null {
     if (!Number.isFinite(axisSize) || axisSize <= 0) return null;
 
@@ -1268,34 +1276,59 @@ function collectFilePaths(value: unknown): string[] {
     return paths;
 }
 
+function extractRawScreenshotZones(rawOutput: string): {
+    zones: Record<string, unknown>[];
+    validationError: string | null;
+} {
+    const parsed = tryParseJson<RawScreenshotZonePayload>(rawOutput);
+    if (!parsed || !Array.isArray(parsed.zones)) {
+        return {
+            zones: [],
+            validationError: "Response must be valid JSON with a top-level zones array.",
+        };
+    }
+
+    const zones = parsed.zones.filter(isObjectRecord);
+    if (zones.length === 0) {
+        return {
+            zones: [],
+            validationError: "zones must contain at least one object.",
+        };
+    }
+
+    const hasAtLeastOneCoordinateSet = zones.some((zone) => {
+        const rect = isObjectRecord(zone.rect) ? zone.rect : {};
+        const x = rect.x ?? rect.left ?? zone.x ?? zone.left;
+        const y = rect.y ?? rect.top ?? zone.y ?? zone.top;
+        const width = rect.width ?? rect.w ?? zone.width ?? zone.w;
+        const height = rect.height ?? rect.h ?? zone.height ?? zone.h;
+        return x != null && y != null && width != null && height != null;
+    });
+
+    if (!hasAtLeastOneCoordinateSet) {
+        return {
+            zones: [],
+            validationError: "Each zone must include x, y, width, and height.",
+        };
+    }
+
+    return {
+        zones,
+        validationError: null,
+    };
+}
+
 function parseScreenshotZones(
-    rawOutput: string,
+    rawZones: Record<string, unknown>[],
     imageWidth: number,
     imageHeight: number,
     availablePaths: Set<string>
 ): SystemScreenshotZone[] {
-    const parsed = tryParseJson<{
-        zones?: unknown;
-        components?: unknown;
-        rectangles?: unknown;
-    }>(rawOutput);
-    if (!parsed) return [];
-
-    const rawZones = Array.isArray(parsed.zones)
-        ? parsed.zones
-        : Array.isArray(parsed.components)
-            ? parsed.components
-            : Array.isArray(parsed.rectangles)
-                ? parsed.rectangles
-                : [];
-
     const zones: SystemScreenshotZone[] = [];
     const seenIds = new Set<string>();
 
     for (let index = 0; index < rawZones.length; index++) {
-        const rawZone = rawZones[index];
-        if (!rawZone || typeof rawZone !== "object") continue;
-        const zone = rawZone as Record<string, unknown>;
+        const zone = rawZones[index];
         const rect = zone.rect && typeof zone.rect === "object"
             ? zone.rect as Record<string, unknown>
             : {};
@@ -1392,7 +1425,6 @@ export async function requestSystemScreenshotZonesLLM(
         repositoryTreeNodeCount: repoTree.nodeCount,
         repositoryTreeTruncated: repoTree.truncated,
     };
-
     const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
         headers: {
@@ -1417,8 +1449,13 @@ export async function requestSystemScreenshotZonesLLM(
     }
 
     const data = await response.json();
+    const extracted = extractRawScreenshotZones(String(data.output ?? ""));
+    if (extracted.validationError) {
+        console.warn("Invalid screenshot zones response schema from LLM.", extracted.validationError);
+        return [];
+    }
     return parseScreenshotZones(
-        String(data.output ?? ""),
+        extracted.zones,
         context.imageWidth,
         context.imageHeight,
         new Set(repoTree.filePaths)

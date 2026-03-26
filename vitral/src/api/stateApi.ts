@@ -326,8 +326,13 @@ export async function loadDocuments(): Promise<DocumentResponse[]> {
     return res.json();
 }
 
-export async function exportProjectVi(docId: string): Promise<Blob> {
-    const res = await fetch(`${API_BASE}/state/${docId}/export-vi`, {
+export async function exportProjectVi(
+    docId: string,
+    options?: { includeGithubData?: boolean },
+): Promise<Blob> {
+    const includeGithubData = options?.includeGithubData ?? true;
+    const query = includeGithubData ? "" : "?includeGithub=0";
+    const res = await fetch(`${API_BASE}/state/${docId}/export-vi${query}`, {
         method: "GET",
     });
 

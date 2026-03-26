@@ -14,6 +14,7 @@ import type {
     Stage,
     BlueprintComponent,
     BlueprintData,
+    BlueprintEvent,
     BlueprintHighBlock,
     BlueprintIntermediate,
 } from "@/config/types";
@@ -124,6 +125,12 @@ const REFERENCED_BY_EDGE_LABEL = "referenced by";
 const ITERATION_OF_EDGE_LABEL = "iteration of";
 const FEEDS_INTO_EDGE_LABEL = "feeds into";
 const RIGHT_SIDEBAR_WIDTH_PX = 250;
+const AI_CHAT_BUTTON_BOTTOM_GAP_PX = 20;
+const AI_CHAT_BUTTON_TIMELINE_GAP_PX = 12;
+const AI_CHAT_BUTTON_RIGHT_GAP_PX = 16;
+const TIMELINE_TOGGLE_OFFSET_WITH_TOOLBAR_PX = 65;
+const TIMELINE_TOGGLE_OFFSET_NO_TOOLBAR_PX = 20;
+const CANVAS_CHAT_RETRIEVAL_LIMIT = 80;
 
 function readImageFileAsDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -3053,7 +3060,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     message: trimmed,
                     conversation: conversationPayload,
                     scopeNodeIds,
-                    limit: Math.max(1, Math.min(200, scopeNodeIds.length || 60)),
+                    limit: Math.max(1, Math.min(CANVAS_CHAT_RETRIEVAL_LIMIT, scopeNodeIds.length || 60)),
                     minScore: 0.3,
                     at: playbackAt ?? undefined,
                 });
@@ -3382,11 +3389,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const handleExportProject = useCallback(() => {
         if (exportingProject) return;
+
+        const includeGithubData = window.confirm(
+            "Include GitHub data in this .vi export?\n\n" +
+            "Press OK to include commit timeline and repository snapshot paths.\n" +
+            "Press Cancel to export without GitHub data."
+        );
+
         setExportingProject(true);
 
         void (async () => {
             try {
-                const blob = await exportProjectVi(projectId);
+                const blob = await exportProjectVi(projectId, { includeGithubData });
                 const projectTitle = title?.trim() || "project";
                 const safeName = projectTitle
                     .toLowerCase()
@@ -3464,6 +3478,36 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const focusNode = () => {
             void fitView({
                 nodes: [{ id: targetNodeId }],
+                padding: 0.28,
+                duration: 360,
+            });
+        };
+
+        if (viewMode !== "explore") {
+            setViewMode("explore");
+            window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                    focusNode();
+                });
+            });
+            return;
+        }
+
+        focusNode();
+    }, [fitView, nodes, viewMode]);
+
+    const handleBlueprintEventNavigate = useCallback((eventData: BlueprintEvent) => {
+        const componentNodeId = typeof eventData.componentNodeId === "string"
+            ? eventData.componentNodeId.trim()
+            : "";
+        if (!componentNodeId) return;
+
+        const existingNodeIds = new Set(nodes.map((node) => String(node.id ?? "")));
+        if (!existingNodeIds.has(componentNodeId)) return;
+
+        const focusNode = () => {
+            void fitView({
+                nodes: [{ id: componentNodeId }],
                 padding: 0.28,
                 duration: 360,
             });
@@ -4125,6 +4169,34 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onDeleteAsset={interactionLocked ? undefined : handleDeleteAsset}
             />
 
+            <button
+                type="button"
+                title="Open AI assistant chat (Ctrl+Space)"
+                aria-label="Open AI assistant chat"
+                onClick={() => setChatOpen(true)}
+                style={{
+                    position: "fixed",
+                    right: RIGHT_SIDEBAR_WIDTH_PX + AI_CHAT_BUTTON_RIGHT_GAP_PX,
+                    bottom: timelineOpen
+                        ? TIMELINE_DOCK_HEIGHT + AI_CHAT_BUTTON_BOTTOM_GAP_PX + AI_CHAT_BUTTON_TIMELINE_GAP_PX
+                        : AI_CHAT_BUTTON_BOTTOM_GAP_PX,
+                    zIndex: 20,
+                    border: "1px solid rgba(0, 0, 0, 0.2)",
+                    borderRadius: 999,
+                    background: chatOpen ? "#f2e3d0" : "#ffffff",
+                    color: "#2b2b2b",
+                    fontWeight: 600,
+                    fontSize: 13,
+                    lineHeight: "18px",
+                    padding: "10px 14px",
+                    cursor: "pointer",
+                    boxShadow: "0 10px 24px rgba(0, 0, 0, 0.16)",
+                    transition: "bottom 150ms ease, background-color 150ms ease",
+                }}
+            >
+                AI Assistant
+            </button>
+
             <CanvasChatOverlay
                 open={chatOpen}
                 loading={chatLoading}
@@ -4158,6 +4230,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 projectId={projectId}
                 open={timelineOpen}
                 onToggleOpen={handleToggleTimeline}
+                closedBottomOffsetPx={interactionLocked
+                    ? TIMELINE_TOGGLE_OFFSET_NO_TOOLBAR_PX
+                    : TIMELINE_TOGGLE_OFFSET_WITH_TOOLBAR_PX}
                 readOnly={interactionLocked}
                 allowKnowledgeTrackClearMenu={!reviewOnly}
                 startMarker={timelineStartEnd.start}
@@ -4172,6 +4247,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 playbackAt={playbackAt}
                 onPlaybackAtChange={handlePlaybackAtChange}
                 onKnowledgeEventNavigate={handleKnowledgeEventNavigate}
+                onBlueprintEventNavigate={handleBlueprintEventNavigate}
                 onClearKnowledgePreviousEdits={handleClearKnowledgePreviousEdits}
                 onClearKnowledgeNextEdits={handleClearKnowledgeNextEdits}
                 designStudyEvents={designStudyEvents}

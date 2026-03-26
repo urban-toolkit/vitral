@@ -20,6 +20,7 @@ type TimelineDockProps = {
     projectId: string;
     open: boolean;
     onToggleOpen: () => void;
+    closedBottomOffsetPx?: number;
     readOnly?: boolean;
     allowKnowledgeTrackClearMenu?: boolean;
     startMarker: Date | string;
@@ -34,6 +35,7 @@ type TimelineDockProps = {
     playbackAt?: Date | string | null;
     onPlaybackAtChange?: (value: string | null) => void;
     onKnowledgeEventNavigate?: (event: KnowledgeBaseEvent) => void;
+    onBlueprintEventNavigate?: (event: BlueprintEvent) => void;
     onClearKnowledgePreviousEdits?: (cutoffIso?: string) => void;
     onClearKnowledgeNextEdits?: (cutoffIso?: string) => void;
     designStudyEvents: DesignStudyEvent[];
@@ -54,6 +56,7 @@ export const TimelineDock = memo(function TimelineDock({
     projectId,
     open,
     onToggleOpen,
+    closedBottomOffsetPx = 65,
     readOnly = false,
     allowKnowledgeTrackClearMenu = false,
     startMarker,
@@ -68,6 +71,7 @@ export const TimelineDock = memo(function TimelineDock({
     playbackAt = null,
     onPlaybackAtChange,
     onKnowledgeEventNavigate,
+    onBlueprintEventNavigate,
     onClearKnowledgePreviousEdits,
     onClearKnowledgeNextEdits,
     designStudyEvents,
@@ -83,11 +87,15 @@ export const TimelineDock = memo(function TimelineDock({
     onStageBoundaryChange,
     onSyncCodebaseEvents,
 }: TimelineDockProps) {
+    const toggleBottomPx = open
+        ? TIMELINE_DOCK_HEIGHT + closedBottomOffsetPx
+        : closedBottomOffsetPx;
+
     return (
         <>
             <div
                 style={{
-                    ...(open ? { bottom: `${TIMELINE_DOCK_HEIGHT + 65}px` } : { bottom: "65px" }),
+                    bottom: `${toggleBottomPx}px`,
                     left: "50%",
                     transform: "translate(-50%, 0)",
                     cursor: "pointer",
@@ -141,6 +149,7 @@ export const TimelineDock = memo(function TimelineDock({
                     playbackAt={playbackAt}
                     onPlaybackAtChange={onPlaybackAtChange}
                     onKnowledgeEventNavigate={onKnowledgeEventNavigate}
+                    onBlueprintEventNavigate={onBlueprintEventNavigate}
                     onClearKnowledgePreviousEdits={onClearKnowledgePreviousEdits}
                     onClearKnowledgeNextEdits={onClearKnowledgeNextEdits}
                     connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}

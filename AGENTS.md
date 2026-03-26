@@ -3,6 +3,8 @@
 ## Purpose
 This file captures important project context from prior debugging/fix sessions so future agents can avoid regressions, especially around timeline playback, knowledge-track editing, blueprint edges, and asset behavior.
 
+Current product-safety intent (user-study phase): prioritize no-regression usability adjustments. Feature additions/removals remain possible in future work when explicitly requested and reflected in the contract docs.
+
 ## High-Importance Behavior Contracts
 
 1. Timeline playhead defaults
@@ -42,6 +44,27 @@ This file captures important project context from prior debugging/fix sessions s
 - Duplication completion/failure is polled via `GET /api/state/duplicate-jobs/:jobId`.
 - Job result includes duplicated document metadata (`id`, `title`, etc.) once status is `succeeded`.
 
+9. Review-only conversion contract
+- Projects can be permanently converted to review-only mode from the projects list.
+- Conversion is one-way (`review_only=true`); editing remains blocked afterward.
+- Existing review-only imports and converted projects must follow the same non-editable behavior contract.
+
+10. Review-only UI affordances
+- In review mode, destructive timeline controls (delete `X` for stages/substages/subtracks) must be hidden, not only blocked.
+- In review mode, the left sidebar settings action must be hidden.
+
+11. Knowledge timeline click navigation
+- Clicking knowledge timeline entities (tree pills and individual knowledge events) should navigate/zoom canvas to the related card/tree node when resolvable.
+- Behavior should preserve tooltip feedback while triggering navigation.
+
+12. Design-study milestone tooltip editability
+- Milestone tooltip title supports inline rename on click (non-review mode only).
+- Save on Enter/blur, cancel on Escape, and keep review mode non-editable.
+
+13. Functional baseline source of truth
+- `docs/functional-contract.md` is the no-regression baseline for storage/performance refactors.
+- Any optimization must preserve contracts in that document unless product approval explicitly changes scope.
+
 ## Key Areas and Files
 
 - Timeline defaults / playhead / context menu cutoff:
@@ -66,6 +89,46 @@ This file captures important project context from prior debugging/fix sessions s
   - `docker-compose.yml`
   - `docker-compose.dev.yml`
   - `vitral/nginx.conf`
+
+- Review-only conversion + project list controls:
+  - `backend/src/routes/state.ts`
+  - `vitral/src/pages/ProjectsPage.tsx`
+  - `vitral/src/api/stateApi.ts`
+
+- Review-only editor affordances:
+  - `vitral/src/pages/ProjectEditorPage.tsx`
+  - `vitral/src/components/timeline/useTimelineChart.ts`
+  - `vitral/src/components/sidebar/CanvasSidebar.tsx`
+
+- Knowledge click-to-canvas navigation + milestone tooltip rename:
+  - `vitral/src/components/timeline/Timeline.tsx`
+  - `vitral/src/components/timeline/useTimelineChart.ts`
+  - `vitral/src/pages/projectEditor/TimelineDock.tsx`
+  - `vitral/src/components/timeline/timelineTypes.ts`
+  - `vitral/src/pages/ProjectEditorPage.tsx`
+
+- Functional baseline contract:
+  - `docs/functional-contract.md`
+
+## Repository Map (At-a-Glance)
+
+- Frontend app (React + timeline/canvas UX): `vitral/src`
+  - `components/` UI building blocks (timeline, sidebars, cards, blueprint widgets)
+  - `pages/` app screens (`ProjectsPage`, `ProjectEditorPage`, setup flow)
+  - `store/` Redux slices for canvas, timeline, settings, files
+  - `hooks/` sync/playback and side effects
+  - `api/` HTTP client layer for backend routes
+
+- Backend API (Fastify + Postgres + S3/MinIO): `backend/src`
+  - `routes/` API endpoints (`state.ts` is core project persistence/history/files/export/import)
+  - `services/` provenance, embeddings, GitHub orchestration
+  - `db/` schema/migrations/bootstrap SQL
+  - `utils/` stream/file/export helpers (`projectVi.ts` etc.)
+
+- Operations/runtime
+  - `docker-compose.dev.yml` local developer stack
+  - `docker-compose.yml` production-like stack
+  - `docs/functional-contract.md` feature-preservation baseline
 
 ## Implementation Anchors (Observed)
 

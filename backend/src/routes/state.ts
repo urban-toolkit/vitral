@@ -86,6 +86,10 @@ const EXPORT_GITHUB_EVENTS_BATCH_SIZE = 250;
 const DUPLICATE_JOB_RETENTION_MS = 60 * 60 * 1000;
 const MAX_DUPLICATE_JOBS = 500;
 const DUPLICATE_JOB_ERROR_MESSAGE = "Failed to duplicate project.";
+const DEFAULT_CANVAS_CHAT_RETRIEVAL_LIMIT = 40;
+const MAX_CANVAS_CHAT_RETRIEVAL_LIMIT = 80;
+const DEFAULT_CANVAS_CHAT_CONTEXT_NODE_LIMIT = 24;
+const MAX_CANVAS_CHAT_CONTEXT_NODE_LIMIT = 80;
 
 type DuplicatedDocumentSummary = {
     id: string;
@@ -297,6 +301,12 @@ function arraysEqual(a: string[], b: string[]): boolean {
         if (a[index] !== b[index]) return false;
     }
     return true;
+}
+
+function parsePositiveIntEnv(value: string | undefined, fallback: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(1, Math.floor(parsed));
 }
 
 function chunkItems<T>(items: T[], chunkSize: number): T[][] {
@@ -1977,7 +1987,22 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const rawMessage = typeof body?.message === "string" ? body.message.trim() : "";
         const requestedLimit = typeof body?.limit === "number" ? body.limit : Number(body?.limit);
         const requestedMinScore = typeof body?.minScore === "number" ? body.minScore : Number(body?.minScore);
-        const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, Math.floor(requestedLimit))) : 60;
+        const maxChatRetrievalLimit = parsePositiveIntEnv(
+            process.env.CANVAS_CHAT_MAX_RETRIEVAL_LIMIT,
+            MAX_CANVAS_CHAT_RETRIEVAL_LIMIT,
+        );
+        const defaultChatRetrievalLimit = Math.min(
+            parsePositiveIntEnv(process.env.CANVAS_CHAT_DEFAULT_RETRIEVAL_LIMIT, DEFAULT_CANVAS_CHAT_RETRIEVAL_LIMIT),
+            maxChatRetrievalLimit,
+        );
+        const contextNodeLimit = Math.min(
+            parsePositiveIntEnv(process.env.CANVAS_CHAT_CONTEXT_NODE_LIMIT, DEFAULT_CANVAS_CHAT_CONTEXT_NODE_LIMIT),
+            parsePositiveIntEnv(process.env.CANVAS_CHAT_MAX_CONTEXT_NODE_LIMIT, MAX_CANVAS_CHAT_CONTEXT_NODE_LIMIT),
+            maxChatRetrievalLimit,
+        );
+        const limit = Number.isFinite(requestedLimit)
+            ? Math.max(1, Math.min(maxChatRetrievalLimit, Math.floor(requestedLimit)))
+            : defaultChatRetrievalLimit;
         const envMinScore = Number(process.env.NODE_QUERY_MIN_SCORE ?? 0.2);
         const minScore = Number.isFinite(requestedMinScore)
             ? Math.max(-1, Math.min(1, requestedMinScore))
@@ -2079,7 +2104,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const rankedNodes: CardNodeForSearch[] = matchedNodeIds
             .map((nodeId) => structuredNodeById.get(nodeId))
             .filter((node): node is CardNodeForSearch => Boolean(node));
-        const contextNodes = (rankedNodes.length > 0 ? rankedNodes : structuredFilteredNodes).slice(0, 40);
+        const contextNodes = (rankedNodes.length > 0 ? rankedNodes : structuredFilteredNodes).slice(0, contextNodeLimit);
 
         const fallbackApplyFilter = /\b(show|list|find|filter|display|only)\b/i.test(rawMessage);
         let applyFilter = fallbackApplyFilter;
@@ -2725,7 +2750,17 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.get("/state/:id/export-vi", async (request, reply) => {
         const { id } = request.params as { id: string };
+        const { includeGithub } = request.query as { includeGithub?: string | number | boolean };
         const exportStartedAt = Date.now();
+        const includeGithubData = (() => {
+            if (typeof includeGithub === "boolean") return includeGithub;
+            if (typeof includeGithub === "number") return includeGithub !== 0;
+            if (typeof includeGithub === "string") {
+                const normalized = includeGithub.trim().toLowerCase();
+                if (normalized === "0" || normalized === "false" || normalized === "no") return false;
+            }
+            return true;
+        })();
 
         const documentResult = await app.pg.query<{
             id: string;
@@ -2808,6 +2843,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             fileCount: fileRows.rows.length,
             totalFileBytes,
             exportFileFetchConcurrency,
+            includeGithubData,
         }, "Starting project export.");
 
         const maxTotalFileBytesRaw = Number(process.env.VI_EXPORT_MAX_TOTAL_FILE_BYTES ?? 0);
@@ -2951,73 +2987,75 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 await writeChunk(gzipStream, "]");
 
                 await writeChunk(gzipStream, ',"githubEvents":[');
-                let firstGithubEvent = true;
-                for (let offset = 0; ; ) {
-                    const githubEventRows = await app.pg.query<{
-                        repo_owner: string;
-                        repo_name: string;
-                        event_type: string;
-                        event_key: string;
-                        actor_login: string | null;
-                        title: string | null;
-                        url: string | null;
-                        occurred_at: string;
-                        issue_number: number | null;
-                        pr_number: number | null;
-                        commit_sha: string | null;
-                        branch_name: string | null;
-                        payload: unknown;
-                        inserted_at: string;
-                    }>(
-                        `
-                        SELECT
-                            repo_owner,
-                            repo_name,
-                            event_type,
-                            event_key,
-                            actor_login,
-                            title,
-                            url,
-                            occurred_at,
-                            issue_number,
-                            pr_number,
-                            commit_sha,
-                            branch_name,
-                            payload,
-                            inserted_at
-                        FROM document_github_events
-                        WHERE document_id = $1
-                        ORDER BY occurred_at ASC, event_key ASC
-                        LIMIT $2
-                        OFFSET $3
-                        `,
-                        [id, EXPORT_GITHUB_EVENTS_BATCH_SIZE, offset],
-                    );
-                    if (githubEventRows.rows.length === 0) break;
+                if (includeGithubData) {
+                    let firstGithubEvent = true;
+                    for (let offset = 0; ; ) {
+                        const githubEventRows = await app.pg.query<{
+                            repo_owner: string;
+                            repo_name: string;
+                            event_type: string;
+                            event_key: string;
+                            actor_login: string | null;
+                            title: string | null;
+                            url: string | null;
+                            occurred_at: string;
+                            issue_number: number | null;
+                            pr_number: number | null;
+                            commit_sha: string | null;
+                            branch_name: string | null;
+                            payload: unknown;
+                            inserted_at: string;
+                        }>(
+                            `
+                            SELECT
+                                repo_owner,
+                                repo_name,
+                                event_type,
+                                event_key,
+                                actor_login,
+                                title,
+                                url,
+                                occurred_at,
+                                issue_number,
+                                pr_number,
+                                commit_sha,
+                                branch_name,
+                                payload,
+                                inserted_at
+                            FROM document_github_events
+                            WHERE document_id = $1
+                            ORDER BY occurred_at ASC, event_key ASC
+                            LIMIT $2
+                            OFFSET $3
+                            `,
+                            [id, EXPORT_GITHUB_EVENTS_BATCH_SIZE, offset],
+                        );
+                        if (githubEventRows.rows.length === 0) break;
 
-                    for (const row of githubEventRows.rows) {
-                        const entry = {
-                            repoOwner: row.repo_owner,
-                            repoName: row.repo_name,
-                            eventType: row.event_type,
-                            eventKey: row.event_key,
-                            actorLogin: row.actor_login,
-                            title: row.title,
-                            url: row.url,
-                            occurredAt: new Date(row.occurred_at).toISOString(),
-                            issueNumber: row.issue_number,
-                            prNumber: row.pr_number,
-                            commitSha: row.commit_sha,
-                            branchName: row.branch_name,
-                            payload: row.payload,
-                            insertedAt: new Date(row.inserted_at).toISOString(),
-                        };
-                        if (!firstGithubEvent) await writeChunk(gzipStream, ",");
-                        await writeChunk(gzipStream, JSON.stringify(entry));
-                        firstGithubEvent = false;
+                        for (const row of githubEventRows.rows) {
+                            const entry = {
+                                repoOwner: row.repo_owner,
+                                repoName: row.repo_name,
+                                eventType: row.event_type,
+                                eventKey: row.event_key,
+                                actorLogin: row.actor_login,
+                                title: row.title,
+                                url: row.url,
+                                occurredAt: new Date(row.occurred_at).toISOString(),
+                                issueNumber: row.issue_number,
+                                prNumber: row.pr_number,
+                                commitSha: row.commit_sha,
+                                branchName: row.branch_name,
+                                payload: row.payload,
+                                insertedAt: new Date(row.inserted_at).toISOString(),
+                            };
+                            if (!firstGithubEvent) await writeChunk(gzipStream, ",");
+                            await writeChunk(gzipStream, JSON.stringify(entry));
+                            firstGithubEvent = false;
+                        }
+
+                        offset += githubEventRows.rows.length;
                     }
-
-                    offset += githubEventRows.rows.length;
                 }
                 await writeChunk(gzipStream, "]");
 
@@ -3067,6 +3105,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     revisionCount,
                     fileCount: fileRows.rows.length,
                     totalFileBytes,
+                    includeGithubData,
                 }, "Project export completed.");
             } catch (error) {
                 request.log.error({ error, docId: id }, "Project export failed while streaming.");

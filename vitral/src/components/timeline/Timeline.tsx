@@ -207,6 +207,7 @@ export const Timeline = ({
 	playbackAt = null,
 	onPlaybackAtChange,
 	onKnowledgeEventNavigate,
+	onBlueprintEventNavigate,
 	onClearKnowledgePreviousEdits,
 	onClearKnowledgeNextEdits,
 	connectedBlueprintComponentNodeIds = [],
@@ -261,6 +262,11 @@ export const Timeline = ({
 	const [knowledgeTrackMenu, setKnowledgeTrackMenu] = useState<{
 		x: number;
 		y: number;
+	} | null>(null);
+	const [screenshotMarkerMenu, setScreenshotMarkerMenu] = useState<{
+		x: number;
+		y: number;
+		markerId: string;
 	} | null>(null);
 	const [pendingBlueprintLinkEventId, setPendingBlueprintLinkEventId] = useState<string | null>(null);
 
@@ -403,6 +409,7 @@ export const Timeline = ({
 			setBlueprintLinkMenu(null);
 			setBlueprintCodebaseLinkMenu(null);
 			setKnowledgeTrackMenu(null);
+			setScreenshotMarkerMenu(null);
 			setPendingBlueprintLinkEventId(null);
 			setHoveredKnowledgeTreeId(null);
 			setSystemScreenshotTooltip(null);
@@ -514,6 +521,7 @@ export const Timeline = ({
 		playbackAt,
 		onPlaybackAtChange,
 		onKnowledgeEventNavigate,
+		onBlueprintEventNavigate,
 		pendingBlueprintLinkEventId,
 		hoveredCodebaseFilePath,
 		highlightedCodebaseFilePaths,
@@ -561,15 +569,6 @@ export const Timeline = ({
 			dispatch(addBlueprintCodebaseLink({ blueprintEventId, codebaseSubtrackId, origin: "manual" }));
 			setPendingBlueprintLinkEventId(null);
 		},
-		onDeleteSystemScreenshotMarker: (markerId) => {
-			if (readOnly) return;
-			dispatch(deleteSystemScreenshotMarker(markerId));
-			setSystemScreenshotTooltip((previous) =>
-				previous?.markerId === markerId ? null : previous
-			);
-			setHoveredScreenshotZoneId(null);
-			dispatch(setHighlightedCodebaseFilePaths([]));
-		},
 		onSuggestCodebaseSubtrackFiles: (subtrackId) => {
 			if (readOnly) return;
 			void handleSuggestCodebaseSubtrackFiles(subtrackId);
@@ -598,6 +597,7 @@ export const Timeline = ({
 		setBlueprintLinkMenu,
 		setBlueprintCodebaseLinkMenu,
 		setKnowledgeTrackMenu,
+		setScreenshotMarkerMenu,
 		setTagPicker,
 		setStageMenu,
 		setNameEdit,
@@ -980,6 +980,7 @@ export const Timeline = ({
 					setBlueprintLinkMenu(null);
 					setBlueprintCodebaseLinkMenu(null);
 					setKnowledgeTrackMenu(null);
+					setScreenshotMarkerMenu(null);
 					setHoveredKnowledgeTreeId(null);
 					setSystemScreenshotTooltip(null);
 					setVisualEvolutionPanel(null);
@@ -1199,6 +1200,27 @@ export const Timeline = ({
 						</button>
 					</div>
 				)}
+
+				{screenshotMarkerMenu && !readOnly && (
+					<div
+						className={classes.timelineContextMenu}
+						style={{ left: screenshotMarkerMenu.x, top: screenshotMarkerMenu.y }}
+						onClick={(event) => event.stopPropagation()}
+					>
+						<button
+							type="button"
+							className={classes.timelineContextMenuButton}
+							onClick={() => {
+								dispatch(deleteSystemScreenshotMarker(screenshotMarkerMenu.markerId));
+								setScreenshotMarkerMenu(null);
+								setSystemScreenshotTooltip(null);
+								setShowTooltip(false);
+							}}
+						>
+							Delete screenshot
+						</button>
+					</div>
+				)}
 			</div>
 
 			<div
@@ -1206,7 +1228,10 @@ export const Timeline = ({
 				style={{
 					left: tooltipPosition.x,
 					top: tooltipPosition.y,
-					pointerEvents: selectedEvent?.kind === "designStudy" ? "auto" : "none",
+					pointerEvents:
+						selectedEvent?.kind === "designStudy" || selectedEvent?.kind === "codebase"
+							? "auto"
+							: "none",
 					...(showTooltip ? { display: "block" } : { display: "none" }),
 				}}
 				onClick={(event) => event.stopPropagation()}

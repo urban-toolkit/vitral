@@ -20,22 +20,78 @@ import {
     selectHighlightedCodebaseFilePaths,
     setHoveredCodebaseFilePath,
 } from "@/store/timelineSlice";
+import { selectAllGitHubEvents } from "@/store/gitEventsSlice";
 
 type GithubFilesProps = {
     projectId: string;
     connectionStatus: { connected: boolean; user?: { id: number; login: string } };
+    reviewOnly?: boolean;
     className?: string;
 };
 
 const normalizePath = (value: string) => value.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+const sortGitHubItems = (a: GitHubContentItem, b: GitHubContentItem) =>
+    (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1);
+
+function buildSnapshotItems(allPaths: string[], currentPath: string): GitHubContentItem[] {
+    const normalizedCurrentPath = normalizePath(currentPath);
+    const currentPrefix = normalizedCurrentPath ? `${normalizedCurrentPath}/` : "";
+
+    const directories = new Set<string>();
+    const files = new Set<string>();
+
+    for (const rawPath of allPaths) {
+        const normalizedPath = normalizePath(rawPath);
+        if (!normalizedPath) continue;
+        if (normalizedCurrentPath && !normalizedPath.startsWith(currentPrefix)) continue;
+
+        const remainder = normalizedCurrentPath
+            ? normalizedPath.slice(currentPrefix.length)
+            : normalizedPath;
+        if (!remainder) continue;
+
+        const segments = remainder.split("/").filter(Boolean);
+        if (segments.length === 0) continue;
+
+        const firstSegment = segments[0];
+        if (!firstSegment) continue;
+
+        if (segments.length > 1) {
+            directories.add(firstSegment);
+            continue;
+        }
+
+        files.add(firstSegment);
+    }
+
+    const items: GitHubContentItem[] = [];
+    for (const dirName of directories) {
+        items.push({
+            name: dirName,
+            path: normalizedCurrentPath ? `${normalizedCurrentPath}/${dirName}` : dirName,
+            type: "dir",
+        });
+    }
+    for (const fileName of files) {
+        items.push({
+            name: fileName,
+            path: normalizedCurrentPath ? `${normalizedCurrentPath}/${fileName}` : fileName,
+            type: "file",
+        });
+    }
+
+    return items.sort(sortGitHubItems);
+}
 
 export const GitHubFiles = memo(function GitHubFiles({
     projectId,
     connectionStatus,
+    reviewOnly = false,
     className,
 }: GithubFilesProps) {
     const dispatch = useDispatch();
     const highlightedCodebaseFilePaths = useSelector(selectHighlightedCodebaseFilePaths);
+    const gitEvents = useSelector(selectAllGitHubEvents);
 
     const [githubDocumentLink, setGithubDocumentLink] = useState<GitHubDocumentResponse>({});
     const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
@@ -54,6 +110,44 @@ export const GitHubFiles = memo(function GitHubFiles({
         ),
         [highlightedCodebaseFilePaths]
     );
+    const snapshotFilePaths = useMemo(() => {
+        const uniquePaths = new Set<string>();
+        for (const eventData of gitEvents) {
+            for (const filePath of eventData.filesAffected ?? []) {
+                const normalizedPath = normalizePath(filePath);
+                if (!normalizedPath) continue;
+                uniquePaths.add(normalizedPath);
+            }
+        }
+        return Array.from(uniquePaths).sort((a, b) => a.localeCompare(b));
+    }, [gitEvents]);
+
+    const snapshotItems = useMemo(
+        () => buildSnapshotItems(snapshotFilePaths, currentPath),
+        [currentPath, snapshotFilePaths],
+    );
+
+    const snapshotRepoLabel = useMemo(() => {
+        const owner = (githubDocumentLink.github_owner ?? "").trim();
+        const repo = (githubDocumentLink.github_repo ?? "").trim();
+        if (owner && repo) return `${owner}/${repo}`;
+        if (repo) return repo;
+
+        for (const eventData of gitEvents) {
+            const payload = eventData.payload as Record<string, unknown> | null | undefined;
+            if (!payload || typeof payload !== "object") continue;
+            const repository = payload.repository as Record<string, unknown> | undefined;
+            const repoCandidate = typeof repository?.name === "string" ? repository.name.trim() : "";
+            const ownerCandidateRaw = repository?.owner as Record<string, unknown> | undefined;
+            const ownerCandidate = typeof ownerCandidateRaw?.login === "string"
+                ? ownerCandidateRaw.login.trim()
+                : "";
+            if (ownerCandidate && repoCandidate) return `${ownerCandidate}/${repoCandidate}`;
+            if (repoCandidate) return repoCandidate;
+        }
+
+        return "";
+    }, [gitEvents, githubDocumentLink.github_owner, githubDocumentLink.github_repo]);
 
     const retrieveGithubLinkInformation = async () => {
         const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);
@@ -83,6 +177,12 @@ export const GitHubFiles = memo(function GitHubFiles({
     };
 
     useEffect(() => {
+        if (reviewOnly) {
+            setItems([]);
+            setItemsError(null);
+            setItemsLoading(false);
+            return;
+        }
         if (!connectionStatus.connected) return;
 
         void (async () => {
@@ -94,12 +194,20 @@ export const GitHubFiles = memo(function GitHubFiles({
                 await loadContents("");
             }
         })();
-    }, [connectionStatus.connected, projectId]);
+    }, [connectionStatus.connected, projectId, reviewOnly]);
 
     useEffect(() => {
+        if (reviewOnly) return;
         if (!githubDocumentLink.github_owner || !githubDocumentLink.github_repo) return;
         void loadContents(currentPath);
-    }, [currentPath, githubDocumentLink.github_owner, githubDocumentLink.github_repo]);
+    }, [currentPath, githubDocumentLink.github_owner, githubDocumentLink.github_repo, reviewOnly]);
+
+    useEffect(() => {
+        if (!reviewOnly) return;
+        void retrieveGithubLinkInformation().catch(() => {
+            // Best-effort metadata read for snapshot header.
+        });
+    }, [projectId, reviewOnly]);
 
     useEffect(() => {
         return () => {
@@ -126,7 +234,73 @@ export const GitHubFiles = memo(function GitHubFiles({
         <div className={`${classes.container} ${className ?? ""}`}>
             <p className={classes.title}>Github</p>
 
-            {!connectionStatus.connected ? (
+            {reviewOnly ? (
+                <>
+                    <p className={classes.infoLine}>
+                        Review snapshot mode.
+                    </p>
+                    <p className={classes.infoLine}>
+                        Repository: <span className={classes.bold}>{snapshotRepoLabel || "Snapshot"}</span>.
+                    </p>
+                    <div className={classes.filesSection}>
+                        <div className={classes.pathControls}>
+                            <p className={classes.pathLine}>
+                                Path: <b>/{currentPath || ""}</b>
+                            </p>
+                            <div>
+                                {currentPath ? (
+                                    <button
+                                        className={classes.linkButton}
+                                        onClick={() => {
+                                            const parts = currentPath.split("/").filter(Boolean);
+                                            parts.pop();
+                                            setCurrentPath(parts.join("/"));
+                                        }}
+                                    >
+                                        Up
+                                    </button>
+                                ) : null}
+                                <button className={classes.linkButton} onClick={() => setCurrentPath("")}>
+                                    Root
+                                </button>
+                            </div>
+                        </div>
+
+                        {snapshotItems.length === 0 ? (
+                            <p className={classes.loadLine}>No GitHub snapshot files available in this review project.</p>
+                        ) : (
+                            <ul className={classes.fileTree}>
+                                {snapshotItems.map((item) => (
+                                    <li key={item.path} className={classes.fileList}>
+                                        {item.type === "dir" ? (
+                                            <button
+                                                className={classes.folderButton}
+                                                onClick={() => setCurrentPath(item.path)}
+                                                title="Open folder"
+                                            >
+                                                <FontAwesomeIcon icon={faFolder} /> {item.name}
+                                            </button>
+                                        ) : (
+                                            <span
+                                                title={item.path}
+                                                className={`${classes.fileItem} ${
+                                                    highlightedPathSet.has(normalizePath(item.path))
+                                                        ? classes.fileItemHighlighted
+                                                        : ""
+                                                }`}
+                                                onMouseEnter={() => dispatch(setHoveredCodebaseFilePath(item.path))}
+                                                onMouseLeave={() => dispatch(setHoveredCodebaseFilePath(null))}
+                                            >
+                                                <FontAwesomeIcon icon={faFile} /> {item.name}
+                                            </span>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                </>
+            ) : !connectionStatus.connected ? (
                 <>
                     <p className={classes.infoLine}>
                         Sign in with your GitHub account to integrate files and events.
@@ -221,16 +395,18 @@ export const GitHubFiles = memo(function GitHubFiles({
                 </>
             )}
 
-            <GitRepoModal
-                isOpen={modalOpen}
-                repos={githubRepos}
-                onClose={() => setModalOpen(false)}
-                onSelectRepo={async (repo: GitHubRepo) => {
-                    await linkRepoToDocument(projectId, repo.owner, repo.repo);
-                    setModalOpen(false);
-                    await retrieveGithubLinkInformation();
-                }}
-            />
+            {!reviewOnly ? (
+                <GitRepoModal
+                    isOpen={modalOpen}
+                    repos={githubRepos}
+                    onClose={() => setModalOpen(false)}
+                    onSelectRepo={async (repo: GitHubRepo) => {
+                        await linkRepoToDocument(projectId, repo.owner, repo.repo);
+                        setModalOpen(false);
+                        await retrieveGithubLinkInformation();
+                    }}
+                />
+            ) : null}
         </div>
     );
 });
