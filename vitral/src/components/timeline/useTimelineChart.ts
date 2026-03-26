@@ -2276,28 +2276,74 @@ export function useTimelineChart({
                 const visibleBlueprintCodebaseLinkIds = new Set<string>();
                 const visibleKnowledgeNodeIds = new Set<string>();
                 const visibleKnowledgeTreeIds = new Set<string>();
+                const originKnowledgeNodeIds = new Set<string>();
+                const originKnowledgeTreeIds = new Set<string>();
+                const originBlueprintEventIds = new Set<string>();
 
                 if (hoveredTimelineEvent) {
                     if (hoveredTimelineEvent.kind === "knowledge") {
                         for (const nodeId of hoveredTimelineEvent.knowledgeNodeIds) {
-                            if (nodeId) visibleKnowledgeNodeIds.add(nodeId);
+                            if (nodeId) originKnowledgeNodeIds.add(nodeId);
                         }
                         if (hoveredTimelineEvent.knowledgeTreeId) {
-                            visibleKnowledgeTreeIds.add(hoveredTimelineEvent.knowledgeTreeId);
+                            originKnowledgeTreeIds.add(hoveredTimelineEvent.knowledgeTreeId);
                         }
                     } else if (hoveredTimelineEvent.kind === "blueprint") {
-                        visibleBlueprintEventIds.add(hoveredTimelineEvent.id);
+                        originBlueprintEventIds.add(hoveredTimelineEvent.id);
                     }
                 }
 
                 if (hoveredKnowledgeTreeId) {
-                    visibleKnowledgeTreeIds.add(hoveredKnowledgeTreeId);
+                    originKnowledgeTreeIds.add(hoveredKnowledgeTreeId);
                     const hoveredTreeNodeIds = knowledgeTreeNodeIdsByTreeId.get(hoveredKnowledgeTreeId) ?? [];
                     for (const nodeId of hoveredTreeNodeIds) {
-                        if (nodeId) visibleKnowledgeNodeIds.add(nodeId);
+                        if (nodeId) originKnowledgeNodeIds.add(nodeId);
                     }
                 }
 
+                for (const nodeId of originKnowledgeNodeIds) {
+                    visibleKnowledgeNodeIds.add(nodeId);
+                }
+                for (const treeId of originKnowledgeTreeIds) {
+                    visibleKnowledgeTreeIds.add(treeId);
+                }
+
+                // Preserve non-hover highlight triggers (file hover / blueprint component hover).
+                for (const blueprintEventId of highlightedBlueprintEventIds) {
+                    if (blueprintEventId) originBlueprintEventIds.add(blueprintEventId);
+                }
+                for (const blueprintEventId of originBlueprintEventIds) {
+                    visibleBlueprintEventIds.add(blueprintEventId);
+                }
+
+                // Horizontal propagation: exactly one hop, from origin events only.
+                for (const connection of knowledgeCrossTreeConnections) {
+                    const sourceNodeOrigin = originKnowledgeNodeIds.has(connection.sourceNodeId);
+                    const targetNodeOrigin = originKnowledgeNodeIds.has(connection.targetNodeId);
+                    const sourceTreeOrigin = originKnowledgeTreeIds.has(connection.sourceTreeId);
+                    const targetTreeOrigin = originKnowledgeTreeIds.has(connection.targetTreeId);
+                    if (!sourceNodeOrigin && !targetNodeOrigin && !sourceTreeOrigin && !targetTreeOrigin) {
+                        continue;
+                    }
+
+                    visibleKnowledgeConnectionIds.add(connection.id);
+                    if (connection.sourceNodeId) visibleKnowledgeNodeIds.add(connection.sourceNodeId);
+                    if (connection.targetNodeId) visibleKnowledgeNodeIds.add(connection.targetNodeId);
+                    if (connection.sourceTreeId) visibleKnowledgeTreeIds.add(connection.sourceTreeId);
+                    if (connection.targetTreeId) visibleKnowledgeTreeIds.add(connection.targetTreeId);
+                }
+
+                for (const connection of blueprintEventConnections) {
+                    const sourceOrigin = originBlueprintEventIds.has(connection.sourceBlueprintEventId);
+                    const targetOrigin = originBlueprintEventIds.has(connection.targetBlueprintEventId);
+                    if (!sourceOrigin && !targetOrigin) continue;
+
+                    visibleBlueprintEventConnectionIds.add(connection.id);
+                    visibleBlueprintEventIds.add(connection.sourceBlueprintEventId);
+                    visibleBlueprintEventIds.add(connection.targetBlueprintEventId);
+                }
+
+                // Seed explicitly highlighted knowledge<->blueprint links.
                 for (const link of knowledgeBlueprintLinks) {
                     if (highlightedKnowledgeBlueprintLinkIds.has(link.id)) {
                         visibleKnowledgeBlueprintLinkIds.add(link.id);
@@ -2306,45 +2352,11 @@ export function useTimelineChart({
                     }
                 }
 
-                for (const blueprintEventId of highlightedBlueprintEventIds) {
-                    visibleBlueprintEventIds.add(blueprintEventId);
-                }
-
+                // Vertical propagation: unlimited hops up/down.
+                // Important: propagated vertical hops do NOT trigger new horizontal hops.
                 let expanded = true;
                 while (expanded) {
                     expanded = false;
-
-                    for (const connection of knowledgeCrossTreeConnections) {
-                        const sourceNodeVisible = visibleKnowledgeNodeIds.has(connection.sourceNodeId);
-                        const targetNodeVisible = visibleKnowledgeNodeIds.has(connection.targetNodeId);
-                        const sourceTreeVisible = visibleKnowledgeTreeIds.has(connection.sourceTreeId);
-                        const targetTreeVisible = visibleKnowledgeTreeIds.has(connection.targetTreeId);
-                        if (!sourceNodeVisible && !targetNodeVisible && !sourceTreeVisible && !targetTreeVisible) {
-                            continue;
-                        }
-
-                        if (!visibleKnowledgeConnectionIds.has(connection.id)) {
-                            visibleKnowledgeConnectionIds.add(connection.id);
-                            expanded = true;
-                        }
-
-                        if (connection.sourceNodeId && !visibleKnowledgeNodeIds.has(connection.sourceNodeId)) {
-                            visibleKnowledgeNodeIds.add(connection.sourceNodeId);
-                            expanded = true;
-                        }
-                        if (connection.targetNodeId && !visibleKnowledgeNodeIds.has(connection.targetNodeId)) {
-                            visibleKnowledgeNodeIds.add(connection.targetNodeId);
-                            expanded = true;
-                        }
-                        if (connection.sourceTreeId && !visibleKnowledgeTreeIds.has(connection.sourceTreeId)) {
-                            visibleKnowledgeTreeIds.add(connection.sourceTreeId);
-                            expanded = true;
-                        }
-                        if (connection.targetTreeId && !visibleKnowledgeTreeIds.has(connection.targetTreeId)) {
-                            visibleKnowledgeTreeIds.add(connection.targetTreeId);
-                            expanded = true;
-                        }
-                    }
 
                     for (const link of knowledgeBlueprintLinks) {
                         const nodeVisible = visibleKnowledgeNodeIds.has(link.cardNodeId);
