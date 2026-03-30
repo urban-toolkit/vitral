@@ -128,6 +128,7 @@ const RIGHT_SIDEBAR_WIDTH_PX = 250;
 const AI_CHAT_BUTTON_BOTTOM_GAP_PX = 20;
 const AI_CHAT_BUTTON_TIMELINE_GAP_PX = 12;
 const AI_CHAT_BUTTON_RIGHT_GAP_PX = 16;
+const MINIMAP_AI_BUTTON_CLEARANCE_PX = 84;
 const TIMELINE_TOGGLE_OFFSET_WITH_TOOLBAR_PX = 65;
 const TIMELINE_TOGGLE_OFFSET_NO_TOOLBAR_PX = 20;
 const CANVAS_CHAT_RETRIEVAL_LIMIT = 80;
@@ -4107,6 +4108,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onClick={onCanvasClick}
                 onDragOver={handleCanvasDragOver}
                 onDrop={handleCanvasDrop}
+                miniMapBottomOffsetPx={canvasSidebarBottomOffset + MINIMAP_AI_BUTTON_CLEARANCE_PX}
+                miniMapRightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX}
             />
 
             <EdgeConnectMenu
