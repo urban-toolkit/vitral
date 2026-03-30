@@ -58,12 +58,27 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                 ? requestedModel
                 : (allowedModels[0] ?? DEFAULT_CHAT_MODEL);
 
-            let promptContent = "";
+            const promptName = body?.prompt ?? "CardsFromText";
+            let promptContent = await loadPrompt(promptName);
 
-            if (body?.prompt) {
-                promptContent = await loadPrompt(body?.prompt);
-            } else {
-                promptContent = await loadPrompt("CardsFromText");
+            const fileProcessingPrompts = new Set([
+                "CardsFromText",
+                "CardsFromImage",
+                "CardsFromData",
+                "CardsFromCode",
+                "ArtifactFromText",
+                "ArtifactFromImage",
+                "ArtifactFromData",
+                "ArtifactFromCode",
+            ]);
+            if (fileProcessingPrompts.has(promptName)) {
+                promptContent += [
+                    "",
+                    "Language policy:",
+                    "- Always produce the final output in English.",
+                    "- If the input content is in another language, translate relevant content to English before answering.",
+                    "- Keep required output schema/field names unchanged.",
+                ].join("\n");
             }
 
             type AssetMetadata = {

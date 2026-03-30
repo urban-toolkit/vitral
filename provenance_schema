@@ -1,0 +1,309 @@
+Project provenance_schema {
+  database_type: "PostgreSQL"
+  Note: "Provenance schema derived from backend/db/init/001_init.sql and migrations 008 + 012."
+}
+
+Enum provenance_connection_kind {
+  regular
+  referenced_by
+  iteration_of
+}
+
+Enum provenance_event_type {
+  created
+  updated
+  deleted
+  tree_changed
+}
+
+Table documents {
+  id uuid [pk, default: `gen_random_uuid()`]
+  title text [not null]
+  description text
+  state jsonb [not null]
+  version integer [not null, default: 1]
+  timeline jsonb
+  github_owner text
+  github_repo text
+  github_default_branch text
+  github_linked_at timestamptz
+  github_last_synced_at timestamptz
+  review_only boolean [not null, default: false]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table document_state_revisions {
+  id uuid [pk, default: `gen_random_uuid()`]
+  document_id uuid [not null]
+  version integer [not null]
+  captured_at timestamptz [not null, default: `now()`]
+  state jsonb [not null]
+  timeline jsonb [not null, default: `'{}'::jsonb`]
+
+  indexes {
+    (document_id, captured_at)
+    (document_id, version)
+  }
+}
+
+Table document_github_events {
+  id uuid [pk, default: `gen_random_uuid()`]
+  document_id uuid [not null]
+  repo_owner text [not null]
+  repo_name text [not null]
+  event_type text [not null]
+  event_key text [not null]
+  actor_login text
+  title text
+  url text
+  occurred_at timestamptz [not null]
+  issue_number int
+  pr_number int
+  commit_sha text
+  branch_name text
+  payload jsonb [not null]
+  inserted_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (document_id, event_type, event_key) [unique]
+    (document_id, occurred_at)
+  }
+}
+
+Table prov_object {
+  id bigserial [pk]
+  document_id uuid [not null]
+  node_id text [not null]
+  parent_object_node_id text
+  requirement_node_id text
+
+  indexes {
+    (document_id, node_id) [unique]
+  }
+}
+
+Table prov_activity {
+  id bigserial [pk]
+  document_id uuid [not null]
+  node_id text [not null]
+  related_activity_node_id text
+
+  indexes {
+    (document_id, node_id) [unique]
+  }
+}
+
+Table prov_user {
+  id bigserial [pk]
+  document_id uuid [not null]
+  node_id text [not null]
+
+  indexes {
+    (document_id, node_id) [unique]
+  }
+}
+
+Table prov_requirement {
+  id bigserial [pk]
+  document_id uuid [not null]
+  node_id text [not null]
+  detailed_requirement_node_id text
+
+  indexes {
+    (document_id, node_id) [unique]
+  }
+}
+
+Table prov_concept {
+  id bigserial [pk]
+  document_id uuid [not null]
+  node_id text [not null]
+  concept_composition_node_id text
+
+  indexes {
+    (document_id, node_id) [unique]
+  }
+}
+
+Table prov_insight {
+  id bigserial [pk]
+  document_id uuid [not null]
+  node_id text [not null]
+  concept_node_id text
+  activity_node_id text
+
+  indexes {
+    (document_id, node_id) [unique]
+  }
+}
+
+Table prov_component {
+  id bigserial [pk]
+  document_id uuid [not null]
+  node_id text [not null]
+  parent_component_node_id text
+
+  indexes {
+    (document_id, node_id) [unique]
+  }
+}
+
+Table prov_object_activity {
+  document_id uuid [not null]
+  object_node_id text [not null]
+  activity_node_id text [not null]
+  connection_kind provenance_connection_kind [not null, default: 'regular']
+
+  indexes {
+    (document_id, object_node_id, activity_node_id) [pk]
+  }
+}
+
+Table prov_user_activity {
+  document_id uuid [not null]
+  user_node_id text [not null]
+  activity_node_id text [not null]
+  connection_kind provenance_connection_kind [not null, default: 'regular']
+
+  indexes {
+    (document_id, user_node_id, activity_node_id) [pk]
+  }
+}
+
+Table prov_requirement_activity {
+  document_id uuid [not null]
+  requirement_node_id text [not null]
+  activity_node_id text [not null]
+  connection_kind provenance_connection_kind [not null, default: 'regular']
+
+  indexes {
+    (document_id, requirement_node_id, activity_node_id) [pk]
+  }
+}
+
+Table prov_concept_activity {
+  document_id uuid [not null]
+  concept_node_id text [not null]
+  activity_node_id text [not null]
+  connection_kind provenance_connection_kind [not null, default: 'regular']
+
+  indexes {
+    (document_id, concept_node_id, activity_node_id) [pk]
+  }
+}
+
+Table prov_component_requirement {
+  document_id uuid [not null]
+  component_node_id text [not null]
+  requirement_node_id text [not null]
+  connection_kind provenance_connection_kind [not null, default: 'regular']
+
+  indexes {
+    (document_id, component_node_id, requirement_node_id) [pk]
+  }
+}
+
+Table prov_card_connection {
+  document_id uuid [not null]
+  edge_id text [not null]
+  source_node_id text [not null]
+  target_node_id text [not null]
+  source_label text [not null]
+  target_label text [not null]
+  source_title text [not null, default: '']
+  target_title text [not null, default: '']
+  connection_label text
+  connection_kind provenance_connection_kind [not null, default: 'regular']
+  updated_at timestamptz [not null, default: `now()`]
+  deleted_at timestamptz
+
+  indexes {
+    (document_id, edge_id) [pk]
+    (document_id, updated_at)
+  }
+}
+
+Table prov_card_event {
+  id uuid [pk, default: `gen_random_uuid()`]
+  document_id uuid [not null]
+  occurred_at timestamptz [not null, default: `now()`]
+  node_id text [not null]
+  card_label text [not null]
+  card_title text [not null, default: '']
+  card_description text [not null, default: '']
+  event_type provenance_event_type [not null]
+  tree_activity_node_id text
+  tree_activity_title text
+  metadata jsonb [not null, default: `'{}'::jsonb`]
+
+  indexes {
+    (document_id, occurred_at)
+    (document_id, tree_activity_node_id, occurred_at)
+  }
+}
+
+Table prov_connection_event {
+  id uuid [pk, default: `gen_random_uuid()`]
+  document_id uuid [not null]
+  occurred_at timestamptz [not null, default: `now()`]
+  edge_id text [not null]
+  source_node_id text [not null]
+  target_node_id text [not null]
+  source_label text [not null]
+  target_label text [not null]
+  source_title text [not null, default: '']
+  target_title text [not null, default: '']
+  connection_label text
+  connection_kind provenance_connection_kind [not null, default: 'regular']
+  event_type provenance_event_type [not null]
+  metadata jsonb [not null, default: `'{}'::jsonb`]
+
+  indexes {
+    (document_id, occurred_at)
+  }
+}
+
+// Enforced by database FKs
+Ref: document_state_revisions.document_id > documents.id [delete: cascade]
+Ref: document_github_events.document_id > documents.id [delete: cascade]
+Ref: prov_object.document_id > documents.id [delete: cascade]
+Ref: prov_activity.document_id > documents.id [delete: cascade]
+Ref: prov_user.document_id > documents.id [delete: cascade]
+Ref: prov_requirement.document_id > documents.id [delete: cascade]
+Ref: prov_concept.document_id > documents.id [delete: cascade]
+Ref: prov_insight.document_id > documents.id [delete: cascade]
+Ref: prov_component.document_id > documents.id [delete: cascade]
+Ref: prov_object_activity.document_id > documents.id [delete: cascade]
+Ref: prov_user_activity.document_id > documents.id [delete: cascade]
+Ref: prov_requirement_activity.document_id > documents.id [delete: cascade]
+Ref: prov_concept_activity.document_id > documents.id [delete: cascade]
+Ref: prov_component_requirement.document_id > documents.id [delete: cascade]
+Ref: prov_card_connection.document_id > documents.id [delete: cascade]
+Ref: prov_card_event.document_id > documents.id [delete: cascade]
+Ref: prov_connection_event.document_id > documents.id [delete: cascade]
+
+// Logical (app-enforced) provenance relationships
+Ref: prov_object.(document_id, parent_object_node_id) > prov_object.(document_id, node_id)
+Ref: prov_object.(document_id, requirement_node_id) > prov_requirement.(document_id, node_id)
+Ref: prov_activity.(document_id, related_activity_node_id) > prov_activity.(document_id, node_id)
+Ref: prov_requirement.(document_id, detailed_requirement_node_id) > prov_requirement.(document_id, node_id)
+Ref: prov_concept.(document_id, concept_composition_node_id) > prov_concept.(document_id, node_id)
+Ref: prov_insight.(document_id, concept_node_id) > prov_concept.(document_id, node_id)
+Ref: prov_insight.(document_id, activity_node_id) > prov_activity.(document_id, node_id)
+Ref: prov_component.(document_id, parent_component_node_id) > prov_component.(document_id, node_id)
+Ref: prov_object_activity.(document_id, object_node_id) > prov_object.(document_id, node_id)
+Ref: prov_object_activity.(document_id, activity_node_id) > prov_activity.(document_id, node_id)
+Ref: prov_user_activity.(document_id, user_node_id) > prov_user.(document_id, node_id)
+Ref: prov_user_activity.(document_id, activity_node_id) > prov_activity.(document_id, node_id)
+Ref: prov_requirement_activity.(document_id, requirement_node_id) > prov_requirement.(document_id, node_id)
+Ref: prov_requirement_activity.(document_id, activity_node_id) > prov_activity.(document_id, node_id)
+Ref: prov_concept_activity.(document_id, concept_node_id) > prov_concept.(document_id, node_id)
+Ref: prov_concept_activity.(document_id, activity_node_id) > prov_activity.(document_id, node_id)
+Ref: prov_component_requirement.(document_id, component_node_id) > prov_component.(document_id, node_id)
+Ref: prov_component_requirement.(document_id, requirement_node_id) > prov_requirement.(document_id, node_id)
+Ref: prov_card_event.(document_id, tree_activity_node_id) > prov_activity.(document_id, node_id)
+
+// Polymorphic identifier links (not representable as strict FK):
+// prov_card_connection.source_node_id / target_node_id may point to any card/component node table.
+// prov_card_event.node_id and prov_connection_event.edge_id are historical event identifiers.
