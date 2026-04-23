@@ -22,13 +22,13 @@
 
 ## Features
 
-- **Shard canvas** — represent design study artifacts (papers, transcripts, sketches, screenshots, code) as typed, linked knowledge units (shards)
-- **Sharding** — automatically decompose uploaded files into shard trees using LLMs
-- **Provenance timeline** — record the full evolution of the knowledge graph across the study lifecycle
-- **Pattern book** — match requirements to established VA system components from the literature
-- **Codebase integration** — link GitHub commits and files to design decisions through an OAuth connection
-- **AI assistant** — Query and ask analytical question about shards using natural language
-- **Export** — generate a structured Markdown report or a portable `.vi` archive of the full study
+- **Shard canvas**: Represent design study artifacts (papers, transcripts, sketches, screenshots, code) as typed, linked knowledge units (shards)
+- **Sharding**: Automatically decompose uploaded files into shard trees using LLMs
+- **Provenance timeline**: Record the full evolution of the knowledge graph across the study lifecycle
+- **Pattern book**: Match requirements to established VA system components from the literature
+- **Codebase integration**: Link GitHub commits and files to design decisions through an OAuth connection
+- **AI assistant**: Query and ask analytical question about shards using natural language
+- **Export**: Generate a structured Markdown report or a portable `.vi` archive of the full study
 
 ---
 
