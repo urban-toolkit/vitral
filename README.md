@@ -17,9 +17,6 @@
 
 **Vitral** is a framework for reproducible design studies in visual analytics. It structures the design study process as a knowledge pipeline extracting knowledge from heterogeneous study artifacts, representing it as a relational graph, and supporting reasoning across that graph at the level of individual artifacts and across the full study ecosystem.
 
-<!-- VIDEO PLACEHOLDER -->
-<!-- Replace the line below with your actual video embed once available -->
-> 📹 Demo video coming soon.
 
 ---
 
