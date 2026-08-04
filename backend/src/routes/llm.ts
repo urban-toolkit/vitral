@@ -58,7 +58,7 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                 ? requestedModel
                 : (allowedModels[0] ?? DEFAULT_CHAT_MODEL);
 
-            const promptName = body?.prompt ?? "CardsFromText";
+            const promptName = body?.prompt || "CardsFromText";
             let promptContent = await loadPrompt(promptName);
 
             const fileProcessingPrompts = new Set([

@@ -1,7 +1,9 @@
 -- provenance_schema.sql
 -- Documentation-focused SQL model for provenance relationships.
--- Source of truth inspected: backend/db/init/001_init.sql, backend/db/migrations/008_support_github_events.sql,
--- backend/db/migrations/012_add_canvas_provenance.sql, and provenance write paths in backend/src/routes/state.ts.
+-- Source of truth inspected: backend/db/init/001_init.sql, backend/db/migrations/002_add_github_link.sql,
+-- backend/db/migrations/008_support_github_events.sql, backend/db/migrations/009_add_timeline_config_data.sql,
+-- backend/db/migrations/011_add_review_only_flag.sql, backend/db/migrations/012_add_canvas_provenance.sql,
+-- and provenance write paths in backend/src/routes/state.ts.
 --
 -- Notes:
 -- 1) "Enforced FK" relationships below exist as database foreign keys.
@@ -26,6 +28,9 @@ CREATE TABLE documents (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX documents_github_owner_repo_idx
+    ON documents (github_owner, github_repo);
 
 CREATE TABLE document_state_revisions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 import { faCheck, faCircle, faImages, faWandSparkles } from "@fortawesome/free-solid-svg-icons";
 import type {
@@ -261,6 +261,14 @@ export function useTimelineChart({
     setTooltipPosition,
     setShowTooltip,
 }: UseTimelineChartParams) {
+    // Held in refs so the heavy render effect below does not list them as deps:
+    // both callbacks are recreated on every canvas `nodes` change, and depending
+    // on them would tear down and rebuild the whole D3 SVG on every node drag.
+    const onKnowledgeEventNavigateRef = useRef(onKnowledgeEventNavigate);
+    onKnowledgeEventNavigateRef.current = onKnowledgeEventNavigate;
+    const onBlueprintEventNavigateRef = useRef(onBlueprintEventNavigate);
+    onBlueprintEventNavigateRef.current = onBlueprintEventNavigate;
+
     useEffect(() => {
         if (!svgRef.current || width === 0 || height === 0) return;
         const currentSvg = svgRef.current;
@@ -1729,7 +1737,7 @@ export function useTimelineChart({
                     kind: "knowledge",
                     event: selectedKnowledgeEvent,
                 });
-                onKnowledgeEventNavigate?.(selectedKnowledgeEvent);
+                onKnowledgeEventNavigateRef.current?.(selectedKnowledgeEvent);
                 setTooltipPosition({ x: clampedX, y: clampedY });
                 setShowTooltip(true);
             };
@@ -1881,7 +1889,7 @@ export function useTimelineChart({
                             kind: "knowledge",
                             event: selectedKnowledgeEvent,
                         });
-                        onKnowledgeEventNavigate?.(selectedKnowledgeEvent);
+                        onKnowledgeEventNavigateRef.current?.(selectedKnowledgeEvent);
                         setTooltipPosition({ x: clampedX, y: clampedY });
                         setShowTooltip(true);
                     });
@@ -2589,10 +2597,10 @@ export function useTimelineChart({
 
                         setSelectedEvent({ kind, event: eventData });
                         if (kind === "knowledge") {
-                            onKnowledgeEventNavigate?.(eventData as KnowledgeBaseEvent);
+                            onKnowledgeEventNavigateRef.current?.(eventData as KnowledgeBaseEvent);
                         }
                         if (kind === "blueprint") {
-                            onBlueprintEventNavigate?.(eventData as BlueprintEvent);
+                            onBlueprintEventNavigateRef.current?.(eventData as BlueprintEvent);
                         }
                         setTooltipPosition({ x: clampedX, y: clampedY });
                         setShowTooltip(true);
@@ -2714,9 +2722,12 @@ export function useTimelineChart({
                     const dx = Number(sourceEvent.movementX ?? 0);
                     const dy = Number(sourceEvent.movementY ?? 0);
                     if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 1) {
-                        // Preserve horizontal timeline pan while enabling click-drag vertical scrolling
-                        // for dense track stacks.
+                        // Vertical-dominant click-drag scrolls the track stack; discard the
+                        // horizontal pan d3-zoom would apply for the same gesture so the
+                        // timeline does not also drift sideways under the pointer.
                         timelineScrollContainer.scrollTop -= dy;
+                        svg.property("__zoom", zoomTransformRef.current);
+                        return;
                     }
                 }
                 zoomTransformRef.current = event.transform;
@@ -2774,8 +2785,6 @@ export function useTimelineChart({
         systemScreenshotMarkers,
         playbackAt,
         onPlaybackAtChange,
-        onKnowledgeEventNavigate,
-        onBlueprintEventNavigate,
         pendingBlueprintLinkEventId,
         hoveredCodebaseFilePath,
         highlightedCodebaseFilePaths,

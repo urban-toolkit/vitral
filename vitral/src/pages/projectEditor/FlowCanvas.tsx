@@ -55,7 +55,6 @@ export const FlowCanvas = memo(function FlowCanvas({
             style={{ backgroundColor: "#ffffff" }}
             nodes={nodes}
             edges={edges}
-            onlyRenderVisibleElements
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}

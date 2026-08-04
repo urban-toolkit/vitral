@@ -73,6 +73,10 @@ function buildSnapshotItems(allPaths: string[], currentPath: string): GitHubCont
         });
     }
     for (const fileName of files) {
+        // A name can appear as a leaf file in one commit and a directory in
+        // another across history; treat it as a directory to avoid emitting two
+        // items (and two rows) with the same `path`/React key.
+        if (directories.has(fileName)) continue;
         items.push({
             name: fileName,
             path: normalizedCurrentPath ? `${normalizedCurrentPath}/${fileName}` : fileName,
@@ -111,6 +115,9 @@ export const GitHubFiles = memo(function GitHubFiles({
         [highlightedCodebaseFilePaths]
     );
     const snapshotFilePaths = useMemo(() => {
+        // Only consumed by the review-only render branch; skip the O(events x files)
+        // scan + sort entirely in normal edit mode.
+        if (!reviewOnly) return [];
         const uniquePaths = new Set<string>();
         for (const eventData of gitEvents) {
             for (const filePath of eventData.filesAffected ?? []) {
@@ -120,14 +127,15 @@ export const GitHubFiles = memo(function GitHubFiles({
             }
         }
         return Array.from(uniquePaths).sort((a, b) => a.localeCompare(b));
-    }, [gitEvents]);
+    }, [gitEvents, reviewOnly]);
 
     const snapshotItems = useMemo(
-        () => buildSnapshotItems(snapshotFilePaths, currentPath),
-        [currentPath, snapshotFilePaths],
+        () => (reviewOnly ? buildSnapshotItems(snapshotFilePaths, currentPath) : []),
+        [currentPath, snapshotFilePaths, reviewOnly],
     );
 
     const snapshotRepoLabel = useMemo(() => {
+        if (!reviewOnly) return "";
         const owner = (githubDocumentLink.github_owner ?? "").trim();
         const repo = (githubDocumentLink.github_repo ?? "").trim();
         if (owner && repo) return `${owner}/${repo}`;
@@ -147,7 +155,7 @@ export const GitHubFiles = memo(function GitHubFiles({
         }
 
         return "";
-    }, [gitEvents, githubDocumentLink.github_owner, githubDocumentLink.github_repo]);
+    }, [gitEvents, githubDocumentLink.github_owner, githubDocumentLink.github_repo, reviewOnly]);
 
     const retrieveGithubLinkInformation = async () => {
         const info: GitHubDocumentResponse = await getGithubDocumentLink(projectId);

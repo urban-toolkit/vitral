@@ -86,10 +86,13 @@ const EXPORT_GITHUB_EVENTS_BATCH_SIZE = 250;
 const DUPLICATE_JOB_RETENTION_MS = 60 * 60 * 1000;
 const MAX_DUPLICATE_JOBS = 500;
 const DUPLICATE_JOB_ERROR_MESSAGE = "Failed to duplicate project.";
-const DEFAULT_CANVAS_CHAT_RETRIEVAL_LIMIT = 40;
-const MAX_CANVAS_CHAT_RETRIEVAL_LIMIT = 80;
-const DEFAULT_CANVAS_CHAT_CONTEXT_NODE_LIMIT = 24;
-const MAX_CANVAS_CHAT_CONTEXT_NODE_LIMIT = 80;
+// Defaults preserve the pre-refactor no-regression behavior (retrieval cap 200,
+// default 60, context nodes 40). Operators can still tune these down via the
+// CANVAS_CHAT_* env vars below.
+const DEFAULT_CANVAS_CHAT_RETRIEVAL_LIMIT = 60;
+const MAX_CANVAS_CHAT_RETRIEVAL_LIMIT = 200;
+const DEFAULT_CANVAS_CHAT_CONTEXT_NODE_LIMIT = 40;
+const MAX_CANVAS_CHAT_CONTEXT_NODE_LIMIT = 200;
 
 type DuplicatedDocumentSummary = {
     id: string;
@@ -304,9 +307,12 @@ function arraysEqual(a: string[], b: string[]): boolean {
 }
 
 function parsePositiveIntEnv(value: string | undefined, fallback: number): number {
+    // An unset-but-declared env var arrives as "" (Number("") === 0), and "0"/negatives
+    // are not positive ints; all of these must fall back to the default, not collapse to 1.
+    if (value === undefined || value.trim() === "") return fallback;
     const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.max(1, Math.floor(parsed));
+    if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+    return Math.floor(parsed);
 }
 
 function chunkItems<T>(items: T[], chunkSize: number): T[][] {
@@ -2750,13 +2756,14 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.get("/state/:id/export-vi", async (request, reply) => {
         const { id } = request.params as { id: string };
-        const { includeGithub } = request.query as { includeGithub?: string | number | boolean };
+        const { includeGithub } = request.query as { includeGithub?: string | string[] };
         const exportStartedAt = Date.now();
         const includeGithubData = (() => {
-            if (typeof includeGithub === "boolean") return includeGithub;
-            if (typeof includeGithub === "number") return includeGithub !== 0;
-            if (typeof includeGithub === "string") {
-                const normalized = includeGithub.trim().toLowerCase();
+            // Fastify yields a string, or a string[] for a repeated query param; use the
+            // last provided value so any explicit "exclude" is honored rather than dropped.
+            const raw = Array.isArray(includeGithub) ? includeGithub[includeGithub.length - 1] : includeGithub;
+            if (typeof raw === "string") {
+                const normalized = raw.trim().toLowerCase();
                 if (normalized === "0" || normalized === "false" || normalized === "no") return false;
             }
             return true;

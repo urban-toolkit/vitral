@@ -131,7 +131,20 @@ const AI_CHAT_BUTTON_RIGHT_GAP_PX = 16;
 const MINIMAP_AI_BUTTON_CLEARANCE_PX = 84;
 const TIMELINE_TOGGLE_OFFSET_WITH_TOOLBAR_PX = 65;
 const TIMELINE_TOGGLE_OFFSET_NO_TOOLBAR_PX = 20;
-const CANVAS_CHAT_RETRIEVAL_LIMIT = 80;
+// Client-side cap on the canvas-chat retrieval `limit`. Must mirror the backend's
+// MAX_CANVAS_CHAT_RETRIEVAL_LIMIT / CANVAS_CHAT_MAX_RETRIEVAL_LIMIT cap in
+// backend/src/routes/state.ts (the backend clamps regardless); keep the two in sync.
+const CANVAS_CHAT_MAX_RETRIEVAL_LIMIT = 200;
+
+function readNodeOpacity(style: { opacity?: unknown } | null | undefined): number | undefined {
+    const raw = style?.opacity;
+    if (typeof raw === "number") return Number.isFinite(raw) ? raw : undefined;
+    if (typeof raw === "string") {
+        const parsed = Number.parseFloat(raw);
+        return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+}
 
 function readImageFileAsDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -2176,11 +2189,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     attachedCodebasePaths.includes(normalizedHoveredCodebasePath);
                 const isEmphasized = emphasizedBlueprintComponentIds.has(node.id) || isHoveredByFile;
                 const desiredOpacity = isEmphasized ? 1 : 0.5;
-                const currentOpacity = typeof node.style?.opacity === "number"
-                    ? node.style.opacity
-                    : typeof node.style?.opacity === "string"
-                        ? Number.parseFloat(node.style.opacity)
-                        : undefined;
+                const currentOpacity = readNodeOpacity(node.style);
                 if (currentOpacity === desiredOpacity) {
                     return node;
                 }
@@ -2336,11 +2345,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             let styleChanged = false;
             if (nodeLabel === "blueprint_component") {
                 const desiredOpacity = isEmphasized ? 1 : 0.5;
-                const currentOpacity = typeof node.style?.opacity === "number"
-                    ? node.style.opacity
-                    : typeof node.style?.opacity === "string"
-                        ? Number.parseFloat(node.style.opacity)
-                        : undefined;
+                const currentOpacity = readNodeOpacity(node.style);
                 if (currentOpacity !== desiredOpacity) {
                     nextStyle = {
                         ...(node.style as Record<string, string | number> ?? {}),
@@ -3090,7 +3095,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     message: trimmed,
                     conversation: conversationPayload,
                     scopeNodeIds,
-                    limit: Math.max(1, Math.min(CANVAS_CHAT_RETRIEVAL_LIMIT, scopeNodeIds.length || 60)),
+                    limit: Math.max(1, Math.min(CANVAS_CHAT_MAX_RETRIEVAL_LIMIT, scopeNodeIds.length || 60)),
                     minScore: 0.3,
                     at: playbackAt ?? undefined,
                 });
@@ -3421,9 +3426,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (exportingProject) return;
 
         const includeGithubData = window.confirm(
-            "Include GitHub data in this .vi export?\n\n" +
-            "Press OK to include commit timeline and repository snapshot paths.\n" +
-            "Press Cancel to export without GitHub data."
+            "Include GitHub commit/event history in this .vi export?\n\n" +
+            "Press OK to include the GitHub commit timeline and repository snapshot file list.\n" +
+            "Press Cancel to export without that GitHub history.\n\n" +
+            "Note: your timeline and any codebase files pinned to tracks are always included."
         );
 
         setExportingProject(true);
@@ -3487,24 +3493,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         navigate("/projects");
     }, [navigate]);
 
-    const handleKnowledgeEventNavigate = useCallback((eventData: KnowledgeBaseEvent) => {
-        const candidateIds: string[] = [];
-        const treeId = typeof eventData.treeId === "string" ? eventData.treeId.trim() : "";
-        if (treeId) candidateIds.push(treeId);
-
-        const cardEvents = Array.isArray(eventData.events) ? eventData.events : [];
-        for (const cardEvent of cardEvents) {
-            const nodeId = typeof cardEvent.nodeId === "string" ? cardEvent.nodeId.trim() : "";
-            if (!nodeId) continue;
-            candidateIds.push(nodeId);
-        }
-
-        if (candidateIds.length === 0) return;
-
-        const existingNodeIds = new Set(nodes.map((node) => String(node.id ?? "")));
-        const targetNodeId = candidateIds.find((nodeId) => existingNodeIds.has(nodeId));
-        if (!targetNodeId) return;
-
+    const focusNodeById = useCallback((targetNodeId: string) => {
         const focusNode = () => {
             void fitView({
                 nodes: [{ id: targetNodeId }],
@@ -3524,7 +3513,28 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         focusNode();
-    }, [fitView, nodes, viewMode]);
+    }, [fitView, viewMode]);
+
+    const handleKnowledgeEventNavigate = useCallback((eventData: KnowledgeBaseEvent) => {
+        const candidateIds: string[] = [];
+        const treeId = typeof eventData.treeId === "string" ? eventData.treeId.trim() : "";
+        if (treeId) candidateIds.push(treeId);
+
+        const cardEvents = Array.isArray(eventData.events) ? eventData.events : [];
+        for (const cardEvent of cardEvents) {
+            const nodeId = typeof cardEvent.nodeId === "string" ? cardEvent.nodeId.trim() : "";
+            if (!nodeId) continue;
+            candidateIds.push(nodeId);
+        }
+
+        if (candidateIds.length === 0) return;
+
+        const existingNodeIds = new Set(nodes.map((node) => String(node.id ?? "")));
+        const targetNodeId = candidateIds.find((nodeId) => existingNodeIds.has(nodeId));
+        if (!targetNodeId) return;
+
+        focusNodeById(targetNodeId);
+    }, [focusNodeById, nodes]);
 
     const handleBlueprintEventNavigate = useCallback((eventData: BlueprintEvent) => {
         const componentNodeId = typeof eventData.componentNodeId === "string"
@@ -3535,26 +3545,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const existingNodeIds = new Set(nodes.map((node) => String(node.id ?? "")));
         if (!existingNodeIds.has(componentNodeId)) return;
 
-        const focusNode = () => {
-            void fitView({
-                nodes: [{ id: componentNodeId }],
-                padding: 0.28,
-                duration: 360,
-            });
-        };
-
-        if (viewMode !== "explore") {
-            setViewMode("explore");
-            window.requestAnimationFrame(() => {
-                window.requestAnimationFrame(() => {
-                    focusNode();
-                });
-            });
-            return;
-        }
-
-        focusNode();
-    }, [fitView, nodes, viewMode]);
+        focusNodeById(componentNodeId);
+    }, [focusNodeById, nodes]);
 
     const handleFreeInputClicked = useCallback(() => {
         if (interactionLocked) return;

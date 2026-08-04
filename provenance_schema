@@ -1,6 +1,6 @@
 Project provenance_schema {
   database_type: "PostgreSQL"
-  Note: "Provenance schema derived from backend/db/init/001_init.sql and migrations 008 + 012."
+  Note: "Provenance schema derived from backend/db/init/001_init.sql and migrations 002, 008, 009, 011, 012."
 }
 
 Enum provenance_connection_kind {
@@ -31,6 +31,10 @@ Table documents {
   review_only boolean [not null, default: false]
   created_at timestamptz [not null, default: `now()`]
   updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (github_owner, github_repo)
+  }
 }
 
 Table document_state_revisions {

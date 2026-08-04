@@ -1224,6 +1224,8 @@ type SystemScreenshotZonesContext = {
 
 type RawScreenshotZonePayload = {
     zones?: unknown;
+    components?: unknown;
+    rectangles?: unknown;
 };
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -1281,14 +1283,23 @@ function extractRawScreenshotZones(rawOutput: string): {
     validationError: string | null;
 } {
     const parsed = tryParseJson<RawScreenshotZonePayload>(rawOutput);
-    if (!parsed || !Array.isArray(parsed.zones)) {
+    const rawZoneArray = !parsed
+        ? null
+        : Array.isArray(parsed.zones)
+            ? parsed.zones
+            : Array.isArray(parsed.components)
+                ? parsed.components
+                : Array.isArray(parsed.rectangles)
+                    ? parsed.rectangles
+                    : null;
+    if (!rawZoneArray) {
         return {
             zones: [],
-            validationError: "Response must be valid JSON with a top-level zones array.",
+            validationError: "Response must be valid JSON with a top-level zones/components/rectangles array.",
         };
     }
 
-    const zones = parsed.zones.filter(isObjectRecord);
+    const zones = rawZoneArray.filter(isObjectRecord);
     if (zones.length === 0) {
         return {
             zones: [],
