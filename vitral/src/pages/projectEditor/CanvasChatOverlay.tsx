@@ -51,7 +51,7 @@ export function CanvasChatOverlay({
                 aria-label="AI Assistant"
             >
                 <header className={classes.header}>
-                    <h3 className={classes.title}>AI Assitant</h3>
+                    <h3 className={classes.title}>AI Assistant</h3>
                     <div className={classes.headerActions}>
                         <button
                             type="button"

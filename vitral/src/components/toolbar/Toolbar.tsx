@@ -36,13 +36,13 @@ export function Toolbar({
                 {bottom: "15px"}
             }    
         >
-            <button type="button" className={`${classes.tool} ${isActive("") ? classes.toolActive : ""}`} onClick={onPointerClicked} title="Pointer">
+            <button type="button" className={`${classes.tool} ${isActive("") ? classes.toolActive : ""}`} onClick={onPointerClicked} title="Pointer" aria-label="Pointer" aria-pressed={isActive("")}>
                 <FontAwesomeIcon icon={faArrowPointer} className={classes.toolIcon} />
             </button>
-            <button type="button" className={`${classes.tool} ${isActive("node") ? classes.toolActive : ""}`} onClick={onNodeInputClicked} title="New card">
+            <button type="button" className={`${classes.tool} ${isActive("node") ? classes.toolActive : ""}`} onClick={onNodeInputClicked} title="New card" aria-label="New card" aria-pressed={isActive("node")}>
                 <FontAwesomeIcon icon={faSquare} className={classes.toolIcon} />
             </button>
-            <button type="button" className={`${classes.tool} ${isActive("blueprint_component") ? classes.toolActive : ""}`} onClick={onBlueprintComponentClicked} title="New system component">
+            <button type="button" className={`${classes.tool} ${isActive("blueprint_component") ? classes.toolActive : ""}`} onClick={onBlueprintComponentClicked} title="New system component" aria-label="New system component" aria-pressed={isActive("blueprint_component")}>
                 <FontAwesomeIcon
                     icon={faCircle}
                     className={classes.toolIcon}

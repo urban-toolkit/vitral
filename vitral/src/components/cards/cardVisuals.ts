@@ -20,11 +20,11 @@ export const CARD_LABELS: cardLabel[] = [
 
 export const CARD_LABEL_COLORS: Record<cardLabel, string> = {
     person: "rgba(231, 174, 255, 0.70)",
-    activity: "rgb(174, 233, 255, 0.70)",
-    object: "rgb(255, 243, 174, 0.70)",
-    requirement: "rgb(255, 174, 174, 0.70)",
-    concept: "rgb(224, 255, 174, 0.70)",
-    insight: "rgb(174, 255, 198, 0.70)",
+    activity: "rgba(174, 233, 255, 0.70)",
+    object: "rgba(255, 243, 174, 0.70)",
+    requirement: "rgba(255, 174, 174, 0.70)",
+    concept: "rgba(224, 255, 174, 0.70)",
+    insight: "rgba(174, 255, 198, 0.70)",
 };
 
 export const CARD_LABEL_ICONS: Record<cardLabel, IconDefinition> = {

@@ -9,7 +9,7 @@ import type { DocumentResponse } from "@/api/stateApi";
 import classes from './ProjectsPage.module.css';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faXmark, faPlus } from '@fortawesome/free-solid-svg-icons';
 import { githubStatus } from '@/api/githubApi';
 
 export function ProjectsPage() {
@@ -150,7 +150,7 @@ export function ProjectsPage() {
         <div className={classes.pageContainer}>
             <div className={classes.innerContent}>
                 <div className={classes.headerRow}>
-                    <p className={classes.title}>Projects</p>
+                    <h1 className={classes.title}>Projects</h1>
                     <button
                         type="button"
                         className={classes.importButton}
@@ -167,51 +167,65 @@ export function ProjectsPage() {
                         onChange={handleImportProject}
                     />
                 </div>
-                
+
                 <div className={classes.projectsGrid}>
                     {documents.map((document) => {
-                        return <div key={document.id} className={classes.projectCard}>
-                            <div className={classes.innerCard}>
+                        const projectTitle = (document.title ?? "").trim() || "Untitled";
+                        return <article key={document.id} className={classes.projectCard}>
+                            <div className={classes.cardHeader}>
+                                <h2 className={classes.documentTitle} title={projectTitle}>{projectTitle}</h2>
                                 {document.review_only ? (
                                     <span className={classes.reviewBadge}>Review only</span>
                                 ) : null}
-                                <p className={classes.documentTitle}>{document.title}</p>
-                                <p>{document.description}</p>
-                                <p>{document.id}</p>
-                                <FontAwesomeIcon
-                                    className={classes.removeIcon}
-                                    icon={faXmark}
-                                    onClick={() => { void handleRemoveProject(document); }}
-                                />
-                                <div className={classes.cardActions}>
-                                    <button
-                                        type="button"
-                                        onClick={() => navigate("/project/"+document.id)}
-                                    >
-                                        Open
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleDuplicateProject(document.id)}
-                                        disabled={duplicatingProjectId !== null || convertingProjectId !== null}
-                                    >
-                                        {duplicatingProjectId === document.id ? "Duplicating..." : "Duplicate"}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleConvertProjectToReviewMode(document)}
-                                        disabled={Boolean(document.review_only) || convertingProjectId !== null || duplicatingProjectId !== null}
-                                    >
-                                        {convertingProjectId === document.id ? "Converting..." : (document.review_only ? "Review only" : "Make review only")}
-                                    </button>
-                                </div>
                             </div>
-                        </div>
+                            {document.description ? (
+                                <p className={classes.documentDescription}>{document.description}</p>
+                            ) : (
+                                <p className={classes.documentDescriptionEmpty}>No description</p>
+                            )}
+                            <button
+                                type="button"
+                                className={classes.removeButton}
+                                aria-label={`Delete project ${projectTitle}`}
+                                onClick={() => { void handleRemoveProject(document); }}
+                            >
+                                <FontAwesomeIcon icon={faXmark} />
+                            </button>
+                            <div className={classes.cardActions}>
+                                <button
+                                    type="button"
+                                    className={classes.primaryAction}
+                                    onClick={() => navigate("/project/"+document.id)}
+                                >
+                                    Open
+                                </button>
+                                <button
+                                    type="button"
+                                    className={classes.secondaryAction}
+                                    onClick={() => void handleDuplicateProject(document.id)}
+                                    disabled={duplicatingProjectId !== null || convertingProjectId !== null}
+                                >
+                                    {duplicatingProjectId === document.id ? "Duplicating..." : "Duplicate"}
+                                </button>
+                                <button
+                                    type="button"
+                                    className={classes.secondaryAction}
+                                    onClick={() => void handleConvertProjectToReviewMode(document)}
+                                    disabled={Boolean(document.review_only) || convertingProjectId !== null || duplicatingProjectId !== null}
+                                >
+                                    {convertingProjectId === document.id ? "Converting..." : (document.review_only ? "Review only" : "Make review only")}
+                                </button>
+                            </div>
+                        </article>
                     })}
-                    <div className={classes.newProject}>
-                        <p className={classes.documentTitle}>Untitled</p>
-                        <button onClick={() => navigate("/projects/new")}>New project</button>
-                    </div>
+                    <button
+                        type="button"
+                        className={classes.newProject}
+                        onClick={() => navigate("/projects/new")}
+                    >
+                        <FontAwesomeIcon icon={faPlus} className={classes.newProjectIcon} />
+                        <span className={classes.newProjectText}>New project</span>
+                    </button>
                 </div>
             </div>
         </div>

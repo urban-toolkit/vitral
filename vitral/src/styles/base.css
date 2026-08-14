@@ -1,4 +1,4 @@
 :root {
   font-size: 16px;
-  --border-style: 1px solid #ccc;
+  --border-style: 1px solid var(--color-border);
 }

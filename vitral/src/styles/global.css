@@ -16,3 +16,31 @@ textarea {
     font-family: system-ui, -apple-system, BlinkMacSystemFont,
         'Segoe UI', Roboto, sans-serif;
 }
+
+/*
+ * Keyboard focus visibility (WCAG 2.4.7). Applies a consistent ring to real
+ * controls only. Component-scoped :focus-visible rules override this via higher
+ * specificity, so existing custom focus styles are preserved.
+ */
+button:focus-visible,
+[role="button"]:focus-visible,
+a[href]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+}
+
+/* Respect users who prefer reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}

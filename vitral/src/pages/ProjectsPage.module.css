@@ -1,62 +1,47 @@
 .pageContainer {
-    width: 100vw;
-    height: 100vh;
-    background-color: #f2f2f2;
+    width: 100%;
+    min-height: 100vh;
+    background-color: var(--color-surface-sunken);
+    box-sizing: border-box;
 }
 
 .innerContent {
-    padding: 40px;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: var(--space-7) var(--space-5);
 }
 
 .headerRow {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 40px;
-    padding-bottom: 20px;
-    border-bottom: var(--border-style);
-}
-
-.projectsGrid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, 300px);
-    gap: 24px;
-    justify-content: start;
-
-}
-
-.projectCard {
-    width: 300px;
-    height: 230px;
-    background-color: white;
-    border-radius: 15px;
-    border: var(--border-style);
-    overflow-y: auto;
-}
-
-.innerCard {
-    padding: 10px;
-    position: relative;
-}
-
-.documentTitle {
-    font-size: var(--font-size-xl);
+    gap: var(--space-3);
+    margin-bottom: var(--space-6);
+    padding-bottom: var(--space-4);
+    border-bottom: 1px solid var(--color-border);
 }
 
 .title {
+    margin: 0;
     font-size: var(--font-size-2xl);
-    margin-top: 0;
-    margin-bottom: 0;
+    font-weight: 700;
+    color: var(--color-text);
 }
 
 .importButton {
-    border: 1px solid #c9c9c9;
-    border-radius: 8px;
-    background: #fff;
-    color: #2f2f2f;
-    padding: 8px 12px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-sm);
     cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.importButton:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+    border-color: var(--color-text-muted);
 }
 
 .importButton:disabled {
@@ -68,33 +53,185 @@
     display: none;
 }
 
-.removeIcon {
-    color: red;
-    position: absolute;
-    right: 10px;
-    top: 10px;
-    cursor: pointer;
+.projectsGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--space-5);
 }
 
-.newProject {
-    padding: 10px;
-    border: 2px dashed rgb(141, 141, 141);
-    border-radius: 15px;
+.projectCard {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    height: 230px;
+    padding: var(--space-4);
+    box-sizing: border-box;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    transition: box-shadow var(--transition-base), border-color var(--transition-base),
+        transform var(--transition-base);
+}
+
+.projectCard:hover {
+    border-color: var(--color-border-strong);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.cardHeader {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding-right: var(--space-6); /* leave room for the remove button */
+}
+
+.documentTitle {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--color-text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 
 .reviewBadge {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
-    padding: 2px 8px;
-    border-radius: 999px;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-pill);
     background: #ffe8cc;
     color: #8f4f0f;
-    font-size: 11px;
+    font-size: var(--font-size-xxs);
     font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.documentDescription {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.documentDescriptionEmpty {
+    flex: 1;
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-style: italic;
+    color: var(--color-text-muted);
+}
+
+.removeButton {
+    position: absolute;
+    top: var(--space-2);
+    right: var(--space-2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.removeButton:hover {
+    background: rgba(210, 59, 59, 0.12);
+    color: var(--color-danger);
 }
 
 .cardActions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
+    margin-top: auto;
+}
+
+.primaryAction,
+.secondaryAction {
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast),
+        opacity var(--transition-fast);
+}
+
+.primaryAction {
+    border: 1px solid var(--color-accent);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+}
+
+.primaryAction:hover:not(:disabled) {
+    background: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+}
+
+.secondaryAction {
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+}
+
+.secondaryAction:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+    border-color: var(--color-text-muted);
+}
+
+.primaryAction:disabled,
+.secondaryAction:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.newProject {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    height: 230px;
+    border: 2px dashed var(--color-border-strong);
+    border-radius: var(--radius-xl);
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-md);
+    cursor: pointer;
+    transition: border-color var(--transition-base), color var(--transition-base),
+        background var(--transition-base);
+}
+
+.newProject:hover {
+    border-color: var(--color-accent);
+    color: var(--color-text);
+    background: var(--color-surface);
+}
+
+.newProjectIcon {
+    font-size: var(--font-size-xl);
+}
+
+.newProjectText {
+    font-weight: 600;
 }

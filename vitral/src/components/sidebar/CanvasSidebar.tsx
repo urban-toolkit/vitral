@@ -425,7 +425,7 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                 {!collapsed && (
                     <>
                         <p className={styles.projectSubtitle}>
-                            Design studies are <span className={styles.socialTag}>technical</span> and <span className={styles.technicalTag}>social</span>
+                            Design studies are <span className={styles.technicalTag}>technical</span> and <span className={styles.socialTag}>social</span>
                         </p>
 
                         <h3 className={styles.title}>Views</h3>
