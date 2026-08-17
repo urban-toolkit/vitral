@@ -21,7 +21,19 @@ export function readAsDataURL(file: File): Promise<string> {
   });
 }
 
-export async function parseFile(file: File): Promise<filePendingUpload> {
+export type ParseFileOptions = {
+    /**
+     * Read text-like files into `previewText`. Only the LLM paths need it, so callers that
+     * just upload a file can pass `false` and skip reading the whole file into memory.
+     */
+    includePreviewText?: boolean;
+};
+
+export async function parseFile(
+    file: File,
+    options: ParseFileOptions = {},
+): Promise<filePendingUpload> {
+    const { includePreviewText = true } = options;
     const ext = getExt(file.name);
     const mimeType = file.type || (TEXT_EXTENSIONS.has(ext) ? "text/plain" : "application/octet-stream");
 
@@ -35,7 +47,7 @@ export async function parseFile(file: File): Promise<filePendingUpload> {
         file,
     };
 
-    if (isTextLike(file, ext)) {
+    if (includePreviewText && isTextLike(file, ext)) {
         data.previewText = await file.text();
     }
 

@@ -107,10 +107,13 @@ Covered areas:
 ### Contract
 - View modes:
   - `explore`,
-  - `evolution`,
   - `blueprintComponents` (system view),
   - `features`.
-- Evolution view repositions by temporal/graph logic and excludes blueprint components.
+- All views share one layout: views select which nodes are shown, never how they are arranged.
+- Activities are positioned by `createdAt`, left to right, one evenly spaced slot per distinct timestamp; activities sharing a timestamp stack vertically in the same slot.
+- Every other card orbits the activity it belongs to, on a ring chosen by graph distance from it; cards reaching no activity go to an unassigned band below.
+- Blueprint groups/components keep their nested structure and are translated in as one block.
+- Node positions are fully derived; node dragging is disabled in every view.
 - System view hides cards and keeps blueprint components (+ needed ancestors).
 - Card type filtering applies to relevant card labels while preserving non-card scope behavior.
 - Natural-language query and chat are playback-aware and can apply node filters.
@@ -214,8 +217,8 @@ Covered areas:
 | Requirement assignment | Participants list, card assignment field | Assign requirement card to participant; reload and verify assignment persists and displays correctly. |
 | Manual card editing | Card title/description + edit timestamp metadata | Edit title/description; reload and verify content + edit metadata behavior. |
 | Attachment preview | File metadata/content endpoints, supported MIME/text handlers | Open markdown/pdf/notebook/text attachments; verify content renders. |
-| Explore view behavior | Full active graph + edit affordances | In explore mode verify drag/create/drop/edit behavior is available. |
-| Evolution view behavior | Node timestamps, graph topology, deterministic layout inputs | Switch to evolution mode; verify blueprint nodes hidden and horizontal temporal layout is stable. |
+| Explore view behavior | Full active graph + edit affordances | In explore mode verify create/drop/connect/edit behavior is available (cards are not draggable in any view). |
+| Shared time layout | Activity timestamps, graph topology, deterministic layout inputs | In every view verify activities run left to right by date, other cards orbit their activity, unconnected cards sit in the band below, and switching views and back reproduces identical positions. |
 | System view behavior | Blueprint component filtering + ancestor retention | Switch to system view; verify cards hidden and relevant blueprint structure preserved. |
 | Card type filter | Selected labels, node labels/types | Apply label filter; verify matching cards filter while non-card behavior stays consistent with current UX. |
 | Natural-language node query | Query endpoint, optional `at`, structured parser, vector/fallback ranking | Run query at current + historical playback; ensure results are returned in both vector and fallback conditions. |

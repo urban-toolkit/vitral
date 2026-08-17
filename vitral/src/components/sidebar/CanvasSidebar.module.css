@@ -157,6 +157,13 @@
     color: var(--subtitle-color);
 }
 
+.viewArrangementNote {
+    margin: 10px 0 0;
+    font-size: var(--font-size-xs);
+    line-height: 1.45;
+    color: var(--subtitle-color);
+}
+
 .socialTag {
     background-color: var(--social-color);
 }

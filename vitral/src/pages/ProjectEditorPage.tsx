@@ -103,9 +103,18 @@ import {
 } from "@/store/timelineSlice";
 
 import { isAllowedConnection, relationLabelFor } from "@/utils/relationships";
-import { buildEvolutionLayoutNodes } from "@/utils/evolutionLayout";
+import { buildActivityOrbitLayout } from "@/pages/projectEditor/activityOrbitLayout";
 import { fromDate } from "@/pages/projectEditor/dateUtils";
 import type { CursorMode, GitConnectionStatus } from "@/pages/projectEditor/types";
+import {
+    CARD_HEIGHT_PX,
+    CARD_WIDTH_PX,
+    findActivityDropTarget,
+    getActivityDropTargets,
+    nodeSizeOf,
+    resolveAbsoluteNodePositions,
+} from "@/pages/projectEditor/canvasGeometry";
+import type { ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
 import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
 import { PendingFileModal } from "@/pages/projectEditor/PendingFileModal";
 import { CanvasChatOverlay, type CanvasChatEntry } from "@/pages/projectEditor/CanvasChatOverlay";
@@ -555,43 +564,6 @@ function getBlueprintComponentSnapshots(nodes: nodeType[]): ReportBlueprintCompo
     return snapshots;
 }
 
-function resolveAbsoluteNodePositions(allNodes: nodeType[]): Map<string, { x: number; y: number }> {
-    const byId = new Map(allNodes.map((node) => [node.id, node]));
-    const absoluteById = new Map<string, { x: number; y: number }>();
-
-    const resolve = (nodeId: string): { x: number; y: number } => {
-        const cached = absoluteById.get(nodeId);
-        if (cached) return cached;
-
-        const current = byId.get(nodeId);
-        if (!current) {
-            const fallback = { x: 0, y: 0 };
-            absoluteById.set(nodeId, fallback);
-            return fallback;
-        }
-
-        if (!current.parentId) {
-            const root = { x: current.position.x, y: current.position.y };
-            absoluteById.set(nodeId, root);
-            return root;
-        }
-
-        const parentAbsolute = resolve(current.parentId);
-        const result = {
-            x: parentAbsolute.x + current.position.x,
-            y: parentAbsolute.y + current.position.y,
-        };
-        absoluteById.set(nodeId, result);
-        return result;
-    };
-
-    for (const node of allNodes) {
-        resolve(node.id);
-    }
-
-    return absoluteById;
-}
-
 function toBlueprintData(payload: BlueprintDragPayload): BlueprintData {
     const highBlocks: BlueprintHighBlock[] = payload.paper.HighBlocks.map((high) => ({
         name: high.HighBlockName,
@@ -940,10 +912,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const dispatch = useDispatch<AppDispatch>();
     const navigate = useNavigate();
-    const { screenToFlowPosition, fitView } = useReactFlow();
+    const { screenToFlowPosition, fitView, setCenter, getZoom } = useReactFlow();
 
     const [loading, setLoading] = useState(false);
     const [cursorMode, setCursorMode] = useState<CursorMode>("");
+    const [fileDragActive, setFileDragActive] = useState(false);
+    // A card the user just created, to be brought into view once the layout has placed it.
+    const [pendingFocusNodeId, setPendingFocusNodeId] = useState<string | null>(null);
     const [timelineOpen, setTimelineOpen] = useState(false);
     const [viewMode, setViewMode] = useState<CanvasViewMode>("explore");
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -1532,9 +1507,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         void onAttachFile(nodeId, file);
     }, [interactionLocked, onAttachFile]);
 
-    const onAttachFileForCanvas = useCallback(async (file: File, dropPosition: { x: number; y: number }) => {
-        if (interactionLocked) return;
-        await onAttachFileToCanvas(file, dropPosition);
+    const onAttachFileForCanvas = useCallback(async (
+        file: File,
+        dropPosition: { x: number; y: number },
+        targetActivityNodeId?: string | null,
+    ): Promise<string | null> => {
+        if (interactionLocked) return null;
+        return await onAttachFileToCanvas(file, dropPosition, targetActivityNodeId);
     }, [interactionLocked, onAttachFileToCanvas]);
 
     const flushQueuedPositionChanges = useCallback(() => {
@@ -1716,10 +1695,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
     }, [dispatch, edges, interactionLocked, resolveActionTimestamp]);
 
-    const resetFiltersForCanvasCreation = useCallback(() => {
+    // `ensureVisibleLabel` re-enables the sidebar label chip for a card we are about to create.
+    // Without it, creating a card whose label is filtered out silently produces nothing visible —
+    // which matters most for the drop/ring paths, where the label is always `object`.
+    const resetFiltersForCanvasCreation = useCallback((ensureVisibleLabel?: cardLabel) => {
         setViewMode("explore");
         setActiveQuery("");
         setQueryMatchedNodeIds(null);
+        if (ensureVisibleLabel) {
+            setSelectedLabels((previous) => (
+                previous.includes(ensureVisibleLabel) ? previous : [...previous, ensureVisibleLabel]
+            ));
+        }
     }, []);
 
     const maybeCreateBlueprintEventFromConnection = useCallback((
@@ -2493,41 +2480,88 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return timelineContextNodes.filter((node) => includedNodeIds.has(node.id));
     }, [viewMode, timelineContextNodes, timelineContextEdges]);
 
-    const evolutionBaseNodes = useMemo<nodeType[]>(() => {
+    // Which nodes a view shows. Every view then goes through the same time-based layout below.
+    const viewBaseNodes = useMemo<nodeType[]>(() => {
         if (viewMode === "blueprintComponents") {
             return compactBlueprintNodes ?? [];
         }
         if (viewMode === "features") {
             return featureViewNodes ?? [];
         }
-        if (viewMode !== "evolution") return filteredNodes;
-        return filteredNodes.filter((node) => {
-            const label = String(node.data?.label ?? "").toLowerCase();
-            return label !== "blueprint_component" && label !== "blueprint_group";
-        });
+        return filteredNodes;
     }, [viewMode, filteredNodes, compactBlueprintNodes, featureViewNodes]);
 
-    const displayedNodes = useMemo<nodeType[]>(() => {
-        if (viewMode === "evolution") {
-            return buildEvolutionLayoutNodes(evolutionBaseNodes, filteredEdges);
-        }
-        return evolutionBaseNodes;
-    }, [viewMode, evolutionBaseNodes, filteredEdges]);
-
-    const displayedEdges = useMemo(() => {
-        if (viewMode === "blueprintComponents" || viewMode === "features") {
-            const visibleNodeIds = new Set(displayedNodes.map((node) => node.id));
-            return timelineContextEdges.filter((edge) => (
-                visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
-            ));
-        }
-        const visibleNodeIds = new Set(displayedNodes.map((node) => node.id));
+    // Edges are resolved before the layout runs, because the layout uses them to work out which
+    // activity each card orbits.
+    //
+    // Explore and the structural views are kept in separate memos on purpose. `filteredEdges`
+    // changes identity whenever an asset is hovered or a knowledge node is highlighted; if the
+    // structural views depended on it, that identity churn would flow into `displayedNodes` and the
+    // non-explore fitView effect would throw away the user's pan/zoom on every hover.
+    const exploreDisplayedEdges = useMemo(() => {
+        const visibleNodeIds = new Set(viewBaseNodes.map((node) => node.id));
         return filteredEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
         ));
-    }, [viewMode, timelineContextEdges, filteredEdges, displayedNodes]);
+    }, [filteredEdges, viewBaseNodes]);
 
+    const structuralDisplayedEdges = useMemo(() => {
+        const visibleNodeIds = new Set(viewBaseNodes.map((node) => node.id));
+        return timelineContextEdges.filter((edge) => (
+            visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+        ));
+    }, [timelineContextEdges, viewBaseNodes]);
+
+    const displayedEdges = viewMode === "blueprintComponents" || viewMode === "features"
+        ? structuralDisplayedEdges
+        : exploreDisplayedEdges;
+
+    const displayedNodes = useMemo<nodeType[]>(
+        () => buildActivityOrbitLayout(viewBaseNodes, displayedEdges),
+        [viewBaseNodes, displayedEdges],
+    );
+
+    // The layout — not the cursor — decides where a new card lands, so a card created by the card
+    // tool or a file drop can appear anywhere, including off-screen. Pan to it once it is placed,
+    // keeping the current zoom so the move is a pan rather than a jarring re-fit.
+    useEffect(() => {
+        if (!pendingFocusNodeId) return;
+
+        const target = displayedNodes.find((node) => node.id === pendingFocusNodeId);
+        if (!target) return;
+
+        const size = nodeSizeOf(target);
+        const timer = window.setTimeout(() => {
+            void setCenter(
+                target.position.x + (size.width / 2),
+                target.position.y + (size.height / 2),
+                { zoom: getZoom(), duration: 420 },
+            );
+            setPendingFocusNodeId(null);
+        }, 0);
+
+        return () => window.clearTimeout(timer);
+    }, [pendingFocusNodeId, displayedNodes, setCenter, getZoom]);
+
+    // Rings are shown while a file is dragged over the canvas and while the card tool is armed,
+    // because both actions create a card that gets connected to the activity underneath.
+    const activityDropReason = useMemo<ActivityDropRingsReason | null>(() => {
+        if (interactionLocked) return null;
+        if (viewMode !== "explore") return null;
+        if (fileDragActive) return "drag";
+        if (cursorMode === "node") return "tool";
+        return null;
+    }, [cursorMode, fileDragActive, interactionLocked, viewMode]);
+
+    const activityDropTargets = useMemo(() => (
+        activityDropReason ? getActivityDropTargets(displayedNodes) : null
+    ), [activityDropReason, displayedNodes]);
+
+    // Hit-tests a canvas point against blueprint parent boxes. This must read the *displayed* nodes:
+    // the layout translates the blueprint block, so stored positions are in a different space than
+    // the flow coordinates a click resolves to.
     const isInsideSystemBlueprintParentBox = useCallback((position: { x: number; y: number }) => {
+        const nodes = displayedNodes;
         const nodeById = new Map(nodes.map((node) => [node.id, node]));
         const absolutePositionById = new Map<string, { x: number; y: number }>();
         const resolveAbsolutePosition = (nodeId: string): { x: number; y: number } => {
@@ -2568,7 +2602,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         return false;
-    }, [nodes]);
+    }, [displayedNodes]);
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
         if (interactionLocked) return;
@@ -2609,20 +2643,65 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             return;
         }
 
-        resetFiltersForCanvasCreation();
+        // Clicking inside an activity's drop ring creates an object card wired to that activity;
+        // clicking empty canvas still creates a root activity card. Resolve the target before
+        // resetting filters, so we can un-hide the label of whichever card we are about to create.
+        const activityTarget = findActivityDropTarget(getActivityDropTargets(displayedNodes), position);
+        resetFiltersForCanvasCreation(activityTarget ? "object" : "activity");
+        const createdAt = resolveActionTimestamp();
+
+        if (activityTarget) {
+            const nodeId = crypto.randomUUID();
+            dispatch(addNode({
+                id: nodeId,
+                // Stored only as a record of where the card was created; the orbit layout decides
+                // where it actually renders.
+                position: { x: position.x - (CARD_WIDTH_PX / 2), y: position.y - (CARD_HEIGHT_PX / 2) },
+                type: "card",
+                data: {
+                    label: "object",
+                    type: "social",
+                    title: "Untitled",
+                    createdAt,
+                    relevant: true,
+                },
+            }));
+
+            const relationLabel = relationLabelFor("activity", "object");
+            if (relationLabel) {
+                dispatch(connectEdges([{
+                    id: crypto.randomUUID(),
+                    source: activityTarget.nodeId,
+                    target: nodeId,
+                    type: "relation",
+                    label: relationLabel,
+                    data: {
+                        label: relationLabel,
+                        from: "activity",
+                        to: "object",
+                        createdAt,
+                    },
+                }]));
+            }
+            setPendingFocusNodeId(nodeId);
+            return;
+        }
+
+        const activityNodeId = crypto.randomUUID();
+        setPendingFocusNodeId(activityNodeId);
         dispatch(addNode({
-            id: crypto.randomUUID(),
-            position,
+            id: activityNodeId,
+            position: { x: position.x - (CARD_WIDTH_PX / 2), y: position.y - (CARD_HEIGHT_PX / 2) },
             type: "card",
             data: {
                 label: "activity",
                 type: "social",
                 title: "Untitled",
-                createdAt: resolveActionTimestamp(),
+                createdAt,
                 relevant: true,
             },
         }));
-    }, [cursorMode, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, resolveActionTimestamp, resetFiltersForCanvasCreation, screenToFlowPosition, viewMode]);
+    }, [cursorMode, displayedNodes, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, resolveActionTimestamp, resetFiltersForCanvasCreation, screenToFlowPosition, viewMode]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
@@ -2672,15 +2751,32 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (viewMode !== "explore") return;
 
         const basePosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        // Dropping inside an activity's ring connects every dropped file's card to that activity;
+        // the placement of each card is then resolved next to the activity, not at the cursor.
+        const activityTarget = findActivityDropTarget(getActivityDropTargets(displayedNodes), basePosition);
+
         void (async () => {
             for (let index = 0; index < droppedFiles.length; index++) {
-                await onAttachFileForCanvas(droppedFiles[index], {
-                    x: basePosition.x + (index * 300),
-                    y: basePosition.y,
-                });
+                const dropPosition = activityTarget
+                    ? basePosition
+                    : {
+                        x: basePosition.x - (CARD_WIDTH_PX / 2) + (index * (CARD_WIDTH_PX + 100)),
+                        y: basePosition.y - (CARD_HEIGHT_PX / 2),
+                    };
+                const createdNodeId = await onAttachFileForCanvas(droppedFiles[index], dropPosition, activityTarget?.nodeId ?? null);
+
+                // Only the first card pulls the camera; panning once per file in a multi-file drop
+                // would yank the canvas around while the uploads finish.
+                if (index === 0 && createdNodeId) setPendingFocusNodeId(createdNodeId);
+
+                // Un-hide the card's label only once the card exists. Clearing a filter re-runs the
+                // explore-mode fitView, and doing that up front — before the upload resolves — would
+                // frame the graph *without* the new card, so a card dropped outside those bounds
+                // ended up off-screen with only an unexplained camera move to show for it.
+                if (index === 0) resetFiltersForCanvasCreation("object");
             }
         })();
-    }, [dispatch, interactionLocked, onAttachFileForCanvas, resolveActionTimestamp, screenToFlowPosition, viewMode]);
+    }, [displayedNodes, dispatch, interactionLocked, onAttachFileForCanvas, resetFiltersForCanvasCreation, resolveActionTimestamp, screenToFlowPosition, viewMode]);
 
     const onFreeInputSubmit = useCallback(async (x: number, y: number, userText: string) => {
         if (interactionLocked) return;
@@ -2947,6 +3043,41 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             setCursorMode("");
         }
     }, [cursorMode, interactionLocked]);
+
+    // Single source of truth for "a file is being dragged", which drives the activity drop rings.
+    // Capture phase matters: card attach zones call stopPropagation on drag events, so a
+    // bubble-phase window listener would miss both a drag entering a card and the drop that ends
+    // it — leaving the rings stuck on screen. `activityDropReason` applies the review-mode and
+    // view-mode gating, so this flag only has to track the drag itself.
+    useEffect(() => {
+        const options: AddEventListenerOptions = { capture: true };
+        const stopFileDrag = () => setFileDragActive(false);
+
+        const handleWindowDragOver = (event: DragEvent) => {
+            setFileDragActive(Array.from(event.dataTransfer?.types ?? []).includes("Files"));
+        };
+        const handleWindowDragLeave = (event: DragEvent) => {
+            // `relatedTarget === null` means the pointer left the window entirely.
+            if (event.relatedTarget === null) setFileDragActive(false);
+        };
+        const handleWindowKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setFileDragActive(false);
+        };
+
+        window.addEventListener("dragover", handleWindowDragOver, options);
+        window.addEventListener("dragleave", handleWindowDragLeave, options);
+        window.addEventListener("dragend", stopFileDrag, options);
+        window.addEventListener("drop", stopFileDrag, options);
+        window.addEventListener("keydown", handleWindowKeyDown);
+
+        return () => {
+            window.removeEventListener("dragover", handleWindowDragOver, options);
+            window.removeEventListener("dragleave", handleWindowDragLeave, options);
+            window.removeEventListener("dragend", stopFileDrag, options);
+            window.removeEventListener("drop", stopFileDrag, options);
+            window.removeEventListener("keydown", handleWindowKeyDown);
+        };
+    }, []);
 
     useEffect(() => {
         switch (cursorMode) {
@@ -4092,7 +4223,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 edges={displayedEdges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
-                nodesDraggable={viewMode === "explore" && !interactionLocked}
+                nodesDraggable={false}
                 cursorMode={cursorMode}
                 onNodesChange={handleNodesChange}
                 onEdgesChange={handleEdgesChange}
@@ -4100,6 +4231,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onClick={onCanvasClick}
                 onDragOver={handleCanvasDragOver}
                 onDrop={handleCanvasDrop}
+                activityDropTargets={activityDropTargets}
+                activityDropReason={activityDropReason ?? "drag"}
                 miniMapBottomOffsetPx={canvasSidebarBottomOffset + MINIMAP_AI_BUTTON_CLEARANCE_PX}
                 miniMapRightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX}
             />

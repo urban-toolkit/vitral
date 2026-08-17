@@ -1,20 +1,22 @@
 import { memo, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faArrowPointer, faChartLine, faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDiagramProject, faDownload, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
+import { faArrowPointer, faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDiagramProject, faDownload, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
 import type { cardLabel } from "@/config/types";
 import type { QuerySystemPapersResult, SystemPaper } from "@/api/stateApi";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
 import { BLUEPRINT_DRAG_MIME, buildBlueprintDragPayload } from "@/components/blueprint/blueprintDnD";
 import styles from "./CanvasSidebar.module.css";
 
-export type CanvasViewMode = "explore" | "evolution" | "blueprintComponents" | "features";
+export type CanvasViewMode = "explore" | "blueprintComponents" | "features";
 
 const VIEW_INFO_TEXT: Record<CanvasViewMode, string> = {
-    explore: "The Explore view display cards and system components as they were added and it is the default view for manipulating the canvas.",
-    evolution: "The Evolution view hide system components and horizontally display the cards by addition date.",
+    explore: "The Explore view display all cards and system components. It is the default view for manipulating the canvas.",
     blueprintComponents: "The System view hide cards so you can focus on the system components.",
     features: "The Features view hide all cards that are not part of branches containing a system component or requirement. It is intended to help reason about links between requirements and the system.",
 };
+
+// Every view lays cards out the same way, so the arrangement is explained once instead of per view.
+const VIEW_ARRANGEMENT_TEXT = "In every view, activities are placed left to right by date and the cards that belong to each activity orbit around it. Cards not connected to any activity sit in a band underneath.";
 
 function truncateLabel(text: string, maxChars: number): string {
     if (!text) return "";
@@ -451,24 +453,6 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                             </button>
                             <button
                                 type="button"
-                                className={`${styles.option} ${viewMode === "evolution" ? styles.optionActive : ""}`}
-                                onClick={() => onViewModeChange("evolution")}
-                            >
-                                <span className={styles.optionContent}>
-                                    <span className={styles.optionLabel}>
-                                        <FontAwesomeIcon icon={faChartLine} className={styles.optionLabelIcon} />
-                                        Evolution view
-                                    </span>
-                                    <span className={styles.optionInfo}>
-                                        <FontAwesomeIcon icon={faCircleInfo} />
-                                        <span className={styles.optionTooltip}>
-                                            {VIEW_INFO_TEXT.evolution}
-                                        </span>
-                                    </span>
-                                </span>
-                            </button>
-                            <button
-                                type="button"
                                 className={`${styles.option} ${viewMode === "blueprintComponents" ? styles.optionActive : ""}`}
                                 onClick={() => onViewModeChange("blueprintComponents")}
                             >
@@ -504,6 +488,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                 </span>
                             </button>
                         </div>
+
+                        <p className={styles.viewArrangementNote}>{VIEW_ARRANGEMENT_TEXT}</p>
 
                         <h3 className={styles.title}>Filters</h3>
                         <div className={styles.labelGrid}>

@@ -3,6 +3,8 @@ import { ReactFlow, MiniMap, type NodeChange, type EdgeChange, type Connection, 
 
 import type { edgeType, nodeType } from "@/config/types";
 import type { CursorMode } from "@/pages/projectEditor/types";
+import { ActivityDropRings, type ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
+import type { ActivityDropTarget } from "@/pages/projectEditor/canvasGeometry";
 import styles from "./FlowCanvas.module.css";
 
 type FlowCanvasProps = {
@@ -19,6 +21,8 @@ type FlowCanvasProps = {
     onClick: (e: React.MouseEvent) => void;
     onDragOver: (e: React.DragEvent) => void;
     onDrop: (e: React.DragEvent) => void;
+    activityDropTargets?: ActivityDropTarget[] | null;
+    activityDropReason?: ActivityDropRingsReason;
     miniMapBottomOffsetPx?: number;
     miniMapRightOffsetPx?: number;
 };
@@ -37,6 +41,8 @@ export const FlowCanvas = memo(function FlowCanvas({
     onClick,
     onDragOver,
     onDrop,
+    activityDropTargets = null,
+    activityDropReason = "drag",
     miniMapBottomOffsetPx = 0,
     miniMapRightOffsetPx = 0,
 }: FlowCanvasProps) {
@@ -67,6 +73,10 @@ export const FlowCanvas = memo(function FlowCanvas({
             minZoom={0.02}
             fitView
         >
+            {activityDropTargets && activityDropTargets.length > 0 ? (
+                <ActivityDropRings targets={activityDropTargets} reason={activityDropReason} />
+            ) : null}
+
             <MiniMap
                 pannable
                 zoomable
