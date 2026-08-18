@@ -1,17 +1,56 @@
 import { FastifyPluginAsync } from "fastify";
 import OpenAI from "openai";
 import { loadPrompt } from "../prompts/loadPrompt.js";
+import { getCardsOutputSchema } from "../prompts/outputSchemas.js";
 import FormData from "form-data";
 import fetch from "node-fetch";
 import { Buffer } from "node:buffer";
 
+function readIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (typeof raw !== "string" || raw.trim() === "") return fallback;
+    const parsed = Number.parseInt(raw.trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readFlagEnv(name: string, fallback: boolean): boolean {
+    const raw = process.env[name];
+    if (typeof raw !== "string" || raw.trim() === "") return fallback;
+    return !["0", "false", "off", "no"].includes(raw.trim().toLowerCase());
+}
+
+// The SDK defaults to a 10 minute timeout and 2 retries, so a stalled or flapping upstream
+// silently multiplies the latency the user sees with nothing in the logs to show for it.
 const client = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
+    timeout: readIntEnv("OPENAI_LLM_TIMEOUT_MS", 45_000),
+    maxRetries: readIntEnv("OPENAI_LLM_MAX_RETRIES", 1),
 });
+
+/**
+ * Reasoning effort for the gpt-5 family. These prompts are extraction plus a small
+ * classification rubric, which does not need the default `medium` effort, and reasoning tokens
+ * are generated serially ahead of any visible output — so this is the biggest latency lever
+ * available. Env-overridable so it can be raised again without a redeploy.
+ */
+const REASONING_EFFORT = (process.env.OPENAI_LLM_CHAT_REASONING_EFFORT ?? "low").trim();
+const MAX_OUTPUT_TOKENS = readIntEnv("OPENAI_LLM_CHAT_MAX_OUTPUT_TOKENS", 8000);
+const STRUCTURED_OUTPUT_ENABLED = readFlagEnv("OPENAI_LLM_CHAT_STRUCTURED_OUTPUT", true);
+const VERBOSITY = (process.env.OPENAI_LLM_CHAT_VERBOSITY ?? "").trim();
 
 
 export const llmRoutes: FastifyPluginAsync = async (app: any) => {
     app.post("/chat", async (request: any, reply: any) => {
+        // Without this a user who navigates away mid-drop still burns the full inference.
+        const abortController = new AbortController();
+        let clientDisconnected = false;
+        let upstreamSettled = false;
+        request.raw.on("close", () => {
+            if (upstreamSettled) return;
+            clientDisconnected = true;
+            abortController.abort();
+        });
+
         try {
 
             const body = request.body as { input: string, prompt?: string, model?: string };
@@ -200,6 +239,25 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                 ];
             }
 
+            // `reasoning` and `text.verbosity` are gpt-5/o-series only; gpt-4.1-mini is in the
+            // default allowlist and rejects both.
+            const isReasoningModel = /^(gpt-5|o[13-9])/i.test(resolvedModel);
+            const outputSchema = STRUCTURED_OUTPUT_ENABLED ? getCardsOutputSchema(promptName) : undefined;
+
+            const textConfig: Record<string, unknown> = {};
+            if (outputSchema) {
+                textConfig.format = {
+                    type: "json_schema",
+                    name: promptName.toLowerCase(),
+                    strict: true,
+                    schema: outputSchema,
+                };
+            }
+            if (isReasoningModel && VERBOSITY !== "") {
+                textConfig.verbosity = VERBOSITY;
+            }
+
+            const startedAt = Date.now();
             const response = await client.responses.create({
                 model: resolvedModel,
                 input: [
@@ -208,10 +266,59 @@ export const llmRoutes: FastifyPluginAsync = async (app: any) => {
                         content: inputContent,
                     }
                 ],
-            });
+                max_output_tokens: MAX_OUTPUT_TOKENS,
+                // The prompt text is a stable prefix per prompt name, so bucket cache lookups by it.
+                prompt_cache_key: promptName,
+                ...(isReasoningModel && REASONING_EFFORT !== ""
+                    ? { reasoning: { effort: REASONING_EFFORT as "none" | "minimal" | "low" | "medium" | "high" | "xhigh" } }
+                    : {}),
+                ...(Object.keys(textConfig).length > 0 ? { text: textConfig } : {}),
+            }, { signal: abortController.signal });
+            upstreamSettled = true;
 
-            return { output: response.output_text };
+            request.log.info(
+                {
+                    component: "llm-chat",
+                    model: resolvedModel,
+                    promptName,
+                    structuredOutput: Boolean(outputSchema),
+                    reasoningEffort: isReasoningModel ? REASONING_EFFORT : null,
+                    durationMs: Date.now() - startedAt,
+                    status: response.status,
+                    inputTokens: response.usage?.input_tokens,
+                    cachedTokens: response.usage?.input_tokens_details?.cached_tokens,
+                    outputTokens: response.usage?.output_tokens,
+                    reasoningTokens: response.usage?.output_tokens_details?.reasoning_tokens,
+                },
+                "LLM chat completed.",
+            );
+
+            // Distinct failure codes: collapsing these into one 500 is what made a blown token
+            // cap look identical to an upstream outage.
+            if (response.status === "incomplete") {
+                request.log.warn(
+                    { component: "llm-chat", promptName, reason: response.incomplete_details?.reason },
+                    "LLM response truncated.",
+                );
+                return reply.status(502).send({
+                    error: "llm_output_incomplete",
+                    reason: response.incomplete_details?.reason ?? "unknown",
+                });
+            }
+
+            const outputText = response.output_text ?? "";
+            if (outputText.trim() === "") {
+                return reply.status(502).send({ error: "llm_output_empty" });
+            }
+
+            return { output: outputText };
         } catch (err) {
+            if (clientDisconnected) {
+                request.log.info({ component: "llm-chat" }, "LLM request aborted by client.");
+                // The socket is already gone; hijack so Fastify does not try to reply.
+                reply.hijack();
+                return;
+            }
             console.error("OpenAI API error:", err);
             return reply.status(500).send({ error: "LLM request failed" });
         }

@@ -5,7 +5,6 @@ import type {
     cardType,
     edgeType,
     fileExtension,
-    fileRecord,
     llmCardData,
     llmConnectionData,
     nodeType,
@@ -271,7 +270,11 @@ function extractNotebookImagesAndStrip(nb: any): { notebook: any; images: Notebo
     return { notebook: clone, images };
 }
 
-export async function docLingFileParse(fileData: filePendingUpload, ext: fileExtension): Promise<{ content: string, images: { name: string; content: string }[] }> {
+export async function docLingFileParse(
+    fileData: filePendingUpload,
+    ext: fileExtension,
+    signal?: AbortSignal,
+): Promise<{ content: string }> {
     const formData = new FormData();
 
     formData.append("file", fileData.file);
@@ -280,20 +283,14 @@ export async function docLingFileParse(fileData: filePendingUpload, ext: fileExt
     const response = await fetch(API_BASE_URL + "/docling/convert/file", {
         method: "POST",
         body: formData,
+        signal,
     });
 
     if (!response.ok) {
         throw new Error("Conversion failed");
     }
 
-    const result = await response.json();
-
-    console.log(result);
-
-    return result as {
-        content: string;
-        images: { name: string; content: string }[];
-    };
+    return await response.json() as { content: string };
 }
 
 type PromptSet = {
@@ -347,6 +344,24 @@ function resolveLlmModel(value: unknown): string | undefined {
     return trimmed !== "" ? trimmed : undefined;
 }
 
+const LLM_REQUEST_TIMEOUT_MS = 60_000;
+
+/** Turns the route's error codes into something worth showing a user. */
+async function readLlmErrorMessage(response: Response): Promise<string> {
+    try {
+        const payload = await response.json() as { error?: string; reason?: string };
+        if (payload?.error === "llm_output_incomplete") {
+            return "The model ran out of room before finishing. Try a smaller file.";
+        }
+        if (payload?.error === "llm_output_empty") {
+            return "The model returned no content for this file.";
+        }
+    } catch {
+        // Fall through to the generic message.
+    }
+    return `Card extraction failed (${response.status}).`;
+}
+
 function tryParseJson<T>(raw: string): T | null {
     try {
         return JSON.parse(raw) as T;
@@ -376,9 +391,9 @@ function tryParseJson<T>(raw: string): T | null {
 
 async function buildFilePromptRequest(
     file: filePendingUpload,
-    assetsMetadata: fileRecord[],
     promptSet: PromptSet,
-    projectSettings?: LlmProjectSettingsContext
+    projectSettings?: LlmProjectSettingsContext,
+    signal?: AbortSignal,
 ): Promise<PreparedLlmPayload> {
     let { name, ext, previewText } = file;
 
@@ -397,7 +412,7 @@ async function buildFilePromptRequest(
     }
 
     if (file.ext == "pdf" || file.ext == "docx") {
-        const { content: markdown } = await docLingFileParse(file, ext);
+        const { content: markdown } = await docLingFileParse(file, ext, signal);
         content = markdown;
         prompt = promptSet.text;
     }
@@ -409,8 +424,11 @@ async function buildFilePromptRequest(
 
     if (file.ext == "ipynb") {
         try {
-            const raw = content ?? await file.file.text();
-            const nb = JSON.parse(raw!);
+            // Read in full rather than reusing previewText: that is capped for the LLM payload,
+            // and a truncated notebook is not parseable JSON. ipynbToCompactText does the real
+            // capping once the cells are structured.
+            const raw = await file.file.text();
+            const nb = JSON.parse(raw);
             const { notebook, images } = extractNotebookImagesAndStrip(nb);
             content = ipynbToCompactText(notebook, { maxChars: 80_000, maxOutputCharsPerCell: 4_000 });
 
@@ -432,7 +450,9 @@ async function buildFilePromptRequest(
                     content += `\n\n[Note: omitted ${images.length - MAX_IMAGES} additional images to fit context limits.]`;
                 }
 
-                imagesPayload = payload;
+                // Left undefined when empty so the request does not carry an `images: []` that
+                // only adds `imageCount: 0` noise to the prompt.
+                imagesPayload = payload.length > 0 ? payload : undefined;
             }
         } catch (e) {
             console.warn("Failed to parse/extract images from ipynb; falling back to raw text", e);
@@ -445,15 +465,12 @@ async function buildFilePromptRequest(
         prompt = promptSet.code;
     }
 
-    const serializedAssets = assetsMetadata.map((asset) => ({
-        id: asset.id,
-        name: asset.name,
-        ext: asset.ext,
-    }));
-
+    // No `assets` block: none of the Cards/Artifact prompts document it, `llmCardData` has no
+    // such field and `normalizeLlmCardsResponse` never reads one, so it was prompt weight that
+    // grew with every file in the project.
     const userPayload = imagesPayload
-        ? { name, ext, content, images: imagesPayload, assets: serializedAssets, projectSettings }
-        : { name, ext, content, assets: serializedAssets, projectSettings };
+        ? { name, ext, content, images: imagesPayload, projectSettings }
+        : { name, ext, content, projectSettings };
 
     return {
         prompt,
@@ -496,15 +513,15 @@ function normalizeLlmCardsResponse(payload: {
 
 export async function requestCardsLLM(
     file: filePendingUpload,
-    assetsMetadata: fileRecord[] = [],
-    projectSettings?: LlmProjectSettingsContext
+    projectSettings?: LlmProjectSettingsContext,
+    signal?: AbortSignal,
 ): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
-    const { prompt, userText } = await buildFilePromptRequest(file, assetsMetadata, {
+    const { prompt, userText } = await buildFilePromptRequest(file, {
         text: "CardsFromText",
         image: "CardsFromImage",
         data: "CardsFromData",
         code: "CardsFromCode",
-    }, projectSettings);
+    }, projectSettings, signal);
 
     const response = await fetch(API_BASE_URL + "/llm/chat", {
         method: "POST",
@@ -516,24 +533,19 @@ export async function requestCardsLLM(
             prompt,
             model: resolveLlmModel(projectSettings?.llmModel),
         }),
+        signal: signal ?? AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
     });
 
+    // Throwing rather than alerting: `alert` blocks the main thread, and here it fired before
+    // the caller could clear its loading state, freezing the spinner behind the modal.
     if (!response.ok) {
-        alert("Request failed");
-        return {
-            cards: [],
-            connections: []
-        }
+        throw new Error(await readLlmErrorMessage(response));
     }
 
     const data = await response.json();
     const parsedData = tryParseJson<{ cards?: Array<Record<string, unknown>>; connections?: llmConnectionData[] }>(data.output);
     if (!parsedData) {
-        alert("Request failed");
-        return {
-            cards: [],
-            connections: []
-        };
+        throw new Error("The model returned a response that could not be read as cards.");
     }
 
     return normalizeLlmCardsResponse(parsedData);
@@ -541,10 +553,9 @@ export async function requestCardsLLM(
 
 export async function requestArtifactLLM(
     file: filePendingUpload,
-    assetsMetadata: fileRecord[] = [],
     projectSettings?: LlmProjectSettingsContext
 ): Promise<llmArtifactData | null> {
-    const { prompt, userText } = await buildFilePromptRequest(file, assetsMetadata, {
+    const { prompt, userText } = await buildFilePromptRequest(file, {
         text: "ArtifactFromText",
         image: "ArtifactFromImage",
         data: "ArtifactFromData",
@@ -564,8 +575,7 @@ export async function requestArtifactLLM(
     });
 
     if (!response.ok) {
-        alert("Request failed");
-        return null;
+        throw new Error(await readLlmErrorMessage(response));
     }
 
     const data = await response.json();
@@ -574,7 +584,8 @@ export async function requestArtifactLLM(
 
 export async function requestCardsLLMTextInput(
     userText: string,
-    llmModel?: string
+    llmModel?: string,
+    signal?: AbortSignal,
 ): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
 
     const response = await fetch(API_BASE_URL + "/llm/chat", {
@@ -587,29 +598,20 @@ export async function requestCardsLLMTextInput(
             prompt: "CardsFromTextInput",
             model: resolveLlmModel(llmModel),
         }),
+        signal: signal ?? AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-        alert("Request failed");
-        return {
-            cards: [],
-            connections: []
-        }
+        throw new Error(await readLlmErrorMessage(response));
     }
 
     const data = await response.json();
-
-    try {
-        const parsedData = JSON.parse(data.output) as { cards?: Array<Record<string, unknown>>; connections?: llmConnectionData[] };
-        return normalizeLlmCardsResponse(parsedData);
-    } catch {
-        alert("Request failed");
+    const parsedData = tryParseJson<{ cards?: Array<Record<string, unknown>>; connections?: llmConnectionData[] }>(data.output);
+    if (!parsedData) {
+        throw new Error("The model returned a response that could not be read as cards.");
     }
 
-    return {
-        cards: [],
-        connections: []
-    }
+    return normalizeLlmCardsResponse(parsedData);
 }
 
 export function computeHorizontalTreeLayout(

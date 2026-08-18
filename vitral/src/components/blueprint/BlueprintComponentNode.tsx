@@ -148,7 +148,7 @@ function BlueprintComponentNodeImpl(props: BlueprintComponentNodeProps) {
             >
                 {isEditingTitle ? (
                     <input
-                        className={classes.titleEditor}
+                        className={`${classes.titleEditor} nodrag`}
                         value={draftTitle}
                         autoFocus
                         onClick={(event) => event.stopPropagation()}

@@ -203,7 +203,7 @@ function CardImpl(props: CardProps) {
                     <div className={classes.title}>
                         {isEditingTitle ? (
                             <textarea
-                                className={classes.fieldTextEditor}
+                                className={`${classes.fieldTextEditor} nodrag`}
                                 value={draftTitle}
                                 autoFocus
                                 rows={1}
@@ -264,7 +264,7 @@ function CardImpl(props: CardProps) {
                         {/* <p className={classes.backText}>{props.data.description}</p> */}
                         {isEditingDescription ? (
                             <textarea
-                                className={classes.fieldTextEditor}
+                                className={`${classes.fieldTextEditor} nodrag`}
                                 style={{fontSize: "var(--font-size-xs)", color: "white"}}
                                 value={draftDescription}
                                 autoFocus

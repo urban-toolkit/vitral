@@ -9,7 +9,7 @@ import { upsertFile } from "@/store/filesSlice";
 import { relationLabelFor } from "@/utils/relationships";
 
 import type { AppDispatch } from "@/store";
-import type { edgeType, filePendingUpload, fileRecord, llmCardData, llmConnectionData, nodeType } from "@/config/types";
+import type { edgeType, filePendingUpload, llmCardData, llmConnectionData, nodeType } from "@/config/types";
 import type { PendingDrop } from "@/pages/projectEditor/types";
 import { toLocalDateTimeInputValue } from "@/pages/projectEditor/dateUtils";
 
@@ -18,10 +18,11 @@ type Args = {
     dispatch: AppDispatch;
     nodes: nodeType[];
     edges: edgeType[];
-    allFiles: fileRecord[];
     projectSettings: LlmProjectSettingsContext;
     actionTimestamp?: string | null;
     setLoading: (value: boolean) => void;
+    /** Surfaced to the user in place of the old blocking `alert`. */
+    onExtractionError?: (message: string) => void;
 };
 
 const KNOWN_CARD_LABELS = new Set(["person", "activity", "requirement", "concept", "insight", "object"]);
@@ -70,14 +71,17 @@ export function useFileAttachmentProcessing({
     dispatch,
     nodes,
     edges,
-    allFiles,
     projectSettings,
     actionTimestamp = null,
     setLoading,
+    onExtractionError,
 }: Args) {
     const nodesRef = useRef(nodes);
     const edgesRef = useRef(edges);
-    const allFilesRef = useRef(allFiles);
+    // Every in-flight drop, so switching projects mid-drop cannot let an upload or extraction
+    // dispatch its results into a different document's store. Concurrent drops are kept
+    // independent: starting one must never cancel another that is still running.
+    const inFlightRef = useRef<Set<AbortController>>(new Set());
 
     const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
     const [generatedAtInput, setGeneratedAtInput] = useState<string>(() => toLocalDateTimeInputValue(new Date()));
@@ -91,8 +95,12 @@ export function useFileAttachmentProcessing({
     }, [edges]);
 
     useEffect(() => {
-        allFilesRef.current = allFiles;
-    }, [allFiles]);
+        const controllers = inFlightRef.current;
+        return () => {
+            for (const controller of controllers) controller.abort();
+            controllers.clear();
+        };
+    }, [projectId]);
 
     const resolveActionTimestamp = useCallback(() => {
         if (actionTimestamp) {
@@ -109,6 +117,9 @@ export function useFileAttachmentProcessing({
         dropPosition?: { x: number; y: number },
     ) => {
         setLoading(true);
+        const controller = new AbortController();
+        inFlightRef.current.add(controller);
+        const { signal } = controller;
 
         try {
             const data: filePendingUpload = await parseFile(file);
@@ -118,7 +129,18 @@ export function useFileAttachmentProcessing({
                 ? fallbackCreatedAt
                 : parsedGeneratedAt.toISOString();
 
-            const uploaded = await createFile(projectId, data, chosenCreatedAt);
+            // The extraction call needs only the parsed file, never the upload result, so the two
+            // run concurrently. For pdf/docx this also overlaps the docling conversion with the
+            // upload, since that round trip happens inside requestCardsLLM.
+            const isVideo = isVideoPendingUpload(data);
+            const uploadPromise = createFile(projectId, data, chosenCreatedAt, signal);
+            const llmPromise = isVideo ? null : requestCardsLLM(data, projectSettings, signal);
+            // Attached up front so a failure on one leg is never an unhandled rejection while the
+            // other is still in flight.
+            uploadPromise.catch(() => { });
+            llmPromise?.catch(() => { });
+
+            const uploaded = await uploadPromise;
             const {
                 fileId,
                 createdAt: persistedCreatedAt,
@@ -131,7 +153,6 @@ export function useFileAttachmentProcessing({
                 ? chosenCreatedAt
                 : parsedPersistedCreatedAt.toISOString();
             const { name, mimeType, sizeBytes, ext } = data;
-            const generatedEdges: edgeType[] = [];
 
             dispatch(upsertFile({
                 id: fileId,
@@ -152,35 +173,84 @@ export function useFileAttachmentProcessing({
                 editAt: chosenCreatedAt,
             }));
 
-            if (isVideoPendingUpload(data)) {
+            if (!llmPromise) {
                 return;
             }
 
             let response: { cards: llmCardData[]; connections: llmConnectionData[] } | null = null;
             try {
-                response = await requestCardsLLM(data, allFilesRef.current, projectSettings);
+                response = await llmPromise;
             } catch (error) {
+                if (signal.aborted) return;
                 console.error("LLM processing failed for attached file.", error);
+                onExtractionError?.(error instanceof Error ? error.message : "Card extraction failed.");
             }
 
-            if (response?.cards) {
+            if (response?.cards && !signal.aborted) {
                 const { nodes: generatedNodes, idMap } = llmCardsToNodes(response.cards, dropPosition, {
                     createdAt: chosenCreatedAt,
                     origin: fileId,
                 });
                 const generatedNodeById = new Map(generatedNodes.map((node) => [node.id, node]));
-                const existingNodeById = new Map(nodesRef.current.map((node) => [node.id, node]));
-                const existingEdgeKeySet = new Set(
-                    edgesRef.current.map((edge) => {
+
+                // Rebuilt per pass rather than snapshotted once: the similarity edges are queued
+                // after an await, by which point the canvas has already gained the new cards.
+                const buildEdgeQueuer = (target: edgeType[]) => {
+                    const edgeKeyOf = (edge: edgeType) => {
                         const edgeLabel = typeof edge.label === "string"
                             ? edge.label
                             : (typeof edge.data?.label === "string" ? edge.data.label : "");
                         return `${edge.source}|${edge.target}|${edgeLabel}`;
-                    })
-                );
-                const queuedEdgeKeySet = new Set<string>();
+                    };
+                    const knownEdgeKeys = new Set(edgesRef.current.map(edgeKeyOf));
+
+                    return (edge: edgeType) => {
+                        const edgeKey = edgeKeyOf(edge);
+                        if (knownEdgeKeys.has(edgeKey)) return;
+                        knownEdgeKeys.add(edgeKey);
+                        target.push({
+                            ...edge,
+                            data: {
+                                ...(edge.data && typeof edge.data === "object" ? edge.data : {}),
+                                createdAt: chosenCreatedAt,
+                            },
+                        });
+                    };
+                };
+
                 const nodesToAdd: nodeType[] = [];
-                const nodeIdToSimilarity = new Map<string, { existingCardId: string | null; similarity: number }>();
+                const activityEdges: edgeType[] = [];
+                const queueActivityEdge = buildEdgeQueuer(activityEdges);
+
+                for (const card of response.cards) {
+                    const targetNodeId = idMap[String(card.id)];
+                    if (!targetNodeId || targetNodeId === rootActivityNodeId) continue;
+
+                    const generatedNode = generatedNodeById.get(targetNodeId);
+                    if (generatedNode) nodesToAdd.push(generatedNode);
+
+                    const label = relationLabelFor("activity", normalizeArtifactEntity(card.entity));
+                    if (label) {
+                        queueActivityEdge({
+                            id: crypto.randomUUID(),
+                            source: rootActivityNodeId,
+                            target: targetNodeId,
+                            type: "relation",
+                            label,
+                            data: { label, from: "activity", to: normalizeArtifactEntity(card.entity) },
+                        });
+                    }
+                }
+
+                // Render as soon as the model answers. The similarity pass only ever adds
+                // `iteration of` / `referenced by` edges between existing cards, so making the
+                // cards wait for it bought nothing.
+                if (nodesToAdd.length > 0) {
+                    dispatch(addNodes(nodesToAdd));
+                }
+                if (activityEdges.length > 0) {
+                    dispatch(connectEdges(activityEdges));
+                }
 
                 const existingCardsForSimilarity = nodesRef.current
                     .filter((node) => node.type === "card" && node.id !== rootActivityNodeId)
@@ -193,128 +263,90 @@ export function useFileAttachmentProcessing({
                             description: typeof data.description === "string" ? data.description : "",
                         };
                     });
-                const newCardsForSimilarity = generatedNodes
-                    .filter((node) => node.type === "card")
-                    .map((node) => {
-                        const data = node.data as Record<string, unknown>;
-                        return {
-                            id: node.id,
-                            label: normalizeArtifactEntity(String(data.label ?? "")),
-                            title: typeof data.title === "string" ? data.title : "",
-                            description: typeof data.description === "string" ? data.description : "",
-                        };
-                    });
+                const newCardsForSimilarity = nodesToAdd.map((node) => {
+                    const data = node.data as Record<string, unknown>;
+                    return {
+                        id: node.id,
+                        label: normalizeArtifactEntity(String(data.label ?? "")),
+                        title: typeof data.title === "string" ? data.title : "",
+                        description: typeof data.description === "string" ? data.description : "",
+                    };
+                });
 
                 if (existingCardsForSimilarity.length > 0 && newCardsForSimilarity.length > 0) {
-                    try {
-                        const similarity = await compareCardsSimilarity(projectId, {
-                            newCards: newCardsForSimilarity,
-                            existingCards: existingCardsForSimilarity,
-                        });
-                        for (const match of similarity.matches) {
-                            nodeIdToSimilarity.set(match.newCardId, {
-                                existingCardId: match.existingCardId,
-                                similarity: match.similarity,
-                            });
+                    void (async () => {
+                        try {
+                            const similarity = await compareCardsSimilarity(projectId, {
+                                newCards: newCardsForSimilarity,
+                                existingCards: existingCardsForSimilarity,
+                            }, signal);
+                            if (signal.aborted) return;
+
+                            const relationEdges: edgeType[] = [];
+                            const queueRelationEdge = buildEdgeQueuer(relationEdges);
+
+                            for (const match of similarity.matches) {
+                                const targetNodeId = match.newCardId;
+                                const matchedCardId = match.existingCardId;
+                                const similarityScore = match.similarity;
+                                if (DEBUG_SIMILARITY_SCORES) {
+                                    console.log("[similarity]", {
+                                        newCardId: targetNodeId,
+                                        matchedCardId,
+                                        similarityScore,
+                                        iterationThreshold: ITERATION_OF_SIMILARITY_THRESHOLD,
+                                        referencedByThreshold: REFERENCED_BY_SIMILARITY_THRESHOLD,
+                                    });
+                                }
+
+                                if (!matchedCardId || matchedCardId === targetNodeId) continue;
+                                if (similarityScore < REFERENCED_BY_SIMILARITY_THRESHOLD) continue;
+
+                                const generatedNode = generatedNodeById.get(targetNodeId);
+                                const normalizedEntity = normalizeArtifactEntity(
+                                    String((generatedNode?.data as Record<string, unknown> | undefined)?.label ?? ""),
+                                );
+                                const existingNode = nodesRef.current.find((node) => node.id === matchedCardId);
+                                const existingLabel = normalizeArtifactEntity(
+                                    String((existingNode?.data as Record<string, unknown> | undefined)?.label ?? normalizedEntity),
+                                );
+                                const isIteration = similarityScore > ITERATION_OF_SIMILARITY_THRESHOLD;
+                                const label = isIteration ? ITERATION_OF_LABEL : REFERENCED_BY_LABEL;
+
+                                queueRelationEdge({
+                                    id: crypto.randomUUID(),
+                                    source: targetNodeId,
+                                    target: matchedCardId,
+                                    type: "relation",
+                                    label,
+                                    data: {
+                                        label,
+                                        from: normalizedEntity,
+                                        to: existingLabel,
+                                        kind: isIteration ? "iteration_of" : "referenced_by",
+                                    },
+                                });
+                            }
+
+                            if (relationEdges.length > 0 && !signal.aborted) {
+                                dispatch(connectEdges(relationEdges));
+                            }
+                        } catch (error) {
+                            if (signal.aborted) return;
+                            console.error("Failed to compare generated cards with existing cards.", error);
                         }
-                    } catch (error) {
-                        console.error("Failed to compare generated cards with existing cards.", error);
-                    }
+                    })();
                 }
-
-                const queueEdge = (edge: edgeType) => {
-                    const edgeLabel = typeof edge.label === "string"
-                        ? edge.label
-                        : (typeof edge.data?.label === "string" ? edge.data.label : "");
-                    const edgeKey = `${edge.source}|${edge.target}|${edgeLabel}`;
-                    if (existingEdgeKeySet.has(edgeKey) || queuedEdgeKeySet.has(edgeKey)) return;
-                    queuedEdgeKeySet.add(edgeKey);
-                    generatedEdges.push({
-                        ...edge,
-                        data: {
-                            ...(edge.data && typeof edge.data === "object" ? edge.data : {}),
-                            createdAt: chosenCreatedAt,
-                        },
-                    });
-                };
-
-                for (const card of response.cards) {
-                    const targetNodeId = idMap[String(card.id)];
-                    if (!targetNodeId || targetNodeId === rootActivityNodeId) continue;
-
-                    const normalizedEntity = normalizeArtifactEntity(card.entity);
-                    const similarityMatch = nodeIdToSimilarity.get(targetNodeId);
-                    const matchedCardId = similarityMatch?.existingCardId ?? null;
-                    const similarityScore = similarityMatch?.similarity ?? 0;
-                    if (DEBUG_SIMILARITY_SCORES) {
-                        console.log("[similarity]", {
-                            newCardId: targetNodeId,
-                            matchedCardId,
-                            similarityScore,
-                            iterationThreshold: ITERATION_OF_SIMILARITY_THRESHOLD,
-                            referencedByThreshold: REFERENCED_BY_SIMILARITY_THRESHOLD,
-                        });
-                    }
-                    const generatedNode = generatedNodeById.get(targetNodeId);
-                    if (generatedNode) nodesToAdd.push(generatedNode);
-
-                    const label = relationLabelFor("activity", normalizedEntity);
-                    if (label) {
-                        queueEdge({
-                            id: crypto.randomUUID(),
-                            source: rootActivityNodeId,
-                            target: targetNodeId,
-                            type: "relation",
-                            label,
-                            data: { label, from: "activity", to: normalizedEntity },
-                        });
-                    }
-
-                    if (
-                        matchedCardId &&
-                        matchedCardId !== targetNodeId &&
-                        similarityScore > ITERATION_OF_SIMILARITY_THRESHOLD
-                    ) {
-                        const existingNode = existingNodeById.get(matchedCardId);
-                        const existingLabel = normalizeArtifactEntity(String(existingNode?.data?.label ?? normalizedEntity));
-                        queueEdge({
-                            id: crypto.randomUUID(),
-                            source: targetNodeId,
-                            target: matchedCardId,
-                            type: "relation",
-                            label: ITERATION_OF_LABEL,
-                            data: { label: ITERATION_OF_LABEL, from: normalizedEntity, to: existingLabel, kind: "iteration_of" },
-                        });
-                    } else if (
-                        matchedCardId &&
-                        matchedCardId !== targetNodeId &&
-                        similarityScore >= REFERENCED_BY_SIMILARITY_THRESHOLD
-                    ) {
-                        const existingNode = existingNodeById.get(matchedCardId);
-                        const existingLabel = normalizeArtifactEntity(String(existingNode?.data?.label ?? normalizedEntity));
-                        queueEdge({
-                            id: crypto.randomUUID(),
-                            source: targetNodeId,
-                            target: matchedCardId,
-                            type: "relation",
-                            label: REFERENCED_BY_LABEL,
-                            data: { label: REFERENCED_BY_LABEL, from: normalizedEntity, to: existingLabel, kind: "referenced_by" },
-                        });
-                    }
-                }
-
-                if (nodesToAdd.length > 0) {
-                    dispatch(addNodes(nodesToAdd));
-                }
-                if (generatedEdges.length > 0) {
-                    dispatch(connectEdges(generatedEdges));
-                }
-
             }
+        } catch (error) {
+            if (signal.aborted) return;
+            console.error("Failed to process the attached file.", error);
+            onExtractionError?.(error instanceof Error ? error.message : "Failed to process the attached file.");
         } finally {
+            inFlightRef.current.delete(controller);
             setLoading(false);
         }
-    }, [dispatch, projectId, projectSettings, resolveActionTimestamp, setLoading]);
+    }, [dispatch, onExtractionError, projectId, projectSettings, resolveActionTimestamp, setLoading]);
 
     const onAttachFile = useCallback(async (nodeId: string, file: File) => {
         const targetNode = nodesRef.current.find((node) => node.id === nodeId);

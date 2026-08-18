@@ -140,3 +140,25 @@
     font-weight: 600;
 }
 
+
+.modalTabular {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+.tabularNotice {
+    flex: none;
+    font-size: 12px;
+    color: #5b5b5b;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.modalTabular .outerSyntaxHighlighter {
+    flex: 1;
+    height: auto;
+    min-height: 0;
+}

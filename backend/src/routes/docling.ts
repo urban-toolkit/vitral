@@ -62,22 +62,13 @@ export const doclingRoutes: FastifyPluginAsync = async (app: any) => {
             const markdown = doc?.md_content ?? result.markdown ?? "";
             let cleanedMarkdown = markdown;
 
-            let imageResult: { name: string; content: string }[] = [];
-            if (Array.isArray(result.images)) {
-                imageResult = result.images.map((img: any) => ({
-                    name: img.name ?? "image.png",
-                    content: img.content ?? "",
-                }));
-            } else if (typeof markdown === "string") {
-                const dataUrlRegex = /!\[([^\]]*)\]\((data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)\)/g;
-                let index = 0;
-                cleanedMarkdown = markdown.replace(dataUrlRegex, (_match, altText: string, dataUrl: string) => {
-                    const base64 = dataUrl.replace(/^data:image\/[^;]+;base64,/, "");
-                    imageResult.push({
-                        name: `image_${index}.png`,
-                        content: base64,
-                    });
-                    index += 1;
+            // The replace is what keeps base64 out of the markdown (and therefore out of the LLM
+            // prompt), so it stays. The extracted blobs themselves are not returned: the only
+            // caller discards them, and on a figure-heavy PDF they are tens of megabytes of
+            // response body on the synchronous critical path of a file drop.
+            if (typeof markdown === "string") {
+                const dataUrlRegex = /!\[([^\]]*)\]\(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)/g;
+                cleanedMarkdown = markdown.replace(dataUrlRegex, (_match, altText: string) => {
                     const legend = (altText ?? "").trim() || "Image";
                     return `![${legend}]`;
                 });
@@ -85,7 +76,6 @@ export const doclingRoutes: FastifyPluginAsync = async (app: any) => {
 
             return reply.send({
                 content: cleanedMarkdown,
-                images: imageResult,
             });
 
             // Without cleaning images from markdown

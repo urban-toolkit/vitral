@@ -145,6 +145,50 @@ function assignSatellitesToActivities(
     return assignments;
 }
 
+/**
+ * Which activity each node belongs to — the "tree" the timeline shows and hides as a unit.
+ *
+ * Activities map to themselves; every other card maps to the activity it is closest to in the
+ * graph, the same claim the orbit layout uses, so what hides together is what is drawn together.
+ * Blueprint structure and cards that reach no activity are absent from the map: they belong to no
+ * tree and the timeline never gates them.
+ */
+export function buildActivityTreeMembership(
+    nodes: nodeType[],
+    edges: edgeType[],
+): Map<string, string> {
+    const membership = new Map<string, string>();
+
+    const chronologicalActivityIds = nodes
+        .filter((node) => kindOf(node) === "activity")
+        .sort((a, b) => {
+            const timeA = timestampOf(a);
+            const timeB = timestampOf(b);
+            if (timeA !== timeB) {
+                // Activities without a usable timestamp seed last, so a dated one wins a tie.
+                if (timeA === null) return 1;
+                if (timeB === null) return -1;
+                return timeA - timeB;
+            }
+            return a.id.localeCompare(b.id);
+        })
+        .map((activity) => activity.id);
+
+    for (const activityId of chronologicalActivityIds) {
+        membership.set(activityId, activityId);
+    }
+
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const assignments = assignSatellitesToActivities(nodes, edges, chronologicalActivityIds);
+    for (const [nodeId, assignment] of assignments) {
+        const node = nodeById.get(nodeId);
+        if (!node || kindOf(node) !== "satellite") continue;
+        membership.set(nodeId, assignment.activityId);
+    }
+
+    return membership;
+}
+
 export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): nodeType[] {
     if (nodes.length === 0) return nodes;
 

@@ -208,6 +208,27 @@ function embeddingTextFromCard(card: { label: string; title: string; description
     ].join("\n");
 }
 
+/**
+ * node-pg has no pgvector type parser, so `embedding::text` arrives as a `[f1,f2,...]` literal.
+ * Returns null for anything unparseable so the caller can fall back to a live embed.
+ */
+function parsePgVector(raw: string): number[] | null {
+    if (typeof raw !== "string") return null;
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
+    const body = trimmed.slice(1, -1);
+    if (body.trim() === "") return null;
+
+    const parts = body.split(",");
+    const values = new Array<number>(parts.length);
+    for (let i = 0; i < parts.length; i++) {
+        const value = Number(parts[i]);
+        if (!Number.isFinite(value)) return null;
+        values[i] = value;
+    }
+    return values;
+}
+
 function cosineSimilarity(a: number[], b: number[]): number {
     if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
     let dot = 0;
@@ -2237,22 +2258,59 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             });
         }
 
-        const allCards = [...newCards, ...existingCards];
-        const embeddingInputs = allCards.map((card) => embeddingTextFromCard(card));
+        const startedAt = Date.now();
 
         try {
+            // Existing cards were already embedded by the background queue when they were saved,
+            // so re-embedding the whole canvas on every file drop is pure duplicate work. Reuse
+            // the stored vectors and only pay for what is genuinely missing.
+            const cachedVectorByNodeId = new Map<string, number[]>();
+            try {
+                const cached = await app.pg.query<{ node_id: string; node_text: string; embedding: string }>(
+                    `
+                    SELECT node_id, node_text, embedding::text AS embedding
+                    FROM document_node_embeddings
+                    WHERE doc_id = $1::uuid
+                      AND node_id = ANY($2::text[])
+                      AND (model IS NULL OR model = $3)
+                    `,
+                    [id, existingCards.map((card) => card.id), embeddingModel],
+                );
+
+                const cachedRowById = new Map(cached.rows.map((row) => [row.node_id, row]));
+                for (const card of existingCards) {
+                    const row = cachedRowById.get(card.id);
+                    if (!row) continue;
+                    // The queue serializes the raw stored label while this route normalizes it
+                    // (lowercased, task -> requirement). Rather than reconcile the two, require
+                    // the texts to match exactly; anything else falls through to a live embed,
+                    // which is what happens for every card today anyway.
+                    if (row.node_text !== embeddingTextFromCard(card)) continue;
+                    const parsed = parsePgVector(row.embedding);
+                    if (parsed) cachedVectorByNodeId.set(card.id, parsed);
+                }
+            } catch (error) {
+                // A missing table or a failed probe just means no cache; never fail the request.
+                request.log.warn({ error }, "Failed to read cached node embeddings; embedding live.");
+            }
+
+            // Cache misses cover three cases, all handled the same way: the card was created
+            // within the queue's debounce window, its text was edited since it was embedded, or
+            // embeddings were never generated at all.
+            const staleExistingCards = existingCards.filter((card) => !cachedVectorByNodeId.has(card.id));
+            const cardsToEmbed = [...newCards, ...staleExistingCards];
             const embeddingResponse = await openAiClient.embeddings.create({
                 model: embeddingModel,
-                input: embeddingInputs,
+                input: cardsToEmbed.map((card) => embeddingTextFromCard(card)),
             });
 
             const vectors = Array.isArray(embeddingResponse.data)
                 ? embeddingResponse.data.map((item) => item.embedding).filter((v): v is number[] => Array.isArray(v))
                 : [];
 
-            if (vectors.length !== allCards.length) {
+            if (vectors.length !== cardsToEmbed.length) {
                 request.log.warn(
-                    { expected: allCards.length, actual: vectors.length },
+                    { expected: cardsToEmbed.length, actual: vectors.length },
                     "Unexpected similarity embeddings response length.",
                 );
                 return reply.send({
@@ -2265,7 +2323,22 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             }
 
             const newVectors = vectors.slice(0, newCards.length);
-            const existingVectors = vectors.slice(newCards.length);
+            for (let i = 0; i < staleExistingCards.length; i++) {
+                cachedVectorByNodeId.set(staleExistingCards[i].id, vectors[newCards.length + i]);
+            }
+            const existingVectors = existingCards.map((card) => cachedVectorByNodeId.get(card.id) ?? []);
+
+            request.log.info(
+                {
+                    component: "cards-similarity",
+                    newCards: newCards.length,
+                    existingCards: existingCards.length,
+                    cacheHits: existingCards.length - staleExistingCards.length,
+                    embedded: cardsToEmbed.length,
+                    durationMs: Date.now() - startedAt,
+                },
+                "Card similarity computed.",
+            );
 
             const matches = newCards.map((newCard, index) => {
                 const sourceVector = newVectors[index];

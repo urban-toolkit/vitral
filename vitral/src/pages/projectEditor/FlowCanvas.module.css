@@ -24,3 +24,19 @@
 .cursorText :global(.react-flow__renderer) {
     cursor: text !important;
 }
+
+.resetPositionsButton {
+    padding: 7px 14px;
+    border: 1px solid #d7d7d7;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.96);
+    color: #333333;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.resetPositionsButton:hover {
+    background: #f2f2f2;
+}

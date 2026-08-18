@@ -31,6 +31,9 @@ const EMPTY_STR = "";
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const RAW_TEXT_FALLBACK_EXTENSIONS = new Set(["tsx", "jsx"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "ogg", "ogv", "avi"]);
+const TABULAR_EXTENSIONS = new Set(["csv", "tsv"]);
+const TABULAR_MIME_TYPES = new Set(["text/csv", "text/tab-separated-values"]);
+const TABULAR_PREVIEW_ROWS = 10;
 const PDF_ZOOM_MIN = 0.6;
 const PDF_ZOOM_MAX = 2.4;
 const PDF_ZOOM_STEP = 0.2;
@@ -70,6 +73,41 @@ function normalizeLang(ext: string) {
         default:
             return ext || "text";
     }
+}
+
+/**
+ * Splits delimited text into rows, keeping quoted fields (which may span newlines) intact.
+ * Stops as soon as `limit` rows are collected so large datasets are never walked in full.
+ */
+function splitDelimitedRows(content: string, limit: number): { rows: string[]; truncated: boolean } {
+    const rows: string[] = [];
+    let inQuotes = false;
+    let start = 0;
+
+    for (let i = 0; i < content.length; i++) {
+        const char = content[i];
+
+        if (char === '"') {
+            // A doubled quote is an escaped quote: toggling twice leaves the state unchanged.
+            inQuotes = !inQuotes;
+            continue;
+        }
+
+        if (inQuotes || (char !== "\n" && char !== "\r")) continue;
+
+        rows.push(content.slice(start, i));
+        if (char === "\r" && content[i + 1] === "\n") i++;
+        start = i + 1;
+
+        if (rows.length >= limit) {
+            return { rows, truncated: content.slice(start).trim().length > 0 };
+        }
+    }
+
+    const lastRow = content.slice(start);
+    if (lastRow.length > 0) rows.push(lastRow);
+
+    return { rows, truncated: false };
 }
 
 function normalizeNotebook(notebook: unknown) {
@@ -144,6 +182,7 @@ export function FilePreview({ file }: FilePreviewProps) {
     const isIpynb = ext === "ipynb";
     const isDocx = ext === "docx" || file.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     const isVideo = file.mimeType.startsWith("video/") || VIDEO_EXTENSIONS.has(ext);
+    const isTabular = TABULAR_EXTENSIONS.has(ext) || TABULAR_MIME_TYPES.has(file.mimeType);
 
     const [open, setOpen] = useState(false);
     const [pdfNumPages, setPdfNumPages] = useState(0);
@@ -396,7 +435,11 @@ export function FilePreview({ file }: FilePreviewProps) {
             );
         }
 
-        return (
+        const content = loadedContent ?? EMPTY_STR;
+        // Datasets can be huge, so only the header plus the first rows are rendered.
+        const tabular = isTabular ? splitDelimitedRows(content, TABULAR_PREVIEW_ROWS + 1) : null;
+
+        const highlighter = (
             <div className={classes.outerSyntaxHighlighter}>
                 <SyntaxHighlighter
                     style={oneDark}
@@ -404,8 +447,19 @@ export function FilePreview({ file }: FilePreviewProps) {
                     wrapLongLines={true}
                     customStyle={customCodeBlockStyle}
                 >
-                    {loadedContent ?? EMPTY_STR}
+                    {tabular ? tabular.rows.join("\n") : content}
                 </SyntaxHighlighter>
+            </div>
+        );
+
+        if (!tabular?.truncated) return highlighter;
+
+        return (
+            <div className={classes.modalTabular}>
+                <div className={classes.tabularNotice}>
+                    Showing the first {TABULAR_PREVIEW_ROWS} rows of this file.
+                </div>
+                {highlighter}
             </div>
         );
     }, [
@@ -415,6 +469,7 @@ export function FilePreview({ file }: FilePreviewProps) {
         isIpynb,
         isMarkdown,
         isPdf,
+        isTabular,
         isVideo,
         lang,
         loadError,

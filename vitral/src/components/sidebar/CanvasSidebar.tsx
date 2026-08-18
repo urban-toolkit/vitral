@@ -1,22 +1,16 @@
 import { memo, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faArrowPointer, faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDiagramProject, faDownload, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
+import { faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDownload, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
 import type { cardLabel } from "@/config/types";
 import type { QuerySystemPapersResult, SystemPaper } from "@/api/stateApi";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
 import { BLUEPRINT_DRAG_MIME, buildBlueprintDragPayload } from "@/components/blueprint/blueprintDnD";
 import styles from "./CanvasSidebar.module.css";
 
-export type CanvasViewMode = "explore" | "blueprintComponents" | "features";
+const CANVAS_ARRANGEMENT_TEXT = "Activities are placed left to right by date and the cards that belong to each activity orbit around it. Cards not connected to any activity sit in a band underneath.";
 
-const VIEW_INFO_TEXT: Record<CanvasViewMode, string> = {
-    explore: "The Explore view display all cards and system components. It is the default view for manipulating the canvas.",
-    blueprintComponents: "The System view hide cards so you can focus on the system components.",
-    features: "The Features view hide all cards that are not part of branches containing a system component or requirement. It is intended to help reason about links between requirements and the system.",
-};
-
-// Every view lays cards out the same way, so the arrangement is explained once instead of per view.
-const VIEW_ARRANGEMENT_TEXT = "In every view, activities are placed left to right by date and the cards that belong to each activity orbit around it. Cards not connected to any activity sit in a band underneath.";
+/** Matches the border of a blueprint component node, so the filter reads as the thing it hides. */
+const BLUEPRINT_COMPONENT_FILTER_COLOR = "rgba(91, 186, 214, 0.70)";
 
 function truncateLabel(text: string, maxChars: number): string {
     if (!text) return "";
@@ -145,8 +139,8 @@ type CanvasSidebarProps = {
     bottomOffsetPx?: number;
     collapsed: boolean;
     onToggleCollapsed: () => void;
-    viewMode: CanvasViewMode;
-    onViewModeChange: (mode: CanvasViewMode) => void;
+    blueprintComponentsVisible: boolean;
+    onToggleBlueprintComponents: () => void;
     selectedLabels: cardLabel[];
     onToggleLabel: (label: cardLabel) => void;
     systemPaperResults: QuerySystemPapersResult[];
@@ -296,8 +290,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     bottomOffsetPx = 0,
     collapsed,
     onToggleCollapsed,
-    viewMode,
-    onViewModeChange,
+    blueprintComponentsVisible,
+    onToggleBlueprintComponents,
     selectedLabels,
     onToggleLabel,
     systemPaperResults,
@@ -427,69 +421,10 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                 {!collapsed && (
                     <>
                         <p className={styles.projectSubtitle}>
-                            Design studies are <span className={styles.technicalTag}>technical</span> and <span className={styles.socialTag}>social</span>
+                            Design studies are <span className={styles.socialTag}>technical</span> and <span className={styles.technicalTag}>social</span>
                         </p>
 
-                        <h3 className={styles.title}>Views</h3>
-
-                        <div className={styles.group}>
-                            <button
-                                type="button"
-                                className={`${styles.option} ${viewMode === "explore" ? styles.optionActive : ""}`}
-                                onClick={() => onViewModeChange("explore")}
-                            >
-                                <span className={styles.optionContent}>
-                                    <span className={styles.optionLabel}>
-                                        <FontAwesomeIcon icon={faDiagramProject} className={styles.optionLabelIcon} />
-                                        Explore view
-                                    </span>
-                                    <span className={styles.optionInfo}>
-                                        <FontAwesomeIcon icon={faCircleInfo} />
-                                        <span className={styles.optionTooltip}>
-                                            {VIEW_INFO_TEXT.explore}
-                                        </span>
-                                    </span>
-                                </span>
-                            </button>
-                            <button
-                                type="button"
-                                className={`${styles.option} ${viewMode === "blueprintComponents" ? styles.optionActive : ""}`}
-                                onClick={() => onViewModeChange("blueprintComponents")}
-                            >
-                                <span className={styles.optionContent}>
-                                    <span className={styles.optionLabel}>
-                                        <FontAwesomeIcon icon={faDesktop} className={styles.optionLabelIcon} />
-                                        System view
-                                    </span>
-                                    <span className={styles.optionInfo}>
-                                        <FontAwesomeIcon icon={faCircleInfo} />
-                                        <span className={styles.optionTooltip}>
-                                            {VIEW_INFO_TEXT.blueprintComponents}
-                                        </span>
-                                    </span>
-                                </span>
-                            </button>
-                            <button
-                                type="button"
-                                className={`${styles.option} ${viewMode === "features" ? styles.optionActive : ""}`}
-                                onClick={() => onViewModeChange("features")}
-                            >
-                                <span className={styles.optionContent}>
-                                    <span className={styles.optionLabel}>
-                                        <FontAwesomeIcon icon={faArrowPointer} className={styles.optionLabelIcon} />
-                                        Features view
-                                    </span>
-                                    <span className={styles.optionInfo}>
-                                        <FontAwesomeIcon icon={faCircleInfo} />
-                                        <span className={styles.optionTooltip}>
-                                            {VIEW_INFO_TEXT.features}
-                                        </span>
-                                    </span>
-                                </span>
-                            </button>
-                        </div>
-
-                        <p className={styles.viewArrangementNote}>{VIEW_ARRANGEMENT_TEXT}</p>
+                        <p className={styles.canvasArrangementNote}>{CANVAS_ARRANGEMENT_TEXT}</p>
 
                         <h3 className={styles.title}>Filters</h3>
                         <div className={styles.labelGrid}>
@@ -516,6 +451,26 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                     </button>
                                 );
                             })}
+
+                            <button
+                                type="button"
+                                className={`${styles.labelOption} ${blueprintComponentsVisible ? styles.labelOptionActive : ""}`}
+                                onClick={onToggleBlueprintComponents}
+                                title="blueprint components"
+                            >
+                                <span
+                                    className={styles.labelCircle}
+                                    style={{
+                                        backgroundColor: blueprintComponentsVisible
+                                            ? BLUEPRINT_COMPONENT_FILTER_COLOR
+                                            : "transparent",
+                                        borderColor: BLUEPRINT_COMPONENT_FILTER_COLOR,
+                                    }}
+                                >
+                                    <FontAwesomeIcon icon={faDesktop} />
+                                </span>
+                                <span className={styles.labelText}>components</span>
+                            </button>
                         </div>
 
                         <h3 

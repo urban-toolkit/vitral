@@ -510,6 +510,7 @@ export async function createFile(
     docId: string,
     pending: filePendingUpload,
     createdAt?: string,
+    signal?: AbortSignal,
 ): Promise<{ fileId: string, createdAt: string, sha256: string, sizeBytes: number, bucket: string, key: string }> {
 
     const fd = new FormData();
@@ -524,6 +525,7 @@ export async function createFile(
     const res = await fetch(`${API_BASE}/state/${docId}/files`, {
         method: "POST",
         body: fd,
+        signal,
     });
 
     if (!res.ok) {
@@ -608,11 +610,13 @@ export async function loadKnowledgeProvenance(
 export async function compareCardsSimilarity(
     docId: string,
     payload: CompareCardsSimilarityRequest,
+    signal?: AbortSignal,
 ): Promise<CompareCardsSimilarityResponse> {
     const res = await fetch(`${API_BASE}/state/${docId}/cards/similarity`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: signal ?? AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {

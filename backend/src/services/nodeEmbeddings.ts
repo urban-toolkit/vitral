@@ -289,13 +289,14 @@ export function createNodeEmbeddingQueue({
 
                     const base = values.length;
                     valuesSql.push(
-                        `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}::vector)`,
+                        `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}::vector, $${base + 5})`,
                     );
                     values.push(
                         item.docId,
                         item.nodeId,
                         item.serializedNode,
                         vectorToPgLiteral(embedding),
+                        model,
                     );
                 });
 
@@ -303,12 +304,13 @@ export function createNodeEmbeddingQueue({
 
                 await pg.query(
                     `
-                    INSERT INTO document_node_embeddings (doc_id, node_id, node_text, embedding)
+                    INSERT INTO document_node_embeddings (doc_id, node_id, node_text, embedding, model)
                     VALUES ${valuesSql.join(", ")}
                     ON CONFLICT (doc_id, node_id) DO UPDATE
                     SET
                         node_text = EXCLUDED.node_text,
                         embedding = EXCLUDED.embedding,
+                        model = EXCLUDED.model,
                         updated_at = now()
                     `,
                     values,

@@ -470,24 +470,15 @@ export const Timeline = ({
 	const resolveClearCutoffIso = useCallback((): string | undefined => {
 		const [domainStart, domainEnd] = parsed.domain;
 		const today = new Date();
-		const latestKnowledgeDate = parsed.kb.reduce<Date | null>((latest, eventData) => {
-			const candidate = eventData.date;
-			if (Number.isNaN(candidate.getTime())) return latest;
-			if (!latest) return candidate;
-			return candidate.getTime() > latest.getTime() ? candidate : latest;
-		}, null);
-		const defaultPlaybackDate = latestKnowledgeDate ?? (
-			today < domainStart
-				? domainStart
-				: (today > domainEnd ? domainStart : today)
-		);
-		const playbackCandidate = playbackAt ? toDate(playbackAt) : defaultPlaybackDate;
+		// Matches the playhead: with no playback time the cutoff is Today, not the most
+		// recent event.
+		const playbackCandidate = playbackAt ? toDate(playbackAt) : today;
 		const clampedPlaybackDate = new Date(
 			Math.min(domainEnd.getTime(), Math.max(domainStart.getTime(), playbackCandidate.getTime()))
 		);
 		if (Number.isNaN(clampedPlaybackDate.getTime())) return undefined;
 		return clampedPlaybackDate.toISOString();
-	}, [parsed.domain, parsed.kb, playbackAt]);
+	}, [parsed.domain, playbackAt]);
 
 	useTimelineChart({
 		containerRef,

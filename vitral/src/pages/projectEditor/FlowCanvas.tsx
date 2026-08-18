@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ReactFlow, MiniMap, type NodeChange, type EdgeChange, type Connection, type NodeTypes, type EdgeTypes } from "@xyflow/react";
+import { ReactFlow, MiniMap, Panel, type NodeChange, type EdgeChange, type Connection, type NodeTypes, type EdgeTypes } from "@xyflow/react";
 
 import type { edgeType, nodeType } from "@/config/types";
 import type { CursorMode } from "@/pages/projectEditor/types";
@@ -23,6 +23,8 @@ type FlowCanvasProps = {
     onDrop: (e: React.DragEvent) => void;
     activityDropTargets?: ActivityDropTarget[] | null;
     activityDropReason?: ActivityDropRingsReason;
+    /** Provided only while at least one node sits away from its derived position. */
+    onResetNodePositions?: (() => void) | null;
     miniMapBottomOffsetPx?: number;
     miniMapRightOffsetPx?: number;
 };
@@ -43,6 +45,7 @@ export const FlowCanvas = memo(function FlowCanvas({
     onDrop,
     activityDropTargets = null,
     activityDropReason = "drag",
+    onResetNodePositions = null,
     miniMapBottomOffsetPx = 0,
     miniMapRightOffsetPx = 0,
 }: FlowCanvasProps) {
@@ -75,6 +78,20 @@ export const FlowCanvas = memo(function FlowCanvas({
         >
             {activityDropTargets && activityDropTargets.length > 0 ? (
                 <ActivityDropRings targets={activityDropTargets} reason={activityDropReason} />
+            ) : null}
+
+            {/* Top centre: the top-right corner is taken by the system screenshot panel, and the
+                left by the canvas sidebar. */}
+            {onResetNodePositions ? (
+                <Panel position="top-center">
+                    <button
+                        type="button"
+                        className={styles.resetPositionsButton}
+                        onClick={onResetNodePositions}
+                    >
+                        Reset card positioning
+                    </button>
+                </Panel>
             ) : null}
 
             <MiniMap

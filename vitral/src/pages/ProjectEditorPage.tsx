@@ -52,7 +52,7 @@ import { LoadSpinner } from "@/components/project/LoadSpinner";
 import { Card, type CardProps } from "@/components/cards/Card";
 import { CARD_LABELS } from "@/components/cards/cardVisuals";
 import { RelationEdge } from "@/components/edges/RelationEdge";
-import { CanvasSidebar, type CanvasViewMode } from "@/components/sidebar/CanvasSidebar";
+import { CanvasSidebar } from "@/components/sidebar/CanvasSidebar";
 import { RightSidebar } from "@/components/sidebar/RightSidebar";
 import { BlueprintNode } from "@/components/blueprint/BlueprintNode";
 import { BlueprintComponentNode } from "@/components/blueprint/BlueprintComponentNode";
@@ -103,7 +103,7 @@ import {
 } from "@/store/timelineSlice";
 
 import { isAllowedConnection, relationLabelFor } from "@/utils/relationships";
-import { buildActivityOrbitLayout } from "@/pages/projectEditor/activityOrbitLayout";
+import { buildActivityOrbitLayout, buildActivityTreeMembership } from "@/pages/projectEditor/activityOrbitLayout";
 import { fromDate } from "@/pages/projectEditor/dateUtils";
 import type { CursorMode, GitConnectionStatus } from "@/pages/projectEditor/types";
 import {
@@ -112,7 +112,6 @@ import {
     findActivityDropTarget,
     getActivityDropTargets,
     nodeSizeOf,
-    resolveAbsoluteNodePositions,
 } from "@/pages/projectEditor/canvasGeometry";
 import type { ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
 import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
@@ -134,6 +133,8 @@ const REFERENCED_BY_EDGE_LABEL = "referenced by";
 const ITERATION_OF_EDGE_LABEL = "iteration of";
 const FEEDS_INTO_EDGE_LABEL = "feeds into";
 const RIGHT_SIDEBAR_WIDTH_PX = 250;
+/** Every node that belongs to the blueprint structure, hidden or shown as one filter. */
+const BLUEPRINT_NODE_LABELS = new Set(["blueprint", "blueprint_group", "blueprint_component"]);
 const AI_CHAT_BUTTON_BOTTOM_GAP_PX = 20;
 const AI_CHAT_BUTTON_TIMELINE_GAP_PX = 12;
 const AI_CHAT_BUTTON_RIGHT_GAP_PX = 16;
@@ -920,7 +921,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // A card the user just created, to be brought into view once the layout has placed it.
     const [pendingFocusNodeId, setPendingFocusNodeId] = useState<string | null>(null);
     const [timelineOpen, setTimelineOpen] = useState(false);
-    const [viewMode, setViewMode] = useState<CanvasViewMode>("explore");
+    const [blueprintComponentsVisible, setBlueprintComponentsVisible] = useState(true);
+    // Cards can be dragged out of the position the layout gives them, for a closer look at a
+    // cluster. The arrangement is deliberately session-only — the layout still owns where a card
+    // belongs — so "Reset card positioning" is all it takes to put everything back.
+    const [manualNodePositions, setManualNodePositions] = useState<Record<string, { x: number; y: number }>>({});
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
     const [selectedLabels, setSelectedLabels] = useState<cardLabel[]>([...CARD_LABELS]);
     const [activeQuery, setActiveQuery] = useState("");
@@ -930,6 +935,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [chatMessages, setChatMessages] = useState<CanvasChatEntry[]>([]);
     const [chatLoading, setChatLoading] = useState(false);
     const [chatError, setChatError] = useState<string | null>(null);
+    // Replaces the blocking `alert` the extraction path used to raise: the file is already
+    // attached by the time extraction can fail, so this is a notice, not a dialog.
+    const [fileProcessingError, setFileProcessingError] = useState<string | null>(null);
     const [systemPaperResults, setSystemPaperResults] = useState<QuerySystemPapersResult[]>([]);
     const [systemPapersLoading, setSystemPapersLoading] = useState(false);
     const [systemPapersError, setSystemPapersError] = useState<string | null>(null);
@@ -1042,7 +1050,24 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (!playbackAt) return null;
         return toTimestampMs(playbackAt);
     }, [playbackAt]);
-    const effectivePlaybackTime = playbackAtTime ?? Number.POSITIVE_INFINITY;
+    // Deleted cards never reach the canvas, and they must not bridge two trees while working out
+    // which activity a card belongs to either, so tree membership is derived from the live graph.
+    const liveNodes = useMemo(
+        () => nodes.filter((node) => (
+            toTimestampMs((node.data as Record<string, unknown>)?.deletedAt) === null
+        )),
+        [nodes],
+    );
+    const liveEdges = useMemo(
+        () => edges.filter((edge) => (
+            toTimestampMs((edge.data as Record<string, unknown> | undefined)?.deletedAt) === null
+        )),
+        [edges],
+    );
+    const activityTreeMembership = useMemo(
+        () => buildActivityTreeMembership(liveNodes, liveEdges),
+        [liveEdges, liveNodes],
+    );
     const timelineRangeStartMs = useMemo(
         () => toTimestampMs(timelineStartEnd.start),
         [timelineStartEnd.start],
@@ -1076,21 +1101,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         return latest;
     }, [edges, nodes]);
-    const latestCanvasChangeTimeForLock = useMemo(() => {
-        if (latestCanvasChangeTime === null) return null;
-        return clampTimestampMsToRange(
-            latestCanvasChangeTime,
-            timelineRangeStartMs,
-            timelineRangeEndMs,
-        );
-    }, [latestCanvasChangeTime, timelineRangeEndMs, timelineRangeStartMs]);
-    const isHistoricalPlayback = useMemo(() => {
-        // Only lock while explicitly inspecting a historical playback point.
-        if (playbackAtTime === null) return false;
-        if (latestCanvasChangeTimeForLock === null) return false;
-        return playbackAtTime < latestCanvasChangeTimeForLock;
-    }, [latestCanvasChangeTimeForLock, playbackAtTime]);
-    const interactionLocked = reviewOnly || isHistoricalPlayback;
+    // Where the needle sits never blocks editing: it only chooses which activity trees are on
+    // screen, so a card that is visible is a card you can work on.
+    const interactionLocked = reviewOnly;
     const resolveActionTimestamp = useCallback(() => {
         if (playbackAt) {
             const parsed = new Date(playbackAt);
@@ -1105,57 +1118,36 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const defaultMs = (nowMs < minMs || nowMs > maxMs) ? minMs : nowMs;
         return new Date(defaultMs).toISOString();
     }, [playbackAt, timelineRangeEndMs, timelineRangeStartMs]);
+    // The needle gates whole activity trees and nothing else. An activity and every card orbiting it
+    // appear together the moment the activity exists and stay put from there on, so no node-level
+    // history is replayed. Anything belonging to no tree — orphan cards, blueprint structure — is
+    // never gated by the needle.
     const timelineContextNodes = useMemo(() => {
-        if (playbackAtTime === null) {
-            return nodes.filter((node) => {
-                const deletedAt = toTimestampMs((node.data as Record<string, unknown>)?.deletedAt);
-                return deletedAt === null;
-            });
-        }
+        if (playbackAtTime === null) return liveNodes;
 
-        const cutoffTime = effectivePlaybackTime;
-        return nodes
-            .filter((node) => {
-                const createdAt = toTimestampMs((node.data as Record<string, unknown>)?.createdAt);
-                if (createdAt !== null && createdAt > cutoffTime) return false;
-                const deletedAt = toTimestampMs((node.data as Record<string, unknown>)?.deletedAt);
-                if (deletedAt !== null && deletedAt <= cutoffTime) return false;
-                return true;
-            })
-            .map((node) => resolveNodeAtPlayback(node, cutoffTime));
-    }, [effectivePlaybackTime, nodes, playbackAtTime]);
+        const visibleActivityIds = new Set(
+            liveNodes
+                .filter((node) => {
+                    const nodeData = (node.data ?? {}) as Record<string, unknown>;
+                    if (normalizeNodeLabel(String(nodeData.label ?? "")) !== "activity") return false;
+                    const createdAt = toTimestampMs(nodeData.createdAt);
+                    return createdAt === null || createdAt <= playbackAtTime;
+                })
+                .map((node) => node.id),
+        );
+
+        return liveNodes.filter((node) => {
+            const activityId = activityTreeMembership.get(node.id);
+            if (activityId === undefined) return true;
+            return visibleActivityIds.has(activityId);
+        });
+    }, [activityTreeMembership, liveNodes, playbackAtTime]);
     const timelineContextEdges = useMemo(() => {
         const visibleNodeIds = new Set(timelineContextNodes.map((node) => node.id));
-
-        if (playbackAtTime === null) {
-            return edges.filter((edge) => {
-                if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) {
-                    return false;
-                }
-                const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
-                const deletedAt = toTimestampMs(edgeData.deletedAt);
-                return deletedAt === null;
-            });
-        }
-
-        const cutoffTime = effectivePlaybackTime;
-        return edges.filter((edge) => {
-            if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) {
-                return false;
-            }
-            const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
-            const createdAt = toTimestampMs(edgeData.createdAt);
-            if (createdAt !== null && createdAt > cutoffTime) {
-                return false;
-            }
-
-            const deletedAt = toTimestampMs(edgeData.deletedAt);
-            if (deletedAt !== null && deletedAt <= cutoffTime) {
-                return false;
-            }
-            return true;
-        });
-    }, [edges, effectivePlaybackTime, playbackAtTime, timelineContextNodes]);
+        return liveEdges.filter((edge) => (
+            visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
+        ));
+    }, [liveEdges, timelineContextNodes]);
     const knowledgeProvenanceTriggerKey = useMemo(() => {
         let hash = 2166136261;
 
@@ -1496,11 +1488,17 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         dispatch,
         nodes,
         edges,
-        allFiles,
         projectSettings: llmProjectSettings,
         actionTimestamp: playbackAt,
         setLoading,
+        onExtractionError: setFileProcessingError,
     });
+
+    useEffect(() => {
+        if (!fileProcessingError) return;
+        const timer = window.setTimeout(() => setFileProcessingError(null), 10_000);
+        return () => window.clearTimeout(timer);
+    }, [fileProcessingError]);
 
     const onAttachFileForNode = useCallback((nodeId: string, file: File) => {
         if (interactionLocked) return;
@@ -1522,20 +1520,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             queuedPositionChangesRef.current = [];
             return;
         }
-        if (viewMode !== "explore") {
-            queuedPositionChangesRef.current = [];
-            return;
-        }
-
         if (queuedPositionChangesRef.current.length === 0) return;
-        const editAt = resolveActionTimestamp();
-        const queuedChanges = queuedPositionChangesRef.current.map((change) => ({
-            ...change,
-            __editAt: editAt,
-        }));
+        const queuedChanges = queuedPositionChangesRef.current;
         queuedPositionChangesRef.current = [];
-        dispatch(onNodesChange(queuedChanges as NodeChange<nodeType>[]));
-    }, [dispatch, interactionLocked, resolveActionTimestamp, viewMode]);
+
+        setManualNodePositions((previous) => {
+            const next = { ...previous };
+            for (const change of queuedChanges) {
+                if (change.type !== "position" || !change.position) continue;
+                next[change.id] = { x: change.position.x, y: change.position.y };
+            }
+            return next;
+        });
+    }, [interactionLocked]);
 
     const rememberDeletedKnowledgeEventFromNode = useCallback((targetNode: nodeType | undefined) => {
         if (!targetNode) return;
@@ -1638,7 +1635,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
         if (interactionLocked) return;
-        if (viewMode !== "explore") return;
 
         const immediateChanges = changes.filter((change) => change.type !== "position");
         const positionChanges = changes.filter((change) => change.type === "position");
@@ -1662,7 +1658,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 nodeChangeRafRef.current = window.requestAnimationFrame(flushQueuedPositionChanges);
             }
         }
-    }, [dispatch, interactionLocked, viewMode, flushQueuedPositionChanges, softDeleteNode]);
+    }, [dispatch, interactionLocked, flushQueuedPositionChanges, softDeleteNode]);
 
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
         if (interactionLocked) return;
@@ -1699,7 +1695,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // Without it, creating a card whose label is filtered out silently produces nothing visible —
     // which matters most for the drop/ring paths, where the label is always `object`.
     const resetFiltersForCanvasCreation = useCallback((ensureVisibleLabel?: cardLabel) => {
-        setViewMode("explore");
         setActiveQuery("");
         setQueryMatchedNodeIds(null);
         if (ensureVisibleLabel) {
@@ -1820,7 +1815,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const handleConnect = useCallback((connection: Connection) => {
         if (interactionLocked) return;
         if (!connection.source || !connection.target) return;
-        if (viewMode !== "explore") return;
 
         const sourceNode = nodes.find((node) => node.id === connection.source);
         const targetNode = nodes.find((node) => node.id === connection.target);
@@ -1847,7 +1841,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             x,
             y,
         });
-    }, [nodes, interactionLocked, viewMode]);
+    }, [nodes, interactionLocked]);
 
     const onDataPropertyChange = useCallback((nodeProps: nodeType, value: unknown, propertyName: string) => {
         if (interactionLocked) return;
@@ -2058,10 +2052,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const labelFilteredNodes = useMemo(() => {
         return timelineContextNodes.filter((node) => {
             const rawLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
+            if (BLUEPRINT_NODE_LABELS.has(rawLabel)) return blueprintComponentsVisible;
             if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
             return selectedLabelSet.has(rawLabel as cardLabel);
         });
-    }, [selectedLabelSet, timelineContextNodes]);
+    }, [blueprintComponentsVisible, selectedLabelSet, timelineContextNodes]);
 
     const emphasizedBlueprintComponentIds = useMemo(() => {
         const nodeById = new Map(timelineContextNodes.map((node) => [node.id, node]));
@@ -2231,146 +2226,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         highlightedKnowledgeNodeIdSet,
     ]);
 
-    const compactBlueprintNodes = useMemo<nodeType[] | null>(() => {
-        if (viewMode !== "blueprintComponents") return null;
-
-        const absoluteById = resolveAbsoluteNodePositions(timelineContextNodes);
-        const nodeById = new Map(timelineContextNodes.map((node) => [node.id, node]));
-        const visibleNodeIds = new Set<string>();
-
-        const blueprintComponents = timelineContextNodes.filter((node) => (
-            String(node.data?.label ?? "").toLowerCase() === "blueprint_component"
-        ));
-
-        if (blueprintComponents.length === 0) return [];
-
-        for (const componentNode of blueprintComponents) {
-            visibleNodeIds.add(componentNode.id);
-            let parentId = componentNode.parentId;
-            while (parentId) {
-                const parentNode = nodeById.get(parentId);
-                if (!parentNode) break;
-                const parentLabel = String(parentNode.data?.label ?? "").toLowerCase();
-                if (parentLabel !== "blueprint_group") break;
-                visibleNodeIds.add(parentNode.id);
-                parentId = parentNode.parentId;
-            }
-        }
-
-        const visibleBlueprintNodes = timelineContextNodes.filter((node) => visibleNodeIds.has(node.id));
-        const visibleById = new Map(visibleBlueprintNodes.map((node) => [node.id, node]));
-
-        const toDimension = (value: unknown, fallback: number) => {
-            if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
-            const parsed = Number.parseFloat(String(value ?? ""));
-            if (Number.isFinite(parsed) && parsed > 0) return parsed;
-            return fallback;
-        };
-
-        const roots = visibleBlueprintNodes
-            .filter((node) => {
-                if (node.parentId && visibleById.has(node.parentId)) return false;
-                const label = String(node.data?.label ?? "").toLowerCase();
-                return label === "blueprint_group" || label === "blueprint_component";
-            })
-            .map((node) => {
-                const absolute = absoluteById.get(node.id) ?? { x: node.position.x, y: node.position.y };
-                const label = String(node.data?.label ?? "").toLowerCase();
-                const style = node.style as Record<string, unknown> | undefined;
-                const width = label === "blueprint_group"
-                    ? toDimension(style?.width, 360)
-                    : 112;
-                const height = label === "blueprint_group"
-                    ? toDimension(style?.height, 220)
-                    : 112;
-                return {
-                    id: node.id,
-                    x: absolute.x,
-                    y: absolute.y,
-                    width,
-                    height,
-                };
-            })
-            .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y));
-
-        const compactGap = 34;
-        const startX = 120;
-        const startY = 120;
-        const columns = Math.max(1, Math.ceil(Math.sqrt(roots.length)));
-        const newRootAbsolutePositions = new Map<string, { x: number; y: number }>();
-
-        let cursorX = startX;
-        let cursorY = startY;
-        let rowMaxHeight = 0;
-
-        for (let index = 0; index < roots.length; index++) {
-            const root = roots[index];
-            const col = index % columns;
-            if (col === 0 && index > 0) {
-                cursorY += rowMaxHeight + compactGap;
-                cursorX = startX;
-                rowMaxHeight = 0;
-            }
-
-            newRootAbsolutePositions.set(root.id, { x: cursorX, y: cursorY });
-            cursorX += root.width + compactGap;
-            rowMaxHeight = Math.max(rowMaxHeight, root.height);
-        }
-
-        return visibleBlueprintNodes.map<nodeType>((node) => {
-            const nodeLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
-            const nodeData = node.data as Record<string, unknown>;
-            const attachedCodebasePaths = Array.isArray(nodeData.codebaseFilePaths)
-                ? nodeData.codebaseFilePaths
-                    .filter((path): path is string => typeof path === "string")
-                    .map((path) => normalizePath(path))
-                : [];
-            const isHoveredByFile = normalizedHoveredCodebasePath !== "" &&
-                attachedCodebasePaths.includes(normalizedHoveredCodebasePath);
-            const isEmphasized = emphasizedBlueprintComponentIds.has(node.id) || isHoveredByFile;
-            let nextStyle = node.style as Record<string, string | number> | undefined;
-            let styleChanged = false;
-            if (nodeLabel === "blueprint_component") {
-                const desiredOpacity = isEmphasized ? 1 : 0.5;
-                const currentOpacity = readNodeOpacity(node.style);
-                if (currentOpacity !== desiredOpacity) {
-                    nextStyle = {
-                        ...(node.style as Record<string, string | number> ?? {}),
-                        opacity: desiredOpacity,
-                    };
-                    styleChanged = true;
-                }
-            }
-
-            const newRootAbsolute = newRootAbsolutePositions.get(node.id);
-            if (!newRootAbsolute) {
-                if (!styleChanged) return node;
-                return {
-                    ...node,
-                    style: nextStyle,
-                };
-            }
-
-            if (node.parentId && visibleById.has(node.parentId)) {
-                if (!styleChanged) return node;
-                return {
-                    ...node,
-                    style: nextStyle,
-                };
-            }
-
-            const positionChanged = (
-                node.position.x !== newRootAbsolute.x ||
-                node.position.y !== newRootAbsolute.y
-            );
-            if (!styleChanged && !positionChanged) return node;
-            return {
-                ...node,
-                position: newRootAbsolute,
-                style: nextStyle,
-            };
-        });
-    }, [timelineContextNodes, viewMode, emphasizedBlueprintComponentIds, normalizedHoveredCodebasePath]);
 
     const filteredEdges = useMemo(() => {
         const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
@@ -2379,147 +2234,35 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         ));
     }, [timelineContextEdges, filteredNodes]);
 
-    const featureViewNodes = useMemo<nodeType[] | null>(() => {
-        if (viewMode !== "features") return null;
-
-        const nodeById = new Map(timelineContextNodes.map((node) => [node.id, node]));
-        const adjacency = new Map<string, string[]>();
-
-        const connect = (a: string, b: string) => {
-            const listA = adjacency.get(a);
-            if (listA) {
-                listA.push(b);
-            } else {
-                adjacency.set(a, [b]);
-            }
-        };
-
-        for (const edge of timelineContextEdges) {
-            connect(edge.source, edge.target);
-            connect(edge.target, edge.source);
-        }
-
-        const requirementOrBlueprintIds = new Set(
-            timelineContextNodes
-                .filter((node) => {
-                    const label = String(node.data?.label ?? "").toLowerCase();
-                    if (label === "blueprint_component") return true;
-                    return normalizeNodeLabel(label) === "requirement";
-                })
-                .map((node) => node.id)
-        );
-
-        const bfsDistances = (startIds: string[]): Map<string, number> => {
-            const distances = new Map<string, number>();
-            const queue: string[] = [];
-            for (const startId of startIds) {
-                distances.set(startId, 0);
-                queue.push(startId);
-            }
-
-            let index = 0;
-            while (index < queue.length) {
-                const currentId = queue[index++];
-                const currentDist = distances.get(currentId);
-                if (currentDist === undefined) continue;
-                const nextIds = adjacency.get(currentId) ?? [];
-                for (const nextId of nextIds) {
-                    if (distances.has(nextId)) continue;
-                    distances.set(nextId, currentDist + 1);
-                    queue.push(nextId);
-                }
-            }
-            return distances;
-        };
-
-        const activityIds = timelineContextNodes
-            .filter((node) => normalizeNodeLabel(String(node.data?.label ?? "")) === "activity")
-            .map((node) => node.id);
-
-        const includedNodeIds = new Set<string>(requirementOrBlueprintIds);
-
-        for (const anchorId of requirementOrBlueprintIds) {
-            const neighbors = adjacency.get(anchorId) ?? [];
-            for (const neighborId of neighbors) {
-                includedNodeIds.add(neighborId);
-            }
-        }
-
-        const distancesFromAnchors = bfsDistances(Array.from(requirementOrBlueprintIds));
-
-        for (const activityId of activityIds) {
-            const shortestToAnchor = distancesFromAnchors.get(activityId);
-            if (shortestToAnchor === undefined) continue;
-
-            const distancesFromActivity = bfsDistances([activityId]);
-            for (const [nodeId, distFromAnchor] of distancesFromAnchors.entries()) {
-                const distFromActivity = distancesFromActivity.get(nodeId);
-                if (distFromActivity === undefined) continue;
-                if (distFromAnchor + distFromActivity === shortestToAnchor) {
-                    includedNodeIds.add(nodeId);
-                }
-            }
-        }
-
-        const includeBlueprintAncestors = (nodeId: string) => {
-            let parentId = nodeById.get(nodeId)?.parentId;
-            while (parentId) {
-                const parentNode = nodeById.get(parentId);
-                if (!parentNode) break;
-                const label = String(parentNode.data?.label ?? "").toLowerCase();
-                if (label !== "blueprint_group") break;
-                includedNodeIds.add(parentNode.id);
-                parentId = parentNode.parentId;
-            }
-        };
-
-        for (const nodeId of Array.from(includedNodeIds)) {
-            includeBlueprintAncestors(nodeId);
-        }
-
-        return timelineContextNodes.filter((node) => includedNodeIds.has(node.id));
-    }, [viewMode, timelineContextNodes, timelineContextEdges]);
-
-    // Which nodes a view shows. Every view then goes through the same time-based layout below.
-    const viewBaseNodes = useMemo<nodeType[]>(() => {
-        if (viewMode === "blueprintComponents") {
-            return compactBlueprintNodes ?? [];
-        }
-        if (viewMode === "features") {
-            return featureViewNodes ?? [];
-        }
-        return filteredNodes;
-    }, [viewMode, filteredNodes, compactBlueprintNodes, featureViewNodes]);
 
     // Edges are resolved before the layout runs, because the layout uses them to work out which
     // activity each card orbits.
-    //
-    // Explore and the structural views are kept in separate memos on purpose. `filteredEdges`
-    // changes identity whenever an asset is hovered or a knowledge node is highlighted; if the
-    // structural views depended on it, that identity churn would flow into `displayedNodes` and the
-    // non-explore fitView effect would throw away the user's pan/zoom on every hover.
-    const exploreDisplayedEdges = useMemo(() => {
-        const visibleNodeIds = new Set(viewBaseNodes.map((node) => node.id));
+    const displayedEdges = useMemo(() => {
+        const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
         return filteredEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
         ));
-    }, [filteredEdges, viewBaseNodes]);
+    }, [filteredEdges, filteredNodes]);
 
-    const structuralDisplayedEdges = useMemo(() => {
-        const visibleNodeIds = new Set(viewBaseNodes.map((node) => node.id));
-        return timelineContextEdges.filter((edge) => (
-            visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
-        ));
-    }, [timelineContextEdges, viewBaseNodes]);
+    const { displayedNodes, hasManualNodePositions } = useMemo<{
+        displayedNodes: nodeType[];
+        hasManualNodePositions: boolean;
+    }>(() => {
+        const laidOut = buildActivityOrbitLayout(filteredNodes, displayedEdges);
+        let moved = false;
 
-    const displayedEdges = viewMode === "blueprintComponents" || viewMode === "features"
-        ? structuralDisplayedEdges
-        : exploreDisplayedEdges;
+        const positioned = laidOut.map((node) => {
+            const manual = manualNodePositions[node.id];
+            if (!manual) return node;
+            // A drag that ends where it started is not an arrangement, so it must not raise the
+            // reset button.
+            if (manual.x === node.position.x && manual.y === node.position.y) return node;
+            moved = true;
+            return { ...node, position: manual };
+        });
 
-    const displayedNodes = useMemo<nodeType[]>(
-        () => buildActivityOrbitLayout(viewBaseNodes, displayedEdges),
-        [viewBaseNodes, displayedEdges],
-    );
+        return { displayedNodes: positioned, hasManualNodePositions: moved };
+    }, [filteredNodes, displayedEdges, manualNodePositions]);
 
     // The layout — not the cursor — decides where a new card lands, so a card created by the card
     // tool or a file drop can appear anywhere, including off-screen. Pan to it once it is placed,
@@ -2547,11 +2290,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // because both actions create a card that gets connected to the activity underneath.
     const activityDropReason = useMemo<ActivityDropRingsReason | null>(() => {
         if (interactionLocked) return null;
-        if (viewMode !== "explore") return null;
         if (fileDragActive) return "drag";
         if (cursorMode === "node") return "tool";
         return null;
-    }, [cursorMode, fileDragActive, interactionLocked, viewMode]);
+    }, [cursorMode, fileDragActive, interactionLocked]);
 
     const activityDropTargets = useMemo(() => (
         activityDropReason ? getActivityDropTargets(displayedNodes) : null
@@ -2606,7 +2348,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
         if (interactionLocked) return;
-        if (viewMode !== "explore") return;
         if (cursorMode !== "node" && cursorMode !== "blueprint_component") return;
 
         const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
@@ -2701,7 +2442,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 relevant: true,
             },
         }));
-    }, [cursorMode, displayedNodes, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, resolveActionTimestamp, resetFiltersForCanvasCreation, screenToFlowPosition, viewMode]);
+    }, [cursorMode, displayedNodes, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, resolveActionTimestamp, resetFiltersForCanvasCreation, screenToFlowPosition]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
@@ -2712,17 +2453,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (!hasFiles && !hasBlueprint && !hasGitHubFile) return;
 
         e.preventDefault();
-        e.dataTransfer.dropEffect = viewMode === "explore" ? "copy" : "none";
-
-        if (viewMode !== "explore") return;
-    }, [interactionLocked, viewMode]);
+        e.dataTransfer.dropEffect = "copy";
+    }, [interactionLocked]);
 
     const handleCanvasDrop = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
         const blueprintRaw = e.dataTransfer?.getData(BLUEPRINT_DRAG_MIME);
         if (blueprintRaw) {
             e.preventDefault();
-            if (viewMode !== "explore") return;
 
             const payload = parseBlueprintDragPayload(blueprintRaw);
             if (!payload) return;
@@ -2748,7 +2486,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (droppedFiles.length === 0) return;
 
         e.preventDefault();
-        if (viewMode !== "explore") return;
 
         const basePosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
         // Dropping inside an activity's ring connects every dropped file's card to that activity;
@@ -2776,7 +2513,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 if (index === 0) resetFiltersForCanvasCreation("object");
             }
         })();
-    }, [displayedNodes, dispatch, interactionLocked, onAttachFileForCanvas, resetFiltersForCanvasCreation, resolveActionTimestamp, screenToFlowPosition, viewMode]);
+    }, [displayedNodes, dispatch, interactionLocked, onAttachFileForCanvas, resetFiltersForCanvasCreation, resolveActionTimestamp, screenToFlowPosition]);
 
     const onFreeInputSubmit = useCallback(async (x: number, y: number, userText: string) => {
         if (interactionLocked) return;
@@ -2808,6 +2545,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 dispatch(addNodes(generatedNodes));
                 dispatch(connectEdges(generatedEdges));
             }
+        } catch (error) {
+            console.error("Card extraction failed for the free-text input.", error);
+            setFileProcessingError(error instanceof Error ? error.message : "Card extraction failed.");
         } finally {
             setLoading(false);
         }
@@ -3112,34 +2852,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, []);
 
     useEffect(() => {
-        if (viewMode !== "explore") return;
-
         const t = window.setTimeout(() => {
             fitView({ padding: 0.2, duration: 350 });
         }, 0);
 
         return () => window.clearTimeout(t);
-    }, [viewMode, selectedLabels, queryMatchedNodeIds, fitView]);
-
-    useEffect(() => {
-        if (viewMode === "explore") return;
-
-        const t = window.setTimeout(() => {
-            fitView({ padding: 0.2, duration: 350 });
-        }, 0);
-
-        return () => window.clearTimeout(t);
-    }, [viewMode, displayedNodes, fitView]);
-
-    useEffect(() => {
-        if (viewMode === "explore") return;
-        queuedPositionChangesRef.current = [];
-        if (nodeChangeRafRef.current !== null) {
-            window.cancelAnimationFrame(nodeChangeRafRef.current);
-            nodeChangeRafRef.current = null;
-        }
-        setPendingConnectionMenu(null);
-    }, [viewMode]);
+    }, [blueprintComponentsVisible, selectedLabels, queryMatchedNodeIds, fitView]);
 
     useEffect(() => {
         return () => {
@@ -3194,7 +2912,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const clearCanvasFilter = useCallback(() => {
         setActiveQuery("");
         setQueryMatchedNodeIds(null);
-        setViewMode("explore");
         setChatError(null);
     }, []);
 
@@ -3240,7 +2957,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 setChatMessages((prev) => [...prev, assistantEntry].slice(-40));
 
                 if (response.applyFilter) {
-                    setViewMode("explore");
                     setActiveQuery(trimmed);
                     setQueryMatchedNodeIds(response.matchedNodeIds);
                 }
@@ -3607,6 +3323,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         });
     }, [activeQuery, computeLabelScopedNodeIds, runNaturalLanguageQuery]);
 
+    const handleResetNodePositions = useCallback(() => {
+        queuedPositionChangesRef.current = [];
+        if (nodeChangeRafRef.current !== null) {
+            window.cancelAnimationFrame(nodeChangeRafRef.current);
+            nodeChangeRafRef.current = null;
+        }
+        setManualNodePositions({});
+    }, []);
+
+    const handleToggleBlueprintComponents = useCallback(() => {
+        setBlueprintComponentsVisible((previous) => !previous);
+    }, []);
+
     const handleToggleTimeline = useCallback(() => {
         setTimelineOpen((prev) => !prev);
     }, []);
@@ -3633,18 +3362,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             });
         };
 
-        if (viewMode !== "explore") {
-            setViewMode("explore");
-            window.requestAnimationFrame(() => {
-                window.requestAnimationFrame(() => {
-                    focusNode();
-                });
-            });
-            return;
-        }
-
         focusNode();
-    }, [fitView, viewMode]);
+    }, [fitView]);
 
     const handleKnowledgeEventNavigate = useCallback((eventData: KnowledgeBaseEvent) => {
         const candidateIds: string[] = [];
@@ -4223,7 +3942,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 edges={displayedEdges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
-                nodesDraggable={false}
+                nodesDraggable={!interactionLocked}
                 cursorMode={cursorMode}
                 onNodesChange={handleNodesChange}
                 onEdgesChange={handleEdgesChange}
@@ -4233,6 +3952,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onDrop={handleCanvasDrop}
                 activityDropTargets={activityDropTargets}
                 activityDropReason={activityDropReason ?? "drag"}
+                onResetNodePositions={hasManualNodePositions ? handleResetNodePositions : null}
                 miniMapBottomOffsetPx={canvasSidebarBottomOffset + MINIMAP_AI_BUTTON_CLEARANCE_PX}
                 miniMapRightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX}
             />
@@ -4258,8 +3978,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 bottomOffsetPx={canvasSidebarBottomOffset}
                 collapsed={sidebarCollapsed}
                 onToggleCollapsed={handleToggleSidebar}
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
+                blueprintComponentsVisible={blueprintComponentsVisible}
+                onToggleBlueprintComponents={handleToggleBlueprintComponents}
                 selectedLabels={selectedLabels}
                 onToggleLabel={handleToggleLabelWithQueryRefresh}
                 systemPaperResults={systemPaperResults}
@@ -4267,6 +3987,48 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 systemPapersError={systemPapersError}
                 onSystemPapersRefresh={handleSystemPapersRefresh}
             />
+
+            {fileProcessingError ? (
+                <div
+                    style={{
+                        position: "fixed",
+                        // Clear of the "Reset card positioning" panel, which owns the top edge.
+                        top: 64,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        zIndex: 41,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        maxWidth: 520,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: "1px solid #e3c9c9",
+                        background: "#fdf3f3",
+                        color: "#8a2f2f",
+                        fontSize: 13,
+                        boxShadow: "0 8px 20px rgba(0, 0, 0, 0.12)",
+                    }}
+                >
+                    <span>File attached. {fileProcessingError}</span>
+                    <button
+                        type="button"
+                        onClick={() => setFileProcessingError(null)}
+                        aria-label="Dismiss"
+                        style={{
+                            border: 0,
+                            background: "transparent",
+                            color: "inherit",
+                            cursor: "pointer",
+                            fontWeight: 700,
+                            fontSize: 15,
+                            lineHeight: 1,
+                        }}
+                    >
+                        x
+                    </button>
+                </div>
+            ) : null}
 
             {reviewOnly ? (
                 <div

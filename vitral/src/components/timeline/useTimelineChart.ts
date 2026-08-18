@@ -380,23 +380,17 @@ export function useTimelineChart({
                         .filter((eventData): eventData is (typeof pill.events[number] & { date: Date }) => eventData !== null)
                     : [];
                 const events = [...parsedEvents].sort((a, b) => +a.date - +b.date);
-                const startDate = events[0]?.date ?? parsedDate;
-                const endDate = events[events.length - 1]?.date ?? parsedDate;
                 return {
                     ...pill,
                     date: parsedDate,
-                    startDate,
-                    endDate,
                     events,
                 };
             })
-            .filter((pill): pill is (KnowledgeTreePill & {
+            .filter((pill): pill is (Omit<KnowledgeTreePill, "events"> & {
                 date: Date;
-                startDate: Date;
-                endDate: Date;
                 events: Array<KnowledgeTreePill["events"][number] & { date: Date }>;
             }) => pill !== null)
-            .sort((a, b) => +a.startDate - +b.startDate);
+            .sort((a, b) => +a.date - +b.date);
         const knowledgeTreeNodeIdsByTreeId = new Map<string, Set<string>>();
         for (const pill of parsedKnowledgeTreePills) {
             const nodeIds = new Set(
@@ -406,6 +400,22 @@ export function useTimelineChart({
             );
             knowledgeTreeNodeIdsByTreeId.set(pill.treeId, nodeIds);
         }
+        // The knowledge track carries one circle per activity, sitting at that activity's own
+        // timestamp. A tree whose activity has been deleted is dropped outright rather than drawn
+        // greyed out, and leaf cards never get a mark of their own.
+        const parsedKnowledgeActivityMarkers = parsedKnowledgeTreePills
+            .map((pill) => {
+                const activityEvent = pill.events.find((eventData) => eventData.nodeId === pill.treeId)
+                    ?? pill.events.find((eventData) => (
+                        String(eventData.cardLabel ?? "").trim().toLowerCase() === "activity"
+                    ));
+                if (!activityEvent || activityEvent.isDeleted) return null;
+                return { ...pill, activityEvent, date: activityEvent.date };
+            })
+            .filter((marker): marker is (typeof parsedKnowledgeTreePills[number] & {
+                activityEvent: typeof parsedKnowledgeTreePills[number]["events"][number];
+            }) => marker !== null)
+            .sort((a, b) => +a.date - +b.date);
 
         if (highlightedCodebasePathSet.size > 0) {
             for (const subtrack of codebaseSubtracks) {
@@ -1157,12 +1167,6 @@ export function useTimelineChart({
             g.append("rect").attr("x", -7).attr("y", -7).attr("width", 15).attr("height", 15).attr("rx", 4);
         };
 
-        const drawCircle = (
-            g: d3.Selection<SVGGElement, unknown, null, undefined>
-        ) => {
-            g.append("circle").attr("r", 10);
-        };
-
         const drawTriangle = (
             g: d3.Selection<SVGGElement, unknown, null, undefined>
         ) => {
@@ -1193,10 +1197,10 @@ export function useTimelineChart({
                 .on("contextmenu", openMilestoneMenu);
         };
 
-        let activeKnowledgePillTreeId: string | null = null;
-        const hideKnowledgePillTooltip = () => {
-            if (activeKnowledgePillTreeId === null) return;
-            activeKnowledgePillTreeId = null;
+        let activeKnowledgeTreeId: string | null = null;
+        const hideKnowledgeTooltip = () => {
+            if (activeKnowledgeTreeId === null) return;
+            activeKnowledgeTreeId = null;
             onHoveredKnowledgeTreeIdChange(null);
             setShowTooltip(false);
         };
@@ -1597,18 +1601,10 @@ export function useTimelineChart({
 
             const timelineDomainStart = parsed.domain[0];
             const timelineDomainEnd = parsed.domain[1];
-            const latestKnowledgeDate = parsed.kb.reduce<Date | null>((latest, eventData) => {
-                const candidate = eventData.date;
-                if (Number.isNaN(candidate.getTime())) return latest;
-                if (!latest) return candidate;
-                return candidate.getTime() > latest.getTime() ? candidate : latest;
-            }, null);
-            const defaultPlaybackDate = latestKnowledgeDate ?? (
-                today < timelineDomainStart
-                    ? timelineDomainStart
-                    : (today > timelineDomainEnd ? timelineDomainStart : today)
-            );
-            const playbackCandidate = playbackAt ? toDate(playbackAt) : defaultPlaybackDate;
+            // No playback time means "now", so the playhead parks on Today. It must not chase the
+            // most recent event: that pulled it onto whatever happened to be touched last, deleted
+            // activities included.
+            const playbackCandidate = playbackAt ? toDate(playbackAt) : today;
             const clampedPlaybackDate = new Date(
                 Math.min(timelineDomainEnd.getTime(), Math.max(timelineDomainStart.getTime(), playbackCandidate.getTime())),
             );
@@ -1672,13 +1668,9 @@ export function useTimelineChart({
             knowledgeBlueprintLinksG.selectAll("*").remove();
             blueprintEventConnectionsG.selectAll("*").remove();
 
-            const pillPositionByTreeId = new Map<string, { x: number; y: number }>();
+            const activityPositionByTreeId = new Map<string, { x: number; y: number }>();
             const cardCreatedPositionByNodeId = new Map<string, { x: number; y: number }>();
-            const knowledgePillHeight = 36;
             const knowledgeEventRadius = 10;
-            const knowledgePillHorizontalPadding = 12;
-            const minimumPillWidth = (knowledgePillHorizontalPadding * 2) + (knowledgeEventRadius * 2);
-            const knowledgeEventColor = "#2d7dd2";
             const knowledgeMainTrackRow = {
                 id: null as string | null,
                 top: laneY.knowledge,
@@ -1697,40 +1689,31 @@ export function useTimelineChart({
                 if (!assignedSubtrackId) return knowledgeMainTrackRow;
                 return knowledgeSubtrackRowById.get(assignedSubtrackId) ?? knowledgeMainTrackRow;
             };
-            const knowledgePillLayoutFor = (pillData: any) => {
-                const startXTime = x(pillData.startDate ?? pillData.date);
-                const endXTime = x(pillData.endDate ?? pillData.date);
-                const naturalSpan = Math.max(0, endXTime - startXTime);
-                const baseWidth = naturalSpan + (knowledgePillHorizontalPadding * 2);
-                const width = Math.max(minimumPillWidth, baseWidth);
-                const extraWidth = width - baseWidth;
-                const startX = startXTime - knowledgePillHorizontalPadding - (extraWidth / 2);
-                const centerX = startX + (width / 2);
-                const trackRow = knowledgeTrackRowForTree(pillData.treeId);
-                const startY = trackRow.center - (knowledgePillHeight / 2);
-                return { startX, width, centerX, trackRow, startY };
+            const knowledgeActivityLayoutFor = (markerData: any) => {
+                const trackRow = knowledgeTrackRowForTree(markerData.treeId);
+                return { centerX: x(markerData.date), centerY: trackRow.center };
             };
-            const showKnowledgePillTooltip = (event: MouseEvent, pillData: any) => {
-                activeKnowledgePillTreeId = pillData.treeId;
-                onHoveredKnowledgeTreeIdChange(pillData.treeId);
+            const showKnowledgeActivityTooltip = (event: MouseEvent, markerData: any) => {
+                activeKnowledgeTreeId = markerData.treeId;
+                onHoveredKnowledgeTreeIdChange(markerData.treeId);
                 const heightOffset = containerRef.current
                     ? containerRef.current.getBoundingClientRect().top
                     : 0;
                 const clampedX = Math.min(Math.max(event.clientX + 14, 0), window.innerWidth - 300);
                 const clampedY = Math.min(Math.max(event.clientY + 14, 0), window.innerHeight - 180) - heightOffset;
-                const events = Array.isArray(pillData.events) ? pillData.events : [];
+                const events = Array.isArray(markerData.events) ? markerData.events : [];
                 const lines = events.map((eventData: any) =>
-                    `${eventData.eventType}: ${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
+                    `${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
                 );
                 const selectedKnowledgeEvent: KnowledgeBaseEvent = {
-                    id: `knowledge-pill:${pillData.treeId}`,
-                    occurredAt: pillData.occurredAt,
+                    id: `knowledge-activity:${markerData.treeId}`,
+                    occurredAt: markerData.activityEvent.occurredAt,
                     kind: "knowledge",
-                    subtype: "tree",
-                    label: pillData.treeTitle || "Knowledge tree",
+                    subtype: "activity",
+                    label: markerData.treeTitle || markerData.activityEvent.cardTitle || "Activity",
                     description: lines.join("\n"),
-                    treeId: typeof pillData.treeId === "string" ? pillData.treeId : undefined,
-                    treeTitle: typeof pillData.treeTitle === "string" ? pillData.treeTitle : undefined,
+                    treeId: typeof markerData.treeId === "string" ? markerData.treeId : undefined,
+                    treeTitle: typeof markerData.treeTitle === "string" ? markerData.treeTitle : undefined,
                     events,
                 };
                 setSelectedEvent({
@@ -1742,61 +1725,65 @@ export function useTimelineChart({
                 setShowTooltip(true);
             };
 
-            const pillGroups = knowledgeEventsG
-                .selectAll("g.knowledge-tree-pill")
-                .data(parsedKnowledgeTreePills, (pillData: any) => pillData.treeId)
+            const activityMarkerGroups = knowledgeEventsG
+                .selectAll("g.knowledge-activity-marker")
+                .data(parsedKnowledgeActivityMarkers, (markerData: any) => markerData.treeId)
                 .join("g")
-                .attr("class", "knowledge-tree-pill")
+                .attr("class", "knowledge-activity-marker")
                 .attr("data-timeline-interactive", "true")
-                .attr("transform", (pillData: any) => {
-                    const layout = knowledgePillLayoutFor(pillData);
-                    pillPositionByTreeId.set(pillData.treeId, {
+                .attr("transform", (markerData: any) => {
+                    const layout = knowledgeActivityLayoutFor(markerData);
+                    activityPositionByTreeId.set(markerData.treeId, {
                         x: layout.centerX,
-                        y: layout.trackRow.center,
+                        y: layout.centerY,
                     });
-                    return `translate(${layout.startX}, ${layout.startY})`;
+                    // Leaf cards have no mark of their own any more, so anything anchored to a card
+                    // hangs off the circle of the activity whose tree that card belongs to.
+                    for (const eventData of markerData.events) {
+                        if (typeof eventData.nodeId !== "string" || eventData.nodeId.trim() === "") continue;
+                        cardCreatedPositionByNodeId.set(eventData.nodeId, {
+                            x: layout.centerX,
+                            y: layout.centerY,
+                        });
+                    }
+                    return `translate(${layout.centerX}, ${layout.centerY})`;
                 })
-                .on("mouseenter", (_event: any, pillData: any) => {
-                    if (activeKnowledgePillTreeId !== null) return;
-                    onHoveredKnowledgeTreeIdChange(pillData.treeId);
+                .on("mouseenter", (_event: any, markerData: any) => {
+                    if (activeKnowledgeTreeId !== null) return;
+                    onHoveredKnowledgeTreeIdChange(markerData.treeId);
                 })
-                .on("mouseleave", (_event: any, pillData: any) => {
-                    if (activeKnowledgePillTreeId !== null && activeKnowledgePillTreeId === pillData.treeId) return;
+                .on("mouseleave", (_event: any, markerData: any) => {
+                    if (activeKnowledgeTreeId !== null && activeKnowledgeTreeId === markerData.treeId) return;
                     onHoveredKnowledgeTreeIdChange(null);
                 });
 
-            const pillRects = pillGroups
-                .append("rect")
-                .attr("width", (pillData: any) => knowledgePillLayoutFor(pillData).width)
-                .attr("height", knowledgePillHeight)
-                .attr("rx", 16)
-                .attr("ry", 16)
-                .attr("fill", "rgba(238, 168, 110, 0.26)")
-                .attr("stroke", "rgb(188, 115, 56)")
-                .attr("stroke-width", 1.2)
+            const activityCircles = activityMarkerGroups
+                .append("circle")
+                .attr("class", classes.eventShape)
+                .attr("r", knowledgeEventRadius)
                 .attr("data-timeline-interactive", "true")
                 .style("cursor", readOnly ? "pointer" : "ns-resize")
-                .on("click", (event: any, pillData: any) => {
+                .on("click", (event: any, markerData: any) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    if (activeKnowledgePillTreeId === pillData.treeId) {
-                        hideKnowledgePillTooltip();
+                    if (activeKnowledgeTreeId === markerData.treeId) {
+                        hideKnowledgeTooltip();
                         return;
                     }
-                    showKnowledgePillTooltip(event, pillData);
+                    showKnowledgeActivityTooltip(event, markerData);
                 });
 
-            pillRects.append("title")
-                .text((pillData: any) => {
-                    const lines = pillData.events.map((eventData: any) =>
-                        `${eventData.eventType}: ${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
+            activityCircles.append("title")
+                .text((markerData: any) => {
+                    const lines = markerData.events.map((eventData: any) =>
+                        `${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
                     );
-                    return `${pillData.treeTitle}\n${lines.join("\n")}`;
+                    return `${markerData.treeTitle || "Activity"}\n${lines.join("\n")}`;
                 });
 
-            const clampPillY = (value: number) => {
-                const minY = knowledgeMainTrackRow.top;
-                const maxY = knowledgeSubtracksBottom - knowledgePillHeight;
+            const clampActivityMarkerY = (value: number) => {
+                const minY = knowledgeMainTrackRow.top + knowledgeEventRadius;
+                const maxY = knowledgeSubtracksBottom - knowledgeEventRadius;
                 return Math.max(minY, Math.min(maxY, value));
             };
             const resolveKnowledgeTrackRowByPointerY = (pointerY: number) => {
@@ -1817,96 +1804,29 @@ export function useTimelineChart({
                 return closestRow;
             };
             if (!readOnly) {
-                pillGroups.call(
+                activityMarkerGroups.call(
                     d3.drag<SVGGElement, any>()
                         .on("start", () => {
-                            hideKnowledgePillTooltip();
+                            hideKnowledgeTooltip();
                         })
-                        .on("drag", function onPillDrag(this: SVGGElement, event: any, pillData: any) {
-                            const layout = knowledgePillLayoutFor(pillData);
+                        .on("drag", function onActivityMarkerDrag(this: SVGGElement, event: any, markerData: any) {
+                            const layout = knowledgeActivityLayoutFor(markerData);
                             const [, pointerY] = d3.pointer(event, currentSvg);
-                            const nextY = clampPillY(pointerY - (knowledgePillHeight / 2));
-                            d3.select(this).attr("transform", `translate(${layout.startX}, ${nextY})`);
+                            d3.select(this).attr("transform", `translate(${layout.centerX}, ${clampActivityMarkerY(pointerY)})`);
                         })
-                        .on("end", function onPillDragEnd(this: SVGGElement, event: any, pillData: any) {
+                        .on("end", function onActivityMarkerDragEnd(this: SVGGElement, event: any, markerData: any) {
                             const [, pointerY] = d3.pointer(event, currentSvg);
                             const targetRow = resolveKnowledgeTrackRowByPointerY(pointerY);
                             const nextSubtrackId = targetRow.id;
-                            const previousSubtrackId = resolveKnowledgeSubtrackIdForTree(pillData.treeId);
-                            const layout = knowledgePillLayoutFor(pillData);
-                            const snappedY = targetRow.center - (knowledgePillHeight / 2);
-                            d3.select(this).attr("transform", `translate(${layout.startX}, ${snappedY})`);
+                            const previousSubtrackId = resolveKnowledgeSubtrackIdForTree(markerData.treeId);
+                            const layout = knowledgeActivityLayoutFor(markerData);
+                            d3.select(this).attr("transform", `translate(${layout.centerX}, ${targetRow.center})`);
                             if (nextSubtrackId !== previousSubtrackId) {
-                                onAssignKnowledgePillToSubtrack(pillData.treeId, nextSubtrackId);
+                                onAssignKnowledgePillToSubtrack(markerData.treeId, nextSubtrackId);
                             }
                         }) as any,
                 );
             }
-
-            pillGroups.each(function eachPill(this: d3.BaseType, pillData: any) {
-                const group = d3.select(this as SVGGElement);
-                const events = Array.isArray(pillData.events) ? pillData.events : [];
-                if (events.length === 0) return;
-                const layout = knowledgePillLayoutFor(pillData);
-                const centerY = knowledgePillHeight / 2;
-                const dots = group
-                    .selectAll("circle.knowledge-pill-event")
-                    .data(events)
-                    .join("circle")
-                    .attr("class", "knowledge-pill-event")
-                    .attr("cx", (eventData: any) => x(eventData.date) - layout.startX)
-                    .attr("cy", centerY)
-                    .attr("r", knowledgeEventRadius)
-                    .attr("fill", knowledgeEventColor)
-                    .attr("stroke", "#ffffff")
-                    .attr("stroke-width", 1.3)
-                    .attr("stroke-dasharray", (eventData: any) => (eventData.isDeleted ? "2 1.4" : null))
-                    .style("opacity", (eventData: any) => (eventData.isDeleted ? 0.45 : 1))
-                    .attr("data-timeline-interactive", "true")
-                    .style("cursor", "pointer")
-                    .on("click", (event: any, eventData: any) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        hideKnowledgePillTooltip();
-                        const heightOffset = containerRef.current
-                            ? containerRef.current.getBoundingClientRect().top
-                            : 0;
-                        const clampedX = Math.min(Math.max(event.clientX, 0), window.innerWidth - 300);
-                        const clampedY =
-                            Math.min(Math.max(event.clientY, 0), window.innerHeight - 160) - heightOffset;
-                        const selectedKnowledgeEvent: KnowledgeBaseEvent = {
-                            id: eventData.id,
-                            occurredAt: eventData.occurredAt,
-                            kind: "knowledge",
-                            subtype: eventData.eventType,
-                            label: `${eventData.eventType.toUpperCase()} - ${eventData.cardTitle || "Untitled"}`,
-                            description: `Card label: ${eventData.cardLabel}\nCard title: ${eventData.cardTitle || "Untitled"}\n${eventData.cardDescription || ""}`.trim(),
-                            treeId: typeof pillData.treeId === "string" ? pillData.treeId : undefined,
-                            treeTitle: typeof pillData.treeTitle === "string" ? pillData.treeTitle : undefined,
-                            events: [eventData],
-                        };
-                        setSelectedEvent({
-                            kind: "knowledge",
-                            event: selectedKnowledgeEvent,
-                        });
-                        onKnowledgeEventNavigateRef.current?.(selectedKnowledgeEvent);
-                        setTooltipPosition({ x: clampedX, y: clampedY });
-                        setShowTooltip(true);
-                    });
-
-                dots.append("title").text((eventData: any) =>
-                    `${eventData.eventType}: ${eventData.cardTitle || "Untitled"} (${eventData.cardLabel})`
-                );
-
-                for (const eventData of events) {
-                    if (eventData.eventType === "created" && typeof eventData.nodeId === "string") {
-                        cardCreatedPositionByNodeId.set(eventData.nodeId, {
-                            x: x(eventData.date),
-                            y: layout.trackRow.center,
-                        });
-                    }
-                }
-            });
 
             const arcIndexByPair = new Map<string, number>();
             const crossTreeConnectionPaths = knowledgeConnectionsG
@@ -1921,8 +1841,8 @@ export function useTimelineChart({
                 .attr("opacity", 0.9)
                 .style("cursor", "pointer")
                 .attr("d", (connectionData: any) => {
-                    const source = pillPositionByTreeId.get(connectionData.sourceTreeId);
-                    const target = pillPositionByTreeId.get(connectionData.targetTreeId);
+                    const source = activityPositionByTreeId.get(connectionData.sourceTreeId);
+                    const target = activityPositionByTreeId.get(connectionData.targetTreeId);
                     if (!source || !target) return "";
                     const fromX = source.x;
                     const fromY = source.y;
@@ -2577,7 +2497,7 @@ export function useTimelineChart({
                         if (kind !== "codebase" && kind !== "blueprint" && kind !== "designStudy" && kind !== "knowledge") return;
                         event.preventDefault();
                         event.stopPropagation();
-                        hideKnowledgePillTooltip();
+                        hideKnowledgeTooltip();
 
                         const heightOffset = containerRef.current
                             ? containerRef.current.getBoundingClientRect().top
@@ -2647,15 +2567,6 @@ export function useTimelineChart({
             };
 
             plot(parsed.ds, "designStudy", laneY.designStudy + laneH / 2, drawDiamond);
-            plot(
-                parsed.kb,
-                "knowledge",
-                (eventData: any) => {
-                    if (!eventData?.treeId) return knowledgeMainTrackRow.center;
-                    return knowledgeTrackRowForTree(eventData.treeId).center;
-                },
-                drawCircle
-            );
             plot(parsed.bp, "blueprint", laneY.blueprint + laneH / 2, drawTriangle);
             plot(parsed.cb, "codebase", laneY.codebase + laneH / 2, drawSquare);
 
@@ -2668,15 +2579,15 @@ export function useTimelineChart({
 
             applyHoveredEdgeVisibility();
 
-            svg.on("mousedown.knowledge-pill-hover-guard", (event: MouseEvent) => {
-                if (activeKnowledgePillTreeId === null) return;
+            svg.on("mousedown.knowledge-activity-hover-guard", (event: MouseEvent) => {
+                if (activeKnowledgeTreeId === null) return;
                 const target = event.target;
-                if (!(target instanceof Element) || !target.closest("g.knowledge-tree-pill")) {
-                    hideKnowledgePillTooltip();
+                if (!(target instanceof Element) || !target.closest("g.knowledge-activity-marker")) {
+                    hideKnowledgeTooltip();
                 }
             });
-            svg.on("wheel.knowledge-pill-hover-guard", () => {
-                hideKnowledgePillTooltip();
+            svg.on("wheel.knowledge-activity-hover-guard", () => {
+                hideKnowledgeTooltip();
             });
         };
 
