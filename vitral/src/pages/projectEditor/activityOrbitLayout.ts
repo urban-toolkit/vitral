@@ -5,28 +5,34 @@ import { CARD_HEIGHT_PX, CARD_WIDTH_PX, nodeSizeOf } from "@/pages/projectEditor
  * Canvas layout shared by every view.
  *
  * Activities are the only cards where time matters: they are laid out left to right, one slot per
- * distinct `createdAt`, evenly spaced. Every other card orbits the activity it belongs to, on a
- * concentric ring chosen by its graph distance from that activity. Cards that reach no activity go
- * into an "unassigned" band underneath, and blueprint groups/components keep their own nested
- * structure and are translated in as one block.
+ * distinct `createdAt`, evenly spaced. Every other card orbits the activity it belongs to, on an
+ * onion of fixed-radius layers ordered by its graph distance from that activity. Where two trees
+ * would collide at that pitch they are offset vertically rather than pushed further apart in time,
+ * so a project with big trees grows downward and upward instead of only sideways. Cards that reach
+ * no activity go into an "unassigned" band underneath, and blueprint groups/components keep their
+ * own nested structure and are translated in as one block.
  *
  * Positions are fully derived here, so stored node positions no longer affect what is rendered
  * (blueprint structure excepted, which is preserved relative to its own roots).
  */
 
-/** Radial clearance between an activity and its innermost ring: two card half-diagonals (~164 each). */
+/** Radial clearance between an activity and its innermost layer: two card half-diagonals (~164 each). */
 const ORBIT_MIN_RADIUS_PX = 340;
 /**
  * Centre-to-centre distance two cards need to be guaranteed not to overlap, whatever direction
  * separates them. Two axis-aligned WxH cards overlap while `|dx| < W && |dy| < H`, and the tightest
  * case is the corner-to-corner diagonal — so the card diagonal is exactly the critical distance and
- * anything above it is safe. Used both for neighbours on a ring and between consecutive rings.
+ * anything above it is safe. Used both for neighbours on a layer and between consecutive layers.
  */
 const CARD_SEPARATION_PX = Math.hypot(CARD_WIDTH_PX, CARD_HEIGHT_PX) + 24;
 /** Horizontal breathing room between two neighbouring activity slots. */
 const ACTIVITY_SLOT_GAP_PX = 280;
-/** Vertical breathing room between activities that share the same timestamp. */
-const ACTIVITY_STACK_GAP_PX = 200;
+/** Clearance between the bounding discs of two activity trees. */
+const ACTIVITY_TREE_GAP_PX = 200;
+/** Granularity of the vertical search that separates colliding trees. */
+const ACTIVITY_TREE_Y_STEP_PX = 200;
+/** Backstop for that search; ~40k px of travel is far past any real project. */
+const ACTIVITY_TREE_Y_MAX_STEPS = 400;
 const UNASSIGNED_BAND_GAP_PX = 420;
 const UNASSIGNED_ITEM_GAP_PX = 80;
 const BLUEPRINT_BAND_GAP_PX = 460;
@@ -76,6 +82,82 @@ function isEdgeActive(edge: edgeType): boolean {
 function radialExtentOf(node: nodeType): number {
     const size = nodeSizeOf(node);
     return Math.hypot(size.width, size.height) / 2;
+}
+
+/** Radius of the n-th onion layer. Fixed by index: a crowded layer never widens, it overflows. */
+function layerRadius(index: number): number {
+    return ORBIT_MIN_RADIUS_PX + (index * CARD_SEPARATION_PX);
+}
+
+/**
+ * How many cards fit on a layer. Neighbours on a ring are separated by the CHORD between them, not
+ * by arc length, so this is the largest `n` satisfying `2r*sin(pi/n) >= CARD_SEPARATION_PX`.
+ * Budgeting arc instead would let cards overlap for most counts above six.
+ */
+function layerCapacity(radius: number): number {
+    const ratio = CARD_SEPARATION_PX / (2 * radius);
+    if (ratio >= 1) return 1;
+    return Math.max(1, Math.floor(Math.PI / Math.asin(ratio)));
+}
+
+/**
+ * Pours the cards of each hop into fixed-radius layers, spilling outward once a layer is full.
+ *
+ * The alternative — widening the ring until everything fits on it — pushes a crowded hop's cards
+ * away from the activity they belong to and leaves a hole in the middle. Here a hop starts no
+ * closer than its own distance, fills the layer it lands on, and opens a new layer around the
+ * leaves when it runs out of room; the next hop always starts on a fresh layer.
+ */
+function packOnionLayers(hopBuckets: nodeType[][]): nodeType[][] {
+    const layers: nodeType[][] = [];
+    const layerAt = (index: number) => {
+        while (layers.length <= index) layers.push([]);
+        return layers[index];
+    };
+
+    let layerIndex = 0;
+    hopBuckets.forEach((bucket, hopIndex) => {
+        if (bucket.length === 0) return;
+        layerIndex = Math.max(layerIndex, hopIndex);
+
+        for (const node of bucket) {
+            while (layerAt(layerIndex).length >= layerCapacity(layerRadius(layerIndex))) {
+                layerIndex += 1;
+            }
+            layerAt(layerIndex).push(node);
+        }
+
+        layerIndex += 1;
+    });
+
+    // A hop that contributed no cards (all its nodes are blueprint structure, say) would otherwise
+    // leave an empty ring of dead space in the middle of the onion.
+    return layers.filter((layer) => layer.length > 0);
+}
+
+type TreeDisc = { x: number; y: number; radius: number };
+
+/**
+ * Lowest-magnitude vertical offset at which a tree of `radius` centred on `x` clears every tree
+ * already placed. Candidates alternate above and below zero, so the graph grows in both directions
+ * around the time axis instead of drifting downward.
+ */
+function resolveTreeCenterY(placed: TreeDisc[], x: number, radius: number): number {
+    const collidesAt = (y: number) => placed.some((disc) => {
+        const minDistance = disc.radius + radius + ACTIVITY_TREE_GAP_PX;
+        if (Math.abs(disc.x - x) >= minDistance) return false;
+        return Math.hypot(disc.x - x, disc.y - y) < minDistance;
+    });
+
+    for (let step = 0; step <= ACTIVITY_TREE_Y_MAX_STEPS; step += 1) {
+        const magnitude = Math.ceil(step / 2) * ACTIVITY_TREE_Y_STEP_PX;
+        const candidate = step % 2 === 1 ? magnitude : -magnitude;
+        if (!collidesAt(candidate)) return candidate;
+    }
+
+    // Unreachable for any real project; drop below everything rather than overlap.
+    const lowest = placed.reduce((max, disc) => Math.max(max, disc.y + disc.radius), 0);
+    return lowest + radius + ACTIVITY_TREE_GAP_PX;
 }
 
 function compareByLabelTitleId(a: nodeType, b: nodeType): number {
@@ -253,7 +335,7 @@ export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): 
 
     const assignments = assignSatellitesToActivities(nodes, edges, chronologicalActivityIds);
 
-    const ringsByActivityId = new Map<string, nodeType[][]>();
+    const hopBucketsByActivityId = new Map<string, nodeType[][]>();
     const unassigned: nodeType[] = [];
     for (const satellite of satellites) {
         const assignment = assignments.get(satellite.id);
@@ -261,72 +343,71 @@ export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): 
             unassigned.push(satellite);
             continue;
         }
-        const rings = ringsByActivityId.get(assignment.activityId) ?? [];
-        const ringIndex = Math.max(0, assignment.hop - 1);
-        while (rings.length <= ringIndex) rings.push([]);
-        rings[ringIndex].push(satellite);
-        ringsByActivityId.set(assignment.activityId, rings);
-    }
-    for (const rings of ringsByActivityId.values()) {
-        for (const ring of rings) ring.sort(compareByLabelTitleId);
+        const buckets = hopBucketsByActivityId.get(assignment.activityId) ?? [];
+        const hopIndex = Math.max(0, assignment.hop - 1);
+        while (buckets.length <= hopIndex) buckets.push([]);
+        buckets[hopIndex].push(satellite);
+        hopBucketsByActivityId.set(assignment.activityId, buckets);
     }
 
-    // --- Ring radii: wide enough for the cards on them, and clear of the ring inside. ---
-    const ringRadiiByActivityId = new Map<string, number[]>();
-    let maxOuterRadius = ORBIT_MIN_RADIUS_PX;
+    // --- Onion layers: fixed radii, each hop spilling outward once its layer is full. ---
+    const layersByActivityId = new Map<string, nodeType[][]>();
+    const treeRadiusByActivityId = new Map<string, number>();
     for (const activity of activities) {
-        const rings = ringsByActivityId.get(activity.id) ?? [];
-        const radii: number[] = [];
-        let previousRadius = 0;
+        const buckets = hopBucketsByActivityId.get(activity.id) ?? [];
+        for (const bucket of buckets) bucket.sort(compareByLabelTitleId);
 
-        for (const ring of rings) {
-            // Neighbours on a ring are separated by the CHORD between them, not by arc length, so
-            // solve chord = 2r*sin(pi/n) for r. Budgeting arc here would let cards overlap for most
-            // counts above six.
-            const radiusForCount = ring.length <= 1
-                ? 0
-                : CARD_SEPARATION_PX / (2 * Math.sin(Math.PI / ring.length));
-            const radiusClearingPrevious = previousRadius === 0
-                ? ORBIT_MIN_RADIUS_PX
-                : previousRadius + CARD_SEPARATION_PX;
-            const radius = Math.max(ORBIT_MIN_RADIUS_PX, radiusClearingPrevious, radiusForCount);
-            radii.push(radius);
-            previousRadius = radius;
-        }
-
-        ringRadiiByActivityId.set(activity.id, radii);
-        const outerRadius = radii.length === 0
-            ? radialExtentOf(activity)
-            : previousRadius + (CARD_HEIGHT_PX / 2);
-        if (outerRadius > maxOuterRadius) maxOuterRadius = outerRadius;
+        const layers = packOnionLayers(buckets);
+        layersByActivityId.set(activity.id, layers);
+        treeRadiusByActivityId.set(
+            activity.id,
+            layers.length === 0
+                ? radialExtentOf(activity)
+                // Half a card diagonal past the outermost layer, so the disc contains its cards.
+                : layerRadius(layers.length - 1) + (Math.hypot(CARD_WIDTH_PX, CARD_HEIGHT_PX) / 2),
+        );
     }
 
-    // Uniform slot pitch keeps the time axis evenly spaced while guaranteeing no two orbits touch.
-    const slotWidth = (2 * maxOuterRadius) + ACTIVITY_SLOT_GAP_PX;
-    const stackStep = (2 * maxOuterRadius) + ACTIVITY_STACK_GAP_PX;
+    // Uniform slot pitch keeps the time axis evenly spaced, as the layout contract requires. It is
+    // sized from a TYPICAL tree rather than the largest one: letting the widest orbit set the pitch
+    // made a single big tree stretch every gap in the project. Trees that do not fit that pitch are
+    // offset vertically instead, so the graph grows in both axes.
+    const sortedRadii = Array.from(treeRadiusByActivityId.values()).sort((a, b) => a - b);
+    const typicalRadius = sortedRadii.length === 0
+        ? ORBIT_MIN_RADIUS_PX
+        : sortedRadii[Math.floor(sortedRadii.length / 2)];
+    const slotWidth = (2 * typicalRadius) + ACTIVITY_SLOT_GAP_PX;
 
     const positionById = new Map<string, { x: number; y: number }>();
+    const placedTrees: TreeDisc[] = [];
     let contentBottom = 0;
 
-    for (const [slot, slotActivities] of activitiesBySlot) {
+    // Left to right, so a tree only ever has to dodge trees earlier in time than itself.
+    const orderedSlots = Array.from(activitiesBySlot.keys()).sort((a, b) => a - b);
+    for (const slot of orderedSlots) {
         const centerX = slot * slotWidth;
 
-        slotActivities.forEach((activity, stackIndex) => {
-            const centerY = stackIndex * stackStep;
+        for (const activity of activitiesBySlot.get(slot) ?? []) {
+            const treeRadius = treeRadiusByActivityId.get(activity.id) ?? ORBIT_MIN_RADIUS_PX;
+            const centerY = resolveTreeCenterY(placedTrees, centerX, treeRadius);
+            placedTrees.push({ x: centerX, y: centerY, radius: treeRadius });
+
             const activitySize = nodeSizeOf(activity);
             positionById.set(activity.id, {
                 x: Math.round(centerX - (activitySize.width / 2)),
                 y: Math.round(centerY - (activitySize.height / 2)),
             });
 
-            const rings = ringsByActivityId.get(activity.id) ?? [];
-            const radii = ringRadiiByActivityId.get(activity.id) ?? [];
+            const layers = layersByActivityId.get(activity.id) ?? [];
+            layers.forEach((layer, layerIndex) => {
+                const radius = layerRadius(layerIndex);
+                // Alternate layers are rotated half a step so cards do not line up radially, which
+                // would stack every layer's edges along the same spokes.
+                const angleOffset = layerIndex % 2 === 0 ? 0 : Math.PI / layer.length;
 
-            rings.forEach((ring, ringIndex) => {
-                const radius = radii[ringIndex] ?? ORBIT_MIN_RADIUS_PX;
-                ring.forEach((satellite, indexOnRing) => {
+                layer.forEach((satellite, indexOnLayer) => {
                     // Start at the top and go clockwise, so small orbits read predictably.
-                    const angle = -(Math.PI / 2) + ((indexOnRing * 2 * Math.PI) / ring.length);
+                    const angle = -(Math.PI / 2) + angleOffset + ((indexOnLayer * 2 * Math.PI) / layer.length);
                     const satelliteSize = nodeSizeOf(satellite);
                     const y = centerY + (Math.sin(angle) * radius) - (satelliteSize.height / 2);
                     positionById.set(satellite.id, {
@@ -338,7 +419,7 @@ export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): 
             });
 
             contentBottom = Math.max(contentBottom, centerY + (activitySize.height / 2));
-        });
+        }
     }
 
     // --- Cards that reach no activity: their own band, so nothing silently disappears. ---

@@ -159,6 +159,14 @@ export type nodeType = {
     parentId?: string,
     extent?: "parent",
     style?: Record<string, string | number>,
+    /**
+     * Size declared up front, for nodes whose dimensions are known before render. React Flow keeps
+     * a node invisible until it has dimensions, and it reads them from here — `style` alone only
+     * reaches the DOM, so a node sized purely through `style` waits on a measurement round trip
+     * (and never becomes visible at all if the observer misses it).
+     */
+    width?: number,
+    height?: number,
     zIndex?: number
 }
 

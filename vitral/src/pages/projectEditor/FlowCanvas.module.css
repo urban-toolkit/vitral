@@ -3,6 +3,21 @@
     height: 100%;
 }
 
+/* Changing abstraction level re-derives every position at once. React Flow moves nodes with a
+   transform, so a short transition lets the ones that survive the change glide instead of jumping —
+   which is what makes stepping between levels read as a zoom rather than a redraw.
+   `.dragging` is excluded so a node under the cursor stays glued to it, and the whole thing is
+   dropped for anyone who asked for less motion. */
+.flowCanvas :global(.react-flow__node):not(:global(.dragging)) {
+    transition: transform 260ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .flowCanvas :global(.react-flow__node):not(:global(.dragging)) {
+        transition: none;
+    }
+}
+
 .cursorPointer :global(.react-flow__pane) {
     cursor: grab;
 }

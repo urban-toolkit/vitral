@@ -5,6 +5,17 @@ import { Buffer } from "node:buffer";
 
 const DOCLING_URL = process.env.DOCLING_URL;
 
+/**
+ * Upper bound on one conversion. `node-fetch` has no default timeout, so without this a docling
+ * worker that wedges on a document holds the browser request open forever -- which on the file-drop
+ * path is an activity card stuck loading with nothing to retry.
+ */
+const DOCLING_TIMEOUT_MS = (() => {
+    const raw = process.env.DOCLING_TIMEOUT_MS;
+    const parsed = Number.parseInt(String(raw ?? "").trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 180_000;
+})();
+
 export const doclingRoutes: FastifyPluginAsync = async (app: any) => {
 
     app.post("/convert/file", async (request: any, reply: any) => {
@@ -48,6 +59,7 @@ export const doclingRoutes: FastifyPluginAsync = async (app: any) => {
                     method: "POST",
                     body: form,
                     headers: form.getHeaders(),
+                    signal: AbortSignal.timeout(DOCLING_TIMEOUT_MS),
                 }
             );
 
@@ -110,6 +122,11 @@ export const doclingRoutes: FastifyPluginAsync = async (app: any) => {
 
         } catch (err) {
             console.error("Docling API error:", err);
+            // node-fetch surfaces an abort as `AbortError`, not the signal's `TimeoutError`, and
+            // the timeout is the only thing that aborts this call.
+            if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+                return reply.status(504).send({ error: "Docling conversion timed out" });
+            }
             return reply.status(500).send({ error: "Docling request failed" });
         }
     });

@@ -10,8 +10,9 @@ import { AttachFileZone } from '@/components/files/AttachFileZone';
 import { useSelector } from 'react-redux';
 import type { fileRecord, nodeType } from '@/config/types';
 import type { RootState } from '@/store';
-import { FileCarousel } from '@/components/files/FileCarousel';
+import { FileSlot } from '@/components/files/FileSlot';
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS, normalizeCardLabel } from '@/components/cards/cardVisuals';
+import { toLocalDateTimeInputValue } from '@/utils/dateTime';
 
 function LabelIcon({ label }: { label: string }) {
     const icon = CARD_LABEL_ICONS[normalizeCardLabel(label)];
@@ -51,11 +52,16 @@ function CardImpl(props: CardProps) {
 
     const filesById = useSelector((state: RootState) => state.files.byId);
     const attachmentIds = props.data?.attachmentIds;
-    const files = useMemo<fileRecord[]>(() => {
-        if (!Array.isArray(attachmentIds)) return [];
-        return attachmentIds
-            .map((fileId: string) => filesById[fileId])
-            .filter((file): file is fileRecord => Boolean(file));
+    // A card holds at most one file. Projects saved before that rule can still carry several, so
+    // the first one is shown rather than dropped: detaching it reveals the next, and the card
+    // converges on a single attachment without losing anything behind the user's back.
+    const attachedFile = useMemo<fileRecord | null>(() => {
+        if (!Array.isArray(attachmentIds)) return null;
+        for (const fileId of attachmentIds) {
+            const file = filesById[fileId];
+            if (file) return file;
+        }
+        return null;
     }, [attachmentIds, filesById]);
 
     const dropZoneCSS = useMemo<React.CSSProperties>(() => ({
@@ -83,6 +89,8 @@ function CardImpl(props: CardProps) {
     const [isEditingLabel, setIsEditingLabel] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [isEditingDescription, setIsEditingDescription] = useState(false);
+    const [isEditingCreatedAt, setIsEditingCreatedAt] = useState(false);
+    const [draftCreatedAt, setDraftCreatedAt] = useState("");
 
     const [draftTitle, setDraftTitle] = useState(props.data.title);
     const [draftDescription, setDraftDescription] = useState(props.data.description ?? '');
@@ -106,6 +114,26 @@ function CardImpl(props: CardProps) {
         if (Number.isNaN(parsed.getTime())) return "Set timestamp";
         return parsed.toLocaleString();
     })();
+
+    // Only activities: their timestamp is what places them on the canvas time axis, so it is the
+    // one that has to be correctable. Every other card inherits the moment it was created.
+    const isActivity = normalizedLabel === "activity";
+
+    const openCreatedAtEditor = () => {
+        const parsed = props.data.createdAt ? new Date(props.data.createdAt) : new Date();
+        setDraftCreatedAt(toLocalDateTimeInputValue(Number.isNaN(parsed.getTime()) ? new Date() : parsed));
+        setIsEditingCreatedAt(true);
+    };
+
+    const commitCreatedAt = () => {
+        setIsEditingCreatedAt(false);
+        if (!draftCreatedAt) return;
+        // `datetime-local` carries no zone, and a date-TIME string without one is parsed as local
+        // time — the same convention `toLocalDateTimeInputValue` writes, so this round-trips.
+        const parsed = new Date(draftCreatedAt);
+        if (Number.isNaN(parsed.getTime())) return;
+        props.onDataPropertyChange?.(getCleanNodeProps(), parsed.toISOString(), "createdAt");
+    };
 
     return (
         <div className={`${classes.card} ${classes.flipCard} ${!isRelevant ? classes.cardNotRelevant : ""}`}>
@@ -184,9 +212,8 @@ function CardImpl(props: CardProps) {
                             />
                         </div>
 
-                        <FileCarousel
-                            files={files}
-                            persistKey={props.id}
+                        <FileSlot
+                            file={attachedFile}
                             onRemoveFile={(fileId) => {
                                 if (!props.id) return;
                                 props.onDetachFile?.(props.id, fileId);
@@ -198,7 +225,7 @@ function CardImpl(props: CardProps) {
                                 loading={false}
                                 accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .tsx, .jsx, .html, .css, .md, .docx, .pdf, .mp4, .webm, .mov, .m4v, .ogg, .ogv, .avi'
                             />
-                        </FileCarousel>
+                        </FileSlot>
                     </div>
                     <div className={classes.title}>
                         {isEditingTitle ? (
@@ -306,7 +333,37 @@ function CardImpl(props: CardProps) {
                             </p>
                         )}
 
-                        <p className={classes.createdAtText}>{createdAtText}</p>
+                        {isActivity ? (
+                            isEditingCreatedAt ? (
+                                <input
+                                    type="datetime-local"
+                                    className={`${classes.createdAtEditor} nodrag`}
+                                    value={draftCreatedAt}
+                                    autoFocus
+                                    onChange={(event) => setDraftCreatedAt(event.target.value)}
+                                    onBlur={commitCreatedAt}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            commitCreatedAt();
+                                        }
+                                        if (event.key === "Escape") {
+                                            setIsEditingCreatedAt(false);
+                                        }
+                                    }}
+                                />
+                            ) : (
+                                <p
+                                    className={`${classes.createdAtText} ${classes.createdAtEditable}`}
+                                    title="Edit activity timestamp"
+                                    onClick={openCreatedAtEditor}
+                                >
+                                    {createdAtText}
+                                </p>
+                            )
+                        ) : (
+                            <p className={classes.createdAtText}>{createdAtText}</p>
+                        )}
 
                         {isAutoGenerated ? (
                             <div className={classes.metaSection}>

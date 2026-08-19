@@ -1,0 +1,141 @@
+import type { edgeType, nodeType } from "@/config/types";
+import { connectionKindFromEdge, isEdgeActive, nodeLabelOf } from "@/pages/projectEditor/graphSemantics";
+
+/**
+ * How "major" each card is, from signal the project already stores. No LLM, no embeddings, no
+ * network: the semantic work was done once when the cards were created and frozen into the graph as
+ * `referenced_by` / `iteration_of` edges, so reading it back is a graph walk.
+ *
+ * Used to decide which cards get promoted out of a cluster when the canvas is abstracted, and which
+ * card lends a cluster its name.
+ */
+
+export const SALIENCE_WEIGHTS = {
+    /** Structural centrality. The card everything hangs off is the card worth showing. */
+    degree: 0.30,
+    /** Reaches beyond its own activity — the definition of a thread, and of shared domain knowledge. */
+    crossTree: 0.25,
+    /** Something superseded it or it superseded something: an insight turn, or a decision revisited. */
+    iteration: 0.20,
+    /** Carries a verbatim citation, so it is evidence rather than a stub. */
+    reference: 0.15,
+    /** Extracted from a real source file. */
+    origin: 0.10,
+    /** Has a file of its own attached. */
+    attachment: 0.10,
+    /** Marked "not relevant" by hand. Large enough to sink a card below every relevant one. */
+    notRelevant: -2.00,
+} as const;
+
+export type SalienceIndex = {
+    score: Map<string, number>;
+    degree: Map<string, number>;
+    crossTreeDegree: Map<string, number>;
+    iterationDegree: Map<string, number>;
+};
+
+function bump(counter: Map<string, number>, key: string) {
+    counter.set(key, (counter.get(key) ?? 0) + 1);
+}
+
+/**
+ * One pass over the edges, one over the nodes. `membership` is the activity-tree map the canvas
+ * already builds (`buildActivityTreeMembership`), reused rather than recomputed.
+ */
+export function buildSalienceIndex(
+    nodes: nodeType[],
+    edges: edgeType[],
+    membership: Map<string, string>,
+): SalienceIndex {
+    const degree = new Map<string, number>();
+    const crossTreeDegree = new Map<string, number>();
+    const iterationDegree = new Map<string, number>();
+
+    const presentIds = new Set(nodes.map((node) => node.id));
+
+    for (const edge of edges) {
+        if (!presentIds.has(edge.source) || !presentIds.has(edge.target)) continue;
+        if (!isEdgeActive(edge)) continue;
+
+        bump(degree, edge.source);
+        bump(degree, edge.target);
+
+        const sourceTree = membership.get(edge.source);
+        const targetTree = membership.get(edge.target);
+        if (sourceTree !== undefined && targetTree !== undefined && sourceTree !== targetTree) {
+            bump(crossTreeDegree, edge.source);
+            bump(crossTreeDegree, edge.target);
+        }
+
+        if (connectionKindFromEdge(edge) === "iteration_of") {
+            bump(iterationDegree, edge.source);
+            bump(iterationDegree, edge.target);
+        }
+    }
+
+    let maxDegree = 0;
+    for (const value of degree.values()) {
+        if (value > maxDegree) maxDegree = value;
+    }
+    let maxCrossTree = 0;
+    for (const value of crossTreeDegree.values()) {
+        if (value > maxCrossTree) maxCrossTree = value;
+    }
+    let maxIteration = 0;
+    for (const value of iterationDegree.values()) {
+        if (value > maxIteration) maxIteration = value;
+    }
+
+    const score = new Map<string, number>();
+    for (const node of nodes) {
+        const data = (node.data ?? {}) as Record<string, unknown>;
+
+        // Ratios rather than raw counts, so the score stays in a comparable range whether the
+        // project has ten cards or a thousand.
+        let value = 0;
+        if (maxDegree > 0) value += SALIENCE_WEIGHTS.degree * ((degree.get(node.id) ?? 0) / maxDegree);
+        if (maxCrossTree > 0) value += SALIENCE_WEIGHTS.crossTree * ((crossTreeDegree.get(node.id) ?? 0) / maxCrossTree);
+        if (maxIteration > 0) value += SALIENCE_WEIGHTS.iteration * ((iterationDegree.get(node.id) ?? 0) / maxIteration);
+
+        if (typeof data.reference === "string" && data.reference.trim() !== "") {
+            value += SALIENCE_WEIGHTS.reference;
+        }
+        if (typeof data.origin === "string" && data.origin.trim() !== "") {
+            value += SALIENCE_WEIGHTS.origin;
+        }
+        if (Array.isArray(data.attachmentIds) && data.attachmentIds.length > 0) {
+            value += SALIENCE_WEIGHTS.attachment;
+        }
+        if (data.relevant === false) {
+            value += SALIENCE_WEIGHTS.notRelevant;
+        }
+
+        score.set(node.id, value);
+    }
+
+    return { score, degree, crossTreeDegree, iterationDegree };
+}
+
+/**
+ * A **total** order — score, then title, then id. A partial one would let two equally scored cards
+ * swap places between renders, which reads as a cluster spontaneously renaming itself.
+ */
+export function compareBySalience(a: nodeType, b: nodeType, score: Map<string, number>): number {
+    const scoreA = score.get(a.id) ?? 0;
+    const scoreB = score.get(b.id) ?? 0;
+    if (scoreA !== scoreB) return scoreB - scoreA;
+
+    const titleA = String((a.data as Record<string, unknown>)?.title ?? "");
+    const titleB = String((b.data as Record<string, unknown>)?.title ?? "");
+    if (titleA !== titleB) return titleA.localeCompare(titleB);
+
+    return a.id.localeCompare(b.id);
+}
+
+/** Cards the user explicitly marked as noise are never promoted, whatever their degree. */
+export function isPromotable(node: nodeType): boolean {
+    const data = (node.data ?? {}) as Record<string, unknown>;
+    if (data.relevant === false) return false;
+    const label = nodeLabelOf(node);
+    return label !== "" && label !== "activity";
+}

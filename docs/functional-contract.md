@@ -92,7 +92,7 @@ Covered areas:
 
 ### Contract
 - Cards support:
-  - file attachment,
+  - file attachment (one file per card),
   - attachment preview (markdown/pdf/notebook/text),
   - manual title/description edits,
   - relevance labeling (`relevant`/`irrelevant`),
@@ -105,13 +105,17 @@ Covered areas:
 ## 4) Views, Filtering, Recommendations, and Chat
 
 ### Contract
-- View modes:
-  - `explore`,
-  - `blueprintComponents` (system view),
-  - `features`.
+- Canvas abstraction levels (focus + context):
+  - `Detail` — the bare card graph (the default, and unchanged from before the feature),
+  - `Threads` — one glyph per activity, with the relations between activities collapsed into weighted edges, and each activity's major decisions and insight turns promoted out as real cards,
+  - `Overview` — one glyph per derived phase, with the project's major requirements and concepts promoted out as real cards; blueprint structure is hidden.
+- The level is chosen either from the on-canvas control or by canvas zoom, whichever the user picks.
+- Opening a glyph drills exactly one level for that branch while the rest of the canvas stays abstract.
+- Cluster labels are always borrowed from stored data. This feature never calls the LLM.
 - All views share one layout: views select which nodes are shown, never how they are arranged.
-- Activities are positioned by `createdAt`, left to right, one evenly spaced slot per distinct timestamp; activities sharing a timestamp stack vertically in the same slot.
-- Every other card orbits the activity it belongs to, on a ring chosen by graph distance from it; cards reaching no activity go to an unassigned band below.
+- Activities are positioned by `createdAt`, left to right, one evenly spaced slot per distinct timestamp; activities sharing a timestamp are separated vertically within the slot.
+- Every other card orbits the activity it belongs to, on an onion of fixed-radius layers ordered by graph distance from it; a layer that fills up spills into a new layer around the leaves rather than widening. Cards reaching no activity go to an unassigned band below.
+- Activity trees that would collide at the slot pitch are offset vertically, so the canvas grows in both axes rather than only sideways.
 - Blueprint groups/components keep their nested structure and are translated in as one block.
 - Node positions are fully derived; node dragging is disabled in every view.
 - System view hides cards and keeps blueprint components (+ needed ancestors).

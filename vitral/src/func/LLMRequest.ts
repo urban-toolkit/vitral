@@ -13,6 +13,7 @@ import type { filePendingUpload } from '@/config/types';
 import { readAsDataURL } from './FileParser';
 import { getGitHubContents, type GitHubContentItem } from '@/api/githubApi';
 import { resolveApiBaseUrl } from '@/api/baseUrl';
+import { withDeadline } from '@/utils/abort';
 
 const API_BASE_URL = resolveApiBaseUrl();
 
@@ -270,6 +271,13 @@ function extractNotebookImagesAndStrip(nb: any): { notebook: any; images: Notebo
     return { notebook: clone, images };
 }
 
+/**
+ * Docling has to load and lay out the whole document, so it is legitimately slower than the LLM
+ * call that follows it -- but it still needs a ceiling, or a stuck conversion parks the file-drop
+ * spinner forever with nothing for the user to act on.
+ */
+const DOCLING_REQUEST_TIMEOUT_MS = 180_000;
+
 export async function docLingFileParse(
     fileData: filePendingUpload,
     ext: fileExtension,
@@ -280,11 +288,20 @@ export async function docLingFileParse(
     formData.append("file", fileData.file);
     formData.append("from_formats", JSON.stringify([ext]));
 
-    const response = await fetch(API_BASE_URL + "/docling/convert/file", {
-        method: "POST",
-        body: formData,
-        signal,
-    });
+    let response: Response;
+    try {
+        response = await fetch(API_BASE_URL + "/docling/convert/file", {
+            method: "POST",
+            body: formData,
+            signal: withDeadline(signal, DOCLING_REQUEST_TIMEOUT_MS),
+        });
+    } catch (error) {
+        if (signal?.aborted) throw error;
+        if (error instanceof DOMException && error.name === "TimeoutError") {
+            throw new Error(`Converting ${fileData.name} timed out. Try a smaller document.`);
+        }
+        throw error;
+    }
 
     if (!response.ok) {
         throw new Error("Conversion failed");
@@ -533,7 +550,7 @@ export async function requestCardsLLM(
             prompt,
             model: resolveLlmModel(projectSettings?.llmModel),
         }),
-        signal: signal ?? AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
+        signal: withDeadline(signal, LLM_REQUEST_TIMEOUT_MS),
     });
 
     // Throwing rather than alerting: `alert` blocks the main thread, and here it fired before
@@ -598,7 +615,7 @@ export async function requestCardsLLMTextInput(
             prompt: "CardsFromTextInput",
             model: resolveLlmModel(llmModel),
         }),
-        signal: signal ?? AbortSignal.timeout(LLM_REQUEST_TIMEOUT_MS),
+        signal: withDeadline(signal, LLM_REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {

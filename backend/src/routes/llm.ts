@@ -42,11 +42,18 @@ const VERBOSITY = (process.env.OPENAI_LLM_CHAT_VERBOSITY ?? "").trim();
 export const llmRoutes: FastifyPluginAsync = async (app: any) => {
     app.post("/chat", async (request: any, reply: any) => {
         // Without this a user who navigates away mid-drop still burns the full inference.
+        //
+        // The listener has to be on `reply.raw`, not `request.raw`: since Node 16 an
+        // `IncomingMessage` emits "close" as soon as the request body has been fully read, and
+        // Fastify has already parsed the JSON body before this handler runs -- so listening there
+        // aborted every single request one tick after it arrived, then `reply.hijack()` swallowed
+        // the response and the browser's fetch never settled. `ServerResponse` "close" is the real
+        // disconnect signal; `writableEnded` tells a finished reply apart from a dropped socket.
         const abortController = new AbortController();
         let clientDisconnected = false;
         let upstreamSettled = false;
-        request.raw.on("close", () => {
-            if (upstreamSettled) return;
+        reply.raw.on("close", () => {
+            if (upstreamSettled || reply.raw.writableEnded) return;
             clientDisconnected = true;
             abortController.abort();
         });

@@ -176,6 +176,30 @@
 	opacity: 0.82;
 }
 
+.createdAtEditable {
+	cursor: pointer;
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+}
+
+.createdAtEditable:hover {
+	opacity: 1;
+}
+
+.createdAtEditor {
+	margin: 8px 0 0 0;
+	width: 100%;
+	box-sizing: border-box;
+	font-family: inherit;
+	font-size: 10px;
+	line-height: 1.2;
+	color: inherit;
+	background: rgba(255, 255, 255, 0.14);
+	border: 1px solid rgba(255, 255, 255, 0.35);
+	border-radius: 4px;
+	padding: 2px 4px;
+}
+
 .metaSection {
 	margin-top: 8px;
 	padding-top: 6px;

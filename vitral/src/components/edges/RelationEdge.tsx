@@ -73,7 +73,18 @@ function RelationEdgeImpl(props: EdgeProps) {
   const showSourceArrow =
     CARD_EDGE_LABELS.has(sourceLabel) && CARD_EDGE_LABELS.has(targetLabel);
   const sourceMarkerId = `relation-edge-source-${id}`;
-  const labelWidth = label ? Math.max(56, Math.ceil(label.length * 8.2 + 16)) : 0;
+
+  // When the canvas is abstracted, one drawn edge can stand for many real ones. Thickness carries
+  // that count — logarithmically, so a 40-edge bundle does not become a black bar — and the label
+  // says how many, because "referenced by" alone would understate a thread of twelve.
+  const weight = typeof data?.weight === "number" && Number.isFinite(data.weight)
+    ? Math.max(1, data.weight)
+    : 1;
+  const strokeWidth = weight > 1
+    ? Math.min(9, 2.1 + (Math.log2(weight) * 1.4))
+    : 2.1;
+  const displayLabel = label && weight > 1 ? `${label} ×${weight}` : label;
+  const labelWidth = displayLabel ? Math.max(56, Math.ceil(displayLabel.length * 8.2 + 16)) : 0;
 
   return (
     <>
@@ -96,11 +107,11 @@ function RelationEdgeImpl(props: EdgeProps) {
         id={id}
         className="react-flow__edge-path"
         d={edgePath}
-        style={{ stroke: visual.stroke, strokeWidth: 2.1 }}
+        style={{ stroke: visual.stroke, strokeWidth }}
         markerStart={showSourceArrow ? `url(#${sourceMarkerId})` : undefined}
         markerEnd={markerEnd}
       />
-      {label ? (
+      {displayLabel ? (
         <>
           <rect
             x={labelX - (labelWidth / 2)}
@@ -125,7 +136,7 @@ function RelationEdgeImpl(props: EdgeProps) {
               textTransform: 'lowercase',
             }}
           >
-            {label}
+            {displayLabel}
           </text>
         </>
       ) : null}

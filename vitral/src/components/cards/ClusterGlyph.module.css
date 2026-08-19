@@ -1,0 +1,166 @@
+.glyph {
+	box-sizing: border-box;
+	width: 100%;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 14px 16px;
+	border-radius: 18px;
+	border: 1px solid rgba(0, 0, 0, 0.16);
+	background: #ffffff;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+	cursor: pointer;
+	overflow: hidden;
+	text-align: left;
+	/* Mounting a glyph is a level change, not a data change — a short fade keeps the swap from
+	   reading as a pop. */
+	animation: glyphIn 160ms ease-out;
+}
+
+@keyframes glyphIn {
+	from { opacity: 0; transform: scale(0.96); }
+	to { opacity: 1; transform: scale(1); }
+}
+
+.glyph:hover {
+	border-color: rgba(0, 0, 0, 0.34);
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+}
+
+.phase {
+	border-width: 2px;
+}
+
+.unassigned {
+	background: repeating-linear-gradient(
+		135deg,
+		#ffffff,
+		#ffffff 10px,
+		#fafafa 10px,
+		#fafafa 20px
+	);
+}
+
+.header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 22px;
+}
+
+.kindIcon {
+	flex: 0 0 auto;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	display: grid;
+	place-items: center;
+	font-size: 11px;
+	color: #2c2c2c;
+}
+
+.kindText {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #6a6a6a;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.count {
+	flex: 0 0 auto;
+	font-size: 11px;
+	font-weight: 700;
+	color: #2c2c2c;
+	background: rgba(0, 0, 0, 0.06);
+	border-radius: 999px;
+	padding: 2px 9px;
+}
+
+.title {
+	margin: 0;
+	font-size: 16px;
+	font-weight: 700;
+	line-height: 1.2;
+	color: #161616;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.dates {
+	margin: 0;
+	font-size: 10px;
+	color: #7a7a7a;
+	line-height: 1.2;
+}
+
+.composition {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 2px;
+}
+
+.compositionChip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 10px;
+	font-weight: 600;
+	color: #3a3a3a;
+	border-radius: 999px;
+	padding: 2px 7px 2px 5px;
+	border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.compositionDot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.topList {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	overflow: hidden;
+}
+
+.topItem {
+	font-size: 11px;
+	line-height: 1.25;
+	color: #454545;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.topItem::before {
+	content: "— ";
+	color: #a5a5a5;
+}
+
+.footer {
+	margin-top: auto;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: #8a8a8a;
+}
+
+.glyph:hover .footer {
+	color: #2c2c2c;
+}

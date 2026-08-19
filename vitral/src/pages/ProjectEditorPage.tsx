@@ -104,6 +104,26 @@ import {
 
 import { isAllowedConnection, relationLabelFor } from "@/utils/relationships";
 import { buildActivityOrbitLayout, buildActivityTreeMembership } from "@/pages/projectEditor/activityOrbitLayout";
+import {
+    connectionKindFromEdge,
+    edgeLabelFrom,
+    normalizeNodeLabel,
+    ITERATION_OF_EDGE_LABEL,
+    REFERENCED_BY_EDGE_LABEL,
+} from "@/pages/projectEditor/graphSemantics";
+import {
+    buildAbstractedGraph,
+    isSyntheticCanvasId,
+    levelForZoom,
+    NO_CANVAS_FOCUS,
+    type CanvasFocusPath,
+    type CanvasGlyphData,
+    type CanvasLevel,
+} from "@/pages/projectEditor/canvasAbstraction";
+import { buildActivityClusters } from "@/pages/projectEditor/canvasClusters";
+import { buildSalienceIndex } from "@/pages/projectEditor/canvasSalience";
+import { CanvasLevelControl } from "@/pages/projectEditor/CanvasLevelControl";
+import { ClusterGlyph, type ClusterGlyphProps } from "@/components/cards/ClusterGlyph";
 import { fromDate } from "@/pages/projectEditor/dateUtils";
 import type { CursorMode, GitConnectionStatus } from "@/pages/projectEditor/types";
 import {
@@ -115,7 +135,6 @@ import {
 } from "@/pages/projectEditor/canvasGeometry";
 import type { ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
 import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
-import { PendingFileModal } from "@/pages/projectEditor/PendingFileModal";
 import { CanvasChatOverlay, type CanvasChatEntry } from "@/pages/projectEditor/CanvasChatOverlay";
 import { EdgeConnectMenu, type EdgeConnectOption } from "@/pages/projectEditor/EdgeConnectMenu";
 import {
@@ -129,8 +148,6 @@ import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttach
 import { SystemScreenshotPanel } from "@/pages/projectEditor/SystemScreenshotPanel";
 
 const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["requirement"]);
-const REFERENCED_BY_EDGE_LABEL = "referenced by";
-const ITERATION_OF_EDGE_LABEL = "iteration of";
 const FEEDS_INTO_EDGE_LABEL = "feeds into";
 const RIGHT_SIDEBAR_WIDTH_PX = 250;
 /** Every node that belongs to the blueprint structure, hidden or shown as one filter. */
@@ -442,37 +459,9 @@ function resolveNodeAtPlayback(node: nodeType, playbackTime: number): nodeType {
     };
 }
 
-function normalizeNodeLabel(label: string): string {
-    const normalized = label.trim().toLowerCase();
-    if (normalized === "task") return "requirement";
-    return normalized;
-}
-
 function isKnowledgeCardNode(node: nodeType): boolean {
     const labelValue = normalizeNodeLabel(String((node.data as Record<string, unknown>)?.label ?? ""));
     return CARD_LABELS.includes(labelValue as cardLabel);
-}
-
-function edgeLabelFrom(edge: edgeType): string {
-    if (typeof edge.label === "string" && edge.label.trim() !== "") {
-        return edge.label.trim().toLowerCase();
-    }
-    if (typeof edge.data?.label === "string" && edge.data.label.trim() !== "") {
-        return edge.data.label.trim().toLowerCase();
-    }
-    return "";
-}
-
-function connectionKindFromEdge(edge: edgeType): "regular" | "referenced_by" | "iteration_of" {
-    const rawKind = typeof edge.data?.kind === "string"
-        ? edge.data.kind.toLowerCase().trim()
-        : "";
-    if (rawKind === "referenced_by") return "referenced_by";
-    if (rawKind === "iteration_of") return "iteration_of";
-    const label = edgeLabelFrom(edge);
-    if (label === REFERENCED_BY_EDGE_LABEL) return "referenced_by";
-    if (label === ITERATION_OF_EDGE_LABEL) return "iteration_of";
-    return "regular";
 }
 
 function readNodeString(node: nodeType, key: string): string {
@@ -926,6 +915,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // cluster. The arrangement is deliberately session-only — the layout still owns where a card
     // belongs — so "Reset card positioning" is all it takes to put everything back.
     const [manualNodePositions, setManualNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+    // How abstract the canvas is drawn, and which branch of it is currently opened out. Session
+    // state, like the manual positions above: nothing here belongs to the project.
+    const [canvasLevel, setCanvasLevel] = useState<CanvasLevel>(3);
+    const [levelFollowsZoom, setLevelFollowsZoom] = useState(false);
+    const [canvasFocus, setCanvasFocus] = useState<CanvasFocusPath>(NO_CANVAS_FOCUS);
+    // Creating cards, dropping files and the activity drop rings all resolve a target from what is
+    // on the canvas. Above Detail that is glyphs, which have no id in the document to attach
+    // anything to — so those affordances are only live on the bare graph.
+    const canvasIsEditable = canvasLevel === 3;
     const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
     const [selectedLabels, setSelectedLabels] = useState<cardLabel[]>([...CARD_LABELS]);
     const [activeQuery, setActiveQuery] = useState("");
@@ -1478,11 +1476,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const {
         onAttachFile,
         onAttachFileToCanvas,
-        pendingDrop,
-        generatedAtInput,
-        setGeneratedAtInput,
-        processPendingDrop,
-        cancelPendingDrop,
     } = useFileAttachmentProcessing({
         projectId,
         dispatch,
@@ -1636,8 +1629,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
         if (interactionLocked) return;
 
-        const immediateChanges = changes.filter((change) => change.type !== "position");
-        const positionChanges = changes.filter((change) => change.type === "position");
+        // Glyphs are drawn by the abstraction lens, not stored. A drag or a delete aimed at one
+        // names an id that does not exist in the document, and letting it through would soft-delete
+        // nothing or strand a position on a node that vanishes at the next level change.
+        const realChanges = changes.filter((change) => (
+            !("id" in change) || !isSyntheticCanvasId(change.id)
+        ));
+        if (realChanges.length === 0) return;
+
+        const immediateChanges = realChanges.filter((change) => change.type !== "position");
+        const positionChanges = realChanges.filter((change) => change.type === "position");
 
         if (immediateChanges.length > 0) {
             const removeChanges = immediateChanges.filter((change) => change.type === "remove");
@@ -1662,8 +1663,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
         if (interactionLocked) return;
-        const removeChanges = changes.filter((change) => change.type === "remove");
-        const passthroughChanges = changes.filter((change) => change.type !== "remove");
+        // Same reasoning as `handleNodesChange`: a collapsed edge stands for several real ones and
+        // has an invented id, so deleting it must not reach the store.
+        const realChanges = changes.filter((change) => (
+            !("id" in change) || !isSyntheticCanvasId(change.id)
+        ));
+        if (realChanges.length === 0) return;
+
+        const removeChanges = realChanges.filter((change) => change.type === "remove");
+        const passthroughChanges = realChanges.filter((change) => change.type !== "remove");
 
         if (passthroughChanges.length > 0) {
             dispatch(onEdgesChange(passthroughChanges));
@@ -1962,6 +1970,80 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return names;
     }, [participants]);
 
+    // --- Abstraction level and focus.
+    //
+    // Changing the level always drops the focus: a focus path names a phase or an activity in the
+    // keyspace of the level it was opened at, and carrying it across would point at nothing.
+    const canvasLevelRef = useRef(canvasLevel);
+    const levelFollowsZoomRef = useRef(levelFollowsZoom);
+    useEffect(() => {
+        canvasLevelRef.current = canvasLevel;
+    }, [canvasLevel]);
+    useEffect(() => {
+        levelFollowsZoomRef.current = levelFollowsZoom;
+    }, [levelFollowsZoom]);
+
+    const handleCanvasLevelChange = useCallback((next: CanvasLevel) => {
+        canvasLevelRef.current = next;
+        setCanvasLevel(next);
+        setCanvasFocus(NO_CANVAS_FOCUS);
+    }, []);
+
+    /**
+     * Fires on every animation frame of every pan and zoom, so it does as little as possible: two
+     * ref reads and an early return unless the zoom actually crossed a level threshold. Deliberately
+     * not a `useViewport()` subscription — that would re-render this component ~60 times a second.
+     */
+    const handleViewportMove = useCallback((_event: unknown, viewport: { zoom: number }) => {
+        if (!levelFollowsZoomRef.current) return;
+        const next = levelForZoom(viewport.zoom, canvasLevelRef.current);
+        if (next === canvasLevelRef.current) return;
+        canvasLevelRef.current = next;
+        setCanvasLevel(next);
+        setCanvasFocus(NO_CANVAS_FOCUS);
+    }, []);
+
+    const handleLevelFollowsZoomChange = useCallback((value: boolean) => {
+        setLevelFollowsZoom(value);
+        if (!value) return;
+        // Snap to whatever the current viewport already implies rather than waiting for a gesture.
+        const next = levelForZoom(getZoom(), canvasLevelRef.current);
+        canvasLevelRef.current = next;
+        setCanvasLevel(next);
+        setCanvasFocus(NO_CANVAS_FOCUS);
+    }, [getZoom]);
+
+    const handleClearCanvasFocus = useCallback(() => {
+        setCanvasFocus(NO_CANVAS_FOCUS);
+    }, []);
+
+    /** Opening a glyph goes exactly one level deeper: a phase into its activities, an activity into its cards. */
+    const handleOpenCluster = useCallback((glyph: CanvasGlyphData) => {
+        setCanvasFocus((current) => {
+            if (glyph.kind === "phase") {
+                if (current.clusterId === glyph.focusClusterId && current.activityId === null) {
+                    return NO_CANVAS_FOCUS;
+                }
+                return { clusterId: glyph.focusClusterId, activityId: null };
+            }
+            if (glyph.kind === "activity") {
+                if (current.activityId === glyph.focusActivityId) {
+                    // Closing an activity falls back to its phase rather than all the way out.
+                    return { clusterId: current.clusterId, activityId: null };
+                }
+                return { clusterId: glyph.focusClusterId ?? current.clusterId, activityId: glyph.focusActivityId };
+            }
+            return current;
+        });
+    }, []);
+
+    const clusterGlyphHandlersRef = useRef<{ onOpenCluster: typeof handleOpenCluster }>({
+        onOpenCluster: handleOpenCluster,
+    });
+    useEffect(() => {
+        clusterGlyphHandlersRef.current = { onOpenCluster: handleOpenCluster };
+    }, [handleOpenCluster]);
+
     const cardNodeHandlersRef = useRef<{
         onAttachFile: typeof onAttachFileForNode;
         onDetachFile: typeof onDetachFile;
@@ -2019,6 +2101,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             };
 
             return <Card {...cardProps} />;
+        },
+        clusterGlyph: (nodeProps: NodeProps) => {
+            const handlers = clusterGlyphHandlersRef.current;
+            return (
+                <ClusterGlyph
+                    {...(nodeProps as unknown as ClusterGlyphProps)}
+                    onOpenCluster={handlers.onOpenCluster}
+                />
+            );
         },
         blueprint: BlueprintNode as unknown as NodeTypes[string],
         blueprintGroup: BlueprintGroupNode as unknown as NodeTypes[string],
@@ -2235,24 +2326,68 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [timelineContextEdges, filteredNodes]);
 
 
+    // --- Focus + context lens. Sits after every filter, so a glyph always describes what is
+    // actually on screen, and before the layout, so synthetic glyphs get placed by it.
+    const cardSalience = useMemo(
+        () => buildSalienceIndex(filteredNodes, filteredEdges, activityTreeMembership).score,
+        [filteredNodes, filteredEdges, activityTreeMembership],
+    );
+
+    const canvasClusters = useMemo(() => {
+        // Only Overview groups activities into phases; below that the work would be thrown away.
+        if (canvasLevel !== 1) return [];
+        return buildActivityClusters({
+            activities: filteredNodes.filter((node) => (
+                normalizeNodeLabel(String(node.data?.label ?? "")) === "activity"
+            )),
+            edges: filteredEdges,
+            membership: activityTreeMembership,
+            score: cardSalience,
+            stages: timelineStages.map((stage) => ({
+                name: String(stage.name ?? ""),
+                start: fromDate(stage.start),
+                end: fromDate(stage.end),
+            })),
+        });
+    }, [canvasLevel, filteredNodes, filteredEdges, activityTreeMembership, cardSalience, timelineStages]);
+
     // Edges are resolved before the layout runs, because the layout uses them to work out which
     // activity each card orbits.
-    const displayedEdges = useMemo(() => {
-        const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
-        return filteredEdges.filter((edge) => (
-            visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
-        ));
-    }, [filteredEdges, filteredNodes]);
+    const { nodes: abstractedNodes, edges: displayedEdges } = useMemo(() => buildAbstractedGraph({
+        nodes: filteredNodes,
+        edges: filteredEdges,
+        level: canvasLevel,
+        focus: canvasFocus,
+        membership: activityTreeMembership,
+        clusters: canvasClusters,
+        score: cardSalience,
+    }), [filteredNodes, filteredEdges, canvasLevel, canvasFocus, activityTreeMembership, canvasClusters, cardSalience]);
+
+    /** What the breadcrumb on the level control says, or null when nothing is opened out. */
+    const canvasFocusLabel = useMemo(() => {
+        if (canvasFocus.activityId !== null) {
+            const activity = filteredNodes.find((node) => node.id === canvasFocus.activityId);
+            const title = String((activity?.data as Record<string, unknown> | undefined)?.title ?? "").trim();
+            return title !== "" ? title : "Opened activity";
+        }
+        if (canvasFocus.clusterId !== null) {
+            const cluster = canvasClusters.find((entry) => entry.id === canvasFocus.clusterId);
+            return cluster?.label ?? "Opened phase";
+        }
+        return null;
+    }, [canvasFocus, canvasClusters, filteredNodes]);
 
     const { displayedNodes, hasManualNodePositions } = useMemo<{
         displayedNodes: nodeType[];
         hasManualNodePositions: boolean;
     }>(() => {
-        const laidOut = buildActivityOrbitLayout(filteredNodes, displayedEdges);
+        const laidOut = buildActivityOrbitLayout(abstractedNodes, displayedEdges);
         let moved = false;
 
         const positioned = laidOut.map((node) => {
-            const manual = manualNodePositions[node.id];
+            // A synthetic glyph is not a node anyone can have dragged, and its id is reused across
+            // levels — honouring a stored position for one would strand it at a stale coordinate.
+            const manual = isSyntheticCanvasId(node.id) ? undefined : manualNodePositions[node.id];
             if (!manual) return node;
             // A drag that ends where it started is not an arrangement, so it must not raise the
             // reset button.
@@ -2262,7 +2397,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         });
 
         return { displayedNodes: positioned, hasManualNodePositions: moved };
-    }, [filteredNodes, displayedEdges, manualNodePositions]);
+    }, [abstractedNodes, displayedEdges, manualNodePositions]);
 
     // The layout — not the cursor — decides where a new card lands, so a card created by the card
     // tool or a file drop can appear anywhere, including off-screen. Pan to it once it is placed,
@@ -2290,10 +2425,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // because both actions create a card that gets connected to the activity underneath.
     const activityDropReason = useMemo<ActivityDropRingsReason | null>(() => {
         if (interactionLocked) return null;
+        // An abstracted canvas has glyphs where activities were, and a ring drawn around one would
+        // invite dropping a card onto a node that does not exist in the document.
+        if (!canvasIsEditable) return null;
         if (fileDragActive) return "drag";
         if (cursorMode === "node") return "tool";
         return null;
-    }, [cursorMode, fileDragActive, interactionLocked]);
+    }, [canvasIsEditable, cursorMode, fileDragActive, interactionLocked]);
 
     const activityDropTargets = useMemo(() => (
         activityDropReason ? getActivityDropTargets(displayedNodes) : null
@@ -2348,6 +2486,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
         if (interactionLocked) return;
+        if (!canvasIsEditable) return;
         if (cursorMode !== "node" && cursorMode !== "blueprint_component") return;
 
         const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
@@ -2442,7 +2581,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 relevant: true,
             },
         }));
-    }, [cursorMode, displayedNodes, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, resolveActionTimestamp, resetFiltersForCanvasCreation, screenToFlowPosition]);
+    }, [canvasIsEditable, cursorMode, displayedNodes, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, resolveActionTimestamp, resetFiltersForCanvasCreation, screenToFlowPosition]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
@@ -2458,6 +2597,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const handleCanvasDrop = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
+        if (!canvasIsEditable) return;
         const blueprintRaw = e.dataTransfer?.getData(BLUEPRINT_DRAG_MIME);
         if (blueprintRaw) {
             e.preventDefault();
@@ -2513,7 +2653,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 if (index === 0) resetFiltersForCanvasCreation("object");
             }
         })();
-    }, [displayedNodes, dispatch, interactionLocked, onAttachFileForCanvas, resetFiltersForCanvasCreation, resolveActionTimestamp, screenToFlowPosition]);
+    }, [canvasIsEditable, displayedNodes, dispatch, interactionLocked, onAttachFileForCanvas, resetFiltersForCanvasCreation, resolveActionTimestamp, screenToFlowPosition]);
 
     const onFreeInputSubmit = useCallback(async (x: number, y: number, userText: string) => {
         if (interactionLocked) return;
@@ -2858,6 +2998,24 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         return () => window.clearTimeout(t);
     }, [blueprintComponentsVisible, selectedLabels, queryMatchedNodeIds, fitView]);
+
+    // A level or focus change can resize the whole canvas, so refit to it — but only when the user
+    // asked for that level by hand. In follow-zoom mode writing the viewport would fight the very
+    // gesture that triggered the change, and could bounce the zoom back across the threshold.
+    const skipInitialLevelFitRef = useRef(true);
+    useEffect(() => {
+        if (skipInitialLevelFitRef.current) {
+            skipInitialLevelFitRef.current = false;
+            return;
+        }
+        if (levelFollowsZoom) return;
+
+        const t = window.setTimeout(() => {
+            fitView({ padding: 0.2, duration: 350 });
+        }, 0);
+
+        return () => window.clearTimeout(t);
+    }, [canvasLevel, canvasFocus, levelFollowsZoom, fitView]);
 
     useEffect(() => {
         return () => {
@@ -3955,6 +4113,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onResetNodePositions={hasManualNodePositions ? handleResetNodePositions : null}
                 miniMapBottomOffsetPx={canvasSidebarBottomOffset + MINIMAP_AI_BUTTON_CLEARANCE_PX}
                 miniMapRightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX}
+                onMove={handleViewportMove}
+                levelControl={(
+                    <CanvasLevelControl
+                        level={canvasLevel}
+                        followZoom={levelFollowsZoom}
+                        onLevelChange={handleCanvasLevelChange}
+                        onFollowZoomChange={handleLevelFollowsZoomChange}
+                        focusLabel={canvasFocusLabel}
+                        onClearFocus={handleClearCanvasFocus}
+                        shifted={timelineOpen}
+                    />
+                )}
             />
 
             <EdgeConnectMenu
@@ -4134,16 +4304,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             ) : null}
 
             <LoadSpinner loading={loading} />
-
-            {!interactionLocked ? (
-                <PendingFileModal
-                    pendingDrop={pendingDrop}
-                    generatedAtInput={generatedAtInput}
-                    onGeneratedAtInputChange={setGeneratedAtInput}
-                    onCancel={cancelPendingDrop}
-                    onProcess={processPendingDrop}
-                />
-            ) : null}
 
             <TimelineDock
                 projectId={projectId}

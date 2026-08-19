@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { parseFile } from "@/func/FileParser";
 import { llmCardsToNodes, requestCardsLLM } from "@/func/LLMRequest";
@@ -10,8 +10,6 @@ import { relationLabelFor } from "@/utils/relationships";
 
 import type { AppDispatch } from "@/store";
 import type { edgeType, filePendingUpload, llmCardData, llmConnectionData, nodeType } from "@/config/types";
-import type { PendingDrop } from "@/pages/projectEditor/types";
-import { toLocalDateTimeInputValue } from "@/pages/projectEditor/dateUtils";
 
 type Args = {
     projectId: string;
@@ -83,9 +81,6 @@ export function useFileAttachmentProcessing({
     // independent: starting one must never cancel another that is still running.
     const inFlightRef = useRef<Set<AbortController>>(new Set());
 
-    const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
-    const [generatedAtInput, setGeneratedAtInput] = useState<string>(() => toLocalDateTimeInputValue(new Date()));
-
     useEffect(() => {
         nodesRef.current = nodes;
     }, [nodes]);
@@ -110,9 +105,16 @@ export function useFileAttachmentProcessing({
         return new Date().toISOString();
     }, [actionTimestamp]);
 
+    /**
+     * Attach a file to an activity card and let the LLM turn it into cards.
+     *
+     * The file's timestamp is the current timeline action timestamp — there is no prompt for it.
+     * An activity's own timestamp is editable on the back of its card, which is the one place that
+     * decides where the tree sits on the time axis, so asking again per file was a modal in the way
+     * of every attachment.
+     */
     const processFile = useCallback(async (
         file: File,
-        generatedAt: string,
         rootActivityNodeId: string,
         dropPosition?: { x: number; y: number },
     ) => {
@@ -123,11 +125,7 @@ export function useFileAttachmentProcessing({
 
         try {
             const data: filePendingUpload = await parseFile(file);
-            const fallbackCreatedAt = resolveActionTimestamp();
-            const parsedGeneratedAt = generatedAt ? new Date(generatedAt) : new Date(fallbackCreatedAt);
-            const chosenCreatedAt = Number.isNaN(parsedGeneratedAt.getTime())
-                ? fallbackCreatedAt
-                : parsedGeneratedAt.toISOString();
+            const chosenCreatedAt = resolveActionTimestamp();
 
             // The extraction call needs only the parsed file, never the upload result, so the two
             // run concurrently. For pdf/docx this also overlaps the docling conversion with the
@@ -354,12 +352,11 @@ export function useFileAttachmentProcessing({
         const shouldUseLlmFlow = isActivityNode && Boolean(targetNode) && !isVideoFile(file);
 
         if (shouldUseLlmFlow && targetNode) {
-            setGeneratedAtInput(toLocalDateTimeInputValue(new Date(resolveActionTimestamp())));
-            setPendingDrop({
+            await processFile(
                 file,
-                dropPosition: { x: targetNode.position.x, y: targetNode.position.y },
-                rootActivityNodeId: nodeId,
-            });
+                nodeId,
+                { x: targetNode.position.x, y: targetNode.position.y },
+            );
             return;
         }
 
@@ -395,7 +392,7 @@ export function useFileAttachmentProcessing({
             fileId,
             editAt: chosenCreatedAt,
         }));
-    }, [dispatch, projectId, resolveActionTimestamp]);
+    }, [dispatch, processFile, projectId, resolveActionTimestamp]);
 
     /**
      * Canvas file drop. Always produces an `object` card named after the file, with the file
@@ -500,31 +497,8 @@ export function useFileAttachmentProcessing({
         }
     }, [dispatch, projectId, resolveActionTimestamp, setLoading]);
 
-    const processPendingDrop = useCallback(async () => {
-        if (!pendingDrop?.rootActivityNodeId) return;
-
-        const payload = pendingDrop;
-        setPendingDrop(null);
-
-        await processFile(
-            payload.file,
-            generatedAtInput,
-            payload.rootActivityNodeId,
-            payload.dropPosition,
-        );
-    }, [pendingDrop, generatedAtInput, processFile]);
-
-    const cancelPendingDrop = useCallback(() => {
-        setPendingDrop(null);
-    }, []);
-
     return {
         onAttachFile,
         onAttachFileToCanvas,
-        pendingDrop,
-        generatedAtInput,
-        setGeneratedAtInput,
-        processPendingDrop,
-        cancelPendingDrop,
     };
 }

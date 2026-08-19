@@ -625,11 +625,13 @@ const flowSlice = createSlice({
                 ? data.attachmentIds.filter((id): id is string => typeof id === "string")
                 : [];
 
-            if (currentIds.includes(fileId)) return;
+            // One file per card: attaching replaces whatever was there instead of appending, so no
+            // path through the app (drop, LLM generation, import) can rebuild a multi-file card.
+            if (currentIds.length === 1 && currentIds[0] === fileId) return;
 
             state.nodes[index] = commitNodeDataSnapshot(node, {
                 ...data,
-                attachmentIds: [...currentIds, fileId],
+                attachmentIds: [fileId],
             }, editAt);
         },
         detachFileIdFromNode: (state, action: PayloadAction<{ nodeId: string; fileId: string; editAt?: string }>) => {

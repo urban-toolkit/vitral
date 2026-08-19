@@ -1,5 +1,6 @@
 import type { filePendingUpload, fileRecord, TimelineStatePayload } from "@/config/types";
 import { resolveApiBaseUrl } from "@/api/baseUrl";
+import { withDeadline } from "@/utils/abort";
 
 export type FlowStatePayload = {
     flow: {
@@ -616,7 +617,7 @@ export async function compareCardsSimilarity(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        signal: signal ?? AbortSignal.timeout(30_000),
+        signal: withDeadline(signal, 30_000),
     });
 
     if (!res.ok) {

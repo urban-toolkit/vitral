@@ -1,0 +1,28 @@
+.slot {
+    position: relative;
+    box-sizing: border-box;
+    display: flex;
+    width: 100%;
+    height: 100%;
+    padding: 2px;
+}
+
+.removeFileButton {
+    position: absolute;
+    border: none;
+    background: none;
+    right: 4px;
+    top: 4px;
+    z-index: 5;
+    width: 18px;
+    height: 18px;
+    color: #404040;
+    line-height: 1;
+    font-size: 11px;
+    padding: 0;
+    cursor: pointer;
+}
+
+.removeFileButton:hover {
+    color: red;
+}

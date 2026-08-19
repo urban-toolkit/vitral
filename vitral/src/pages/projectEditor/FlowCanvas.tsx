@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ReactFlow, MiniMap, Panel, type NodeChange, type EdgeChange, type Connection, type NodeTypes, type EdgeTypes } from "@xyflow/react";
+import { ReactFlow, MiniMap, Panel, type NodeChange, type EdgeChange, type Connection, type NodeTypes, type EdgeTypes, type Viewport } from "@xyflow/react";
 
 import type { edgeType, nodeType } from "@/config/types";
 import type { CursorMode } from "@/pages/projectEditor/types";
@@ -27,6 +27,15 @@ type FlowCanvasProps = {
     onResetNodePositions?: (() => void) | null;
     miniMapBottomOffsetPx?: number;
     miniMapRightOffsetPx?: number;
+    /**
+     * Viewport changes, for the follow-zoom abstraction mode. A plain callback rather than a
+     * `useViewport()` subscription on purpose: this fires on every animation frame of every pan, and
+     * re-rendering the editor page that often would be ruinous. The handler is expected to read
+     * refs and only touch state when the zoom actually crosses a level threshold.
+     */
+    onMove?: (event: MouseEvent | TouchEvent | null, viewport: Viewport) => void;
+    /** The abstraction level control, rendered as a bottom-centre panel over the canvas. */
+    levelControl?: React.ReactNode;
 };
 
 export const FlowCanvas = memo(function FlowCanvas({
@@ -48,6 +57,8 @@ export const FlowCanvas = memo(function FlowCanvas({
     onResetNodePositions = null,
     miniMapBottomOffsetPx = 0,
     miniMapRightOffsetPx = 0,
+    onMove,
+    levelControl = null,
 }: FlowCanvasProps) {
     const cursorClassName = cursorMode === "text"
         ? styles.cursorText
@@ -73,6 +84,7 @@ export const FlowCanvas = memo(function FlowCanvas({
             onClick={onClick}
             onDragOver={onDragOver}
             onDrop={onDrop}
+            onMove={onMove}
             minZoom={0.02}
             fitView
         >
@@ -91,6 +103,12 @@ export const FlowCanvas = memo(function FlowCanvas({
                     >
                         Reset card positioning
                     </button>
+                </Panel>
+            ) : null}
+
+            {levelControl ? (
+                <Panel position="bottom-center">
+                    {levelControl}
                 </Panel>
             ) : null}
 
