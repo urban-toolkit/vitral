@@ -18,11 +18,13 @@ type LoggerLike = {
 type NodeEmbeddingWorkItem = {
     docId: string;
     nodeId: string;
+    label: string;
     serializedNode: string;
 };
 
 type EmbeddableNode = {
     nodeId: string;
+    label: string;
     serializedNode: string;
     hash: string;
 };
@@ -45,6 +47,38 @@ type CreateNodeEmbeddingQueueOptions = {
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_DEBOUNCE_MS = 1_500;
 const DEFAULT_BATCH_SIZE = 16;
+
+/**
+ * Bumped whenever `serializeNodeForEmbedding` changes what it feeds the model. Vectors built from
+ * different text are not comparable, and the `vector(1536)` type cannot tell the difference, so the
+ * version rides along in the stored `model` column: a row whose signature does not match the
+ * current one is treated as missing and re-embedded.
+ *
+ * v2 dropped the `Card label:/Card title:/Card description:` scaffolding. Those phrases were
+ * identical in every card, and two cards sharing a label shared the whole first line verbatim, so a
+ * large constant component sat in every vector -- lifting every pair's cosine and squeezing the gap
+ * between a real match and an unrelated one.
+ */
+export const EMBEDDING_TEXT_VERSION = 2;
+
+/** What goes in the `model` column: the model that produced the vector *and* the text recipe. */
+export function embeddingSignature(model: string): string {
+    return `${model}@v${EMBEDDING_TEXT_VERSION}`;
+}
+
+/** `task` is the legacy alias for `requirement`, matching the app's `normalizeNodeLabel`. */
+export function normalizeEmbeddingLabel(raw: unknown): string {
+    const normalized = String(raw ?? "").trim().toLowerCase();
+    return normalized === "task" ? "requirement" : normalized;
+}
+
+/** The card shape the embedding text is built from, shared with the similarity route. */
+export type EmbeddableCard = { label: string; title: string; description: string };
+
+/** Same recipe as the queue, for callers holding a card rather than a stored node. */
+export function embeddingTextForCard(card: EmbeddableCard): string {
+    return serializeNodeForEmbedding({ title: card.title, description: card.description });
+}
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -82,22 +116,26 @@ function normalizeNodePayload(node: UnknownRecord): UnknownRecord {
     const data = isRecord(node.data) ? node.data : {};
 
     return {
-        label: typeof data.label === "string" ? data.label : "",
+        label: normalizeEmbeddingLabel(data.label),
         title: typeof data.title === "string" ? data.title : "",
         description: typeof data.description === "string" ? data.description : "",
     };
 }
 
-function serializeNodeForEmbedding(nodePayload: UnknownRecord): string {
-    // Embedding contract: only label/title/description are allowed.
-    // Do not add any new card fields here in future changes.
-    const parts = [
-        `Card label: ${String(nodePayload.label ?? "")}`,
-        `Card title: ${String(nodePayload.title ?? "")}`,
-        `Card description: ${String(nodePayload.description ?? "")}`,
-    ];
-
-    return parts.join("\n");
+/**
+ * Embedding contract: only title and description are allowed, and the label is deliberately *not*
+ * among them -- it is a filter on the search, not content to be matched on. Do not add any new
+ * card fields here in future changes, and bump `EMBEDDING_TEXT_VERSION` whenever this changes.
+ *
+ * Returns `""` for a card with neither a title nor a description. Such a card has nothing to match
+ * on, and the embeddings API rejects an empty input string, so callers skip it entirely.
+ */
+export function serializeNodeForEmbedding(nodePayload: UnknownRecord): string {
+    const title = String(nodePayload.title ?? "").trim();
+    const description = String(nodePayload.description ?? "").trim();
+    if (title === "") return description;
+    if (description === "") return title;
+    return `${title}\n\n${description}`;
 }
 
 function extractEmbeddableNodes(state: unknown): EmbeddableNodeMap {
@@ -115,16 +153,35 @@ function extractEmbeddableNodes(state: unknown): EmbeddableNodeMap {
         if (!isEmbeddableType) continue;
 
         const payload = normalizeNodePayload(rawNode);
-        const hash = stableStringify(payload);
+        const serializedNode = serializeNodeForEmbedding(payload);
+        // Nothing to embed, and nothing another card could usefully be matched against.
+        if (serializedNode === "") continue;
 
         map.set(nodeId, {
             nodeId,
-            serializedNode: serializeNodeForEmbedding(payload),
-            hash,
+            label: String(payload.label ?? ""),
+            serializedNode,
+            hash: stableStringify(payload),
         });
     }
 
     return map;
+}
+
+/** One card of a saved document, ready to embed. Used by the similarity route's backfill. */
+export type EmbeddableCardRow = { nodeId: string; label: string; text: string };
+
+/**
+ * Every card in a saved document that can be embedded, in the exact form the queue would write.
+ * Sharing this with the similarity route is what keeps the index and the reader agreeing on which
+ * nodes count and what text stands for them.
+ */
+export function extractEmbeddableCards(state: unknown): EmbeddableCardRow[] {
+    return Array.from(extractEmbeddableNodes(state).values()).map((node) => ({
+        nodeId: node.nodeId,
+        label: node.label,
+        text: node.serializedNode,
+    }));
 }
 
 export function computeNodeEmbeddingDelta(previousState: unknown, nextState: unknown, docId: string): NodeEmbeddingDelta {
@@ -138,6 +195,7 @@ export function computeNodeEmbeddingDelta(previousState: unknown, nextState: unk
             upserts.push({
                 docId,
                 nodeId,
+                label: nextNode.label,
                 serializedNode: nextNode.serializedNode,
             });
         }
@@ -166,6 +224,7 @@ export function createNodeEmbeddingQueue({
 }: CreateNodeEmbeddingQueueOptions) {
     const apiKey = process.env.OPENAI_API_KEY;
     const openai = apiKey ? new OpenAI({ apiKey }) : null;
+    const signature = embeddingSignature(model);
 
     const pending = new Map<string, NodeEmbeddingWorkItem>();
     let timer: NodeJS.Timeout | null = null;
@@ -289,14 +348,15 @@ export function createNodeEmbeddingQueue({
 
                     const base = values.length;
                     valuesSql.push(
-                        `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}::vector, $${base + 5})`,
+                        `($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}::vector, $${base + 6})`,
                     );
                     values.push(
                         item.docId,
                         item.nodeId,
+                        item.label,
                         item.serializedNode,
                         vectorToPgLiteral(embedding),
-                        model,
+                        signature,
                     );
                 });
 
@@ -304,10 +364,11 @@ export function createNodeEmbeddingQueue({
 
                 await pg.query(
                     `
-                    INSERT INTO document_node_embeddings (doc_id, node_id, node_text, embedding, model)
+                    INSERT INTO document_node_embeddings (doc_id, node_id, label, node_text, embedding, model)
                     VALUES ${valuesSql.join(", ")}
                     ON CONFLICT (doc_id, node_id) DO UPDATE
                     SET
+                        label = EXCLUDED.label,
                         node_text = EXCLUDED.node_text,
                         embedding = EXCLUDED.embedding,
                         model = EXCLUDED.model,

@@ -1,14 +1,22 @@
+/* Fixed, narrow, and stacked in two rows. The canvas tool bar owns the bottom centre, so a single
+   long bar in this corner would run straight into it on a 1440-wide screen. */
 .container {
 	display: flex;
-	align-items: center;
-	gap: 10px;
+	flex-direction: column;
+	gap: 6px;
+	width: 268px;
 	padding: 6px;
-	border-radius: 999px;
+	border-radius: 14px;
 	background: rgba(255, 255, 255, 0.96);
 	border: 1px solid #d7d7d7;
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 	font-family: inherit;
-	transition: bottom 160ms ease;
+	transition: margin-bottom 160ms ease;
+}
+
+.row {
+	display: flex;
+	gap: 6px;
 }
 
 .segments {
@@ -17,10 +25,11 @@
 }
 
 .segment {
+	flex: 1;
 	border: none;
 	background: transparent;
 	border-radius: 999px;
-	padding: 6px 14px;
+	padding: 6px 4px;
 	font-size: 12px;
 	font-weight: 600;
 	color: #5a5a5a;
@@ -43,20 +52,16 @@
 	color: #8a8a8a;
 }
 
-.divider {
-	width: 1px;
-	align-self: stretch;
-	background: #e4e4e4;
-}
-
 .autoToggle {
+	flex: 1;
 	display: inline-flex;
 	align-items: center;
+	justify-content: center;
 	gap: 6px;
 	border: none;
-	background: transparent;
+	background: #f4f4f4;
 	border-radius: 999px;
-	padding: 6px 12px;
+	padding: 6px 8px;
 	font-size: 12px;
 	font-weight: 600;
 	color: #5a5a5a;
@@ -65,7 +70,7 @@
 }
 
 .autoToggle:hover {
-	background: rgba(0, 0, 0, 0.05);
+	background: #ebebeb;
 	color: #202020;
 }
 
@@ -86,15 +91,17 @@
 	background: #1b7fa8;
 }
 
+/* Leads the panel: the breadcrumb is context for everything under it, and a row of its own keeps
+   the controls from shuffling as focus opens and closes. */
 .breadcrumb {
-	display: inline-flex;
+	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 5px 6px 5px 12px;
+	justify-content: space-between;
+	gap: 6px;
+	padding: 4px 4px 4px 12px;
 	border-radius: 999px;
 	background: rgba(0, 0, 0, 0.05);
 	font-size: 12px;
-	max-width: 260px;
 }
 
 .breadcrumbLabel {
@@ -119,4 +126,37 @@
 .breadcrumbClear:hover {
 	background: rgba(0, 0, 0, 0.10);
 	color: #161616;
+}
+
+.chatButton {
+	flex: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	border: none;
+	background: #f6efe4;
+	border-radius: 999px;
+	padding: 6px 8px;
+	font-size: 12px;
+	font-weight: 600;
+	color: #6b4b1c;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.chatButton:hover {
+	background: #f0e3cd;
+	color: #4d360f;
+}
+
+.chatButtonOn,
+.chatButtonOn:hover {
+	background: #f2e3d0;
+	color: #4d360f;
+}
+
+.chatIcon {
+	font-size: 12px;
+	opacity: 0.75;
 }

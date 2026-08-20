@@ -1,5 +1,6 @@
 import type { edgeType, nodeType } from "@/config/types";
 import { connectionKindFromEdge, isEdgeActive } from "@/pages/projectEditor/graphSemantics";
+import { jaccardOverlap, tokenize } from "@/utils/textTokens";
 
 /**
  * Phases of a project, derived rather than declared.
@@ -50,13 +51,6 @@ const MIN_ACTIVITIES_TO_CLUSTER = 3;
 const MIN_CLUSTERS = 2;
 const MAX_CLUSTERS = 7;
 
-const STOPWORDS = new Set([
-    "the", "and", "for", "with", "from", "that", "this", "into", "onto", "was", "were", "are",
-    "has", "have", "had", "its", "our", "their", "his", "her", "not", "but", "all", "any", "can",
-    "how", "why", "what", "when", "where", "who", "which", "about", "over", "under", "than",
-    "then", "them", "they", "she", "him", "you", "your", "out", "off", "per", "via", "new",
-]);
-
 function dataOf(node: nodeType): Record<string, unknown> {
     return (node.data ?? {}) as Record<string, unknown>;
 }
@@ -75,25 +69,7 @@ function isoOf(node: nodeType): string | null {
 
 function contentTokens(node: nodeType): Set<string> {
     const data = dataOf(node);
-    const text = `${String(data.title ?? "")} ${String(data.description ?? "")}`.toLowerCase();
-    const tokens = new Set<string>();
-    for (const raw of text.split(/[^a-z0-9]+/)) {
-        if (raw.length < 3) continue;
-        if (STOPWORDS.has(raw)) continue;
-        tokens.add(raw);
-    }
-    return tokens;
-}
-
-function jaccard(a: Set<string>, b: Set<string>): number {
-    if (a.size === 0 || b.size === 0) return 0;
-    let shared = 0;
-    const [small, large] = a.size <= b.size ? [a, b] : [b, a];
-    for (const token of small) {
-        if (large.has(token)) shared += 1;
-    }
-    const union = a.size + b.size - shared;
-    return union === 0 ? 0 : shared / union;
+    return tokenize(String(data.title ?? ""), String(data.description ?? ""));
 }
 
 /** Activities in the order the canvas lays them out: by time, undated last, id as the tiebreak. */
@@ -190,7 +166,7 @@ export function buildActivityClusters(params: {
 
         const key = left.id < right.id ? `${left.id}|${right.id}` : `${right.id}|${left.id}`;
         const edgeAffinity = treeAffinity.get(key) ?? 0;
-        const wordAffinity = jaccard(
+        const wordAffinity = jaccardOverlap(
             tokensById.get(left.id) ?? new Set<string>(),
             tokensById.get(right.id) ?? new Set<string>(),
         );

@@ -34,8 +34,10 @@ type FlowCanvasProps = {
      * refs and only touch state when the zoom actually crosses a level threshold.
      */
     onMove?: (event: MouseEvent | TouchEvent | null, viewport: Viewport) => void;
-    /** The abstraction level control, rendered as a bottom-centre panel over the canvas. */
+    /** The abstraction level control, rendered as a bottom-right panel over the canvas. */
     levelControl?: React.ReactNode;
+    /** Keeps the level control clear of the right sidebar, which floats over the canvas. */
+    levelControlRightOffsetPx?: number;
 };
 
 export const FlowCanvas = memo(function FlowCanvas({
@@ -59,6 +61,7 @@ export const FlowCanvas = memo(function FlowCanvas({
     miniMapRightOffsetPx = 0,
     onMove,
     levelControl = null,
+    levelControlRightOffsetPx = 0,
 }: FlowCanvasProps) {
     const cursorClassName = cursorMode === "text"
         ? styles.cursorText
@@ -107,7 +110,10 @@ export const FlowCanvas = memo(function FlowCanvas({
             ) : null}
 
             {levelControl ? (
-                <Panel position="bottom-center">
+                <Panel
+                    position="bottom-right"
+                    style={{ right: levelControlRightOffsetPx + 12, bottom: 12, margin: 0 }}
+                >
                     {levelControl}
                 </Panel>
             ) : null}

@@ -152,10 +152,13 @@ const FEEDS_INTO_EDGE_LABEL = "feeds into";
 const RIGHT_SIDEBAR_WIDTH_PX = 250;
 /** Every node that belongs to the blueprint structure, hidden or shown as one filter. */
 const BLUEPRINT_NODE_LABELS = new Set(["blueprint", "blueprint_group", "blueprint_component"]);
-const AI_CHAT_BUTTON_BOTTOM_GAP_PX = 20;
-const AI_CHAT_BUTTON_TIMELINE_GAP_PX = 12;
-const AI_CHAT_BUTTON_RIGHT_GAP_PX = 16;
-const MINIMAP_AI_BUTTON_CLEARANCE_PX = 84;
+/**
+ * Room under the minimap for the canvas control panel (level segments + follow-zoom + assistant).
+ * The panel grows a row taller when something is focused, so the minimap has to step up with it —
+ * these two mirror the heights in `CanvasLevelControl.module.css`.
+ */
+const MINIMAP_LEVEL_PANEL_CLEARANCE_PX = 100;
+const MINIMAP_LEVEL_PANEL_FOCUSED_CLEARANCE_PX = 134;
 const TIMELINE_TOGGLE_OFFSET_WITH_TOOLBAR_PX = 65;
 const TIMELINE_TOGGLE_OFFSET_NO_TOOLBAR_PX = 20;
 // Client-side cap on the canvas-chat retrieval `limit`. Must mirror the backend's
@@ -3073,6 +3076,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         setChatError(null);
     }, []);
 
+    const handleOpenChat = useCallback(() => {
+        setChatOpen(true);
+    }, []);
+
     const handleSendChatMessage = useCallback(() => {
         const trimmed = chatInput.trim();
         if (!trimmed || chatLoading) return;
@@ -4111,9 +4118,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 activityDropTargets={activityDropTargets}
                 activityDropReason={activityDropReason ?? "drag"}
                 onResetNodePositions={hasManualNodePositions ? handleResetNodePositions : null}
-                miniMapBottomOffsetPx={canvasSidebarBottomOffset + MINIMAP_AI_BUTTON_CLEARANCE_PX}
+                miniMapBottomOffsetPx={canvasSidebarBottomOffset + (canvasFocusLabel
+                    ? MINIMAP_LEVEL_PANEL_FOCUSED_CLEARANCE_PX
+                    : MINIMAP_LEVEL_PANEL_CLEARANCE_PX)}
                 miniMapRightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX}
                 onMove={handleViewportMove}
+                levelControlRightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX}
                 levelControl={(
                     <CanvasLevelControl
                         level={canvasLevel}
@@ -4123,6 +4133,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                         focusLabel={canvasFocusLabel}
                         onClearFocus={handleClearCanvasFocus}
                         shifted={timelineOpen}
+                        chatOpen={chatOpen}
+                        onOpenChat={handleOpenChat}
                     />
                 )}
             />
@@ -4257,34 +4269,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 deletingAssetId={deletingAssetId}
                 onDeleteAsset={interactionLocked ? undefined : handleDeleteAsset}
             />
-
-            <button
-                type="button"
-                title="Open AI assistant chat (Ctrl+Space)"
-                aria-label="Open AI assistant chat"
-                onClick={() => setChatOpen(true)}
-                style={{
-                    position: "fixed",
-                    right: RIGHT_SIDEBAR_WIDTH_PX + AI_CHAT_BUTTON_RIGHT_GAP_PX,
-                    bottom: timelineOpen
-                        ? TIMELINE_DOCK_HEIGHT + AI_CHAT_BUTTON_BOTTOM_GAP_PX + AI_CHAT_BUTTON_TIMELINE_GAP_PX
-                        : AI_CHAT_BUTTON_BOTTOM_GAP_PX,
-                    zIndex: 20,
-                    border: "1px solid rgba(0, 0, 0, 0.2)",
-                    borderRadius: 999,
-                    background: chatOpen ? "#f2e3d0" : "#ffffff",
-                    color: "#2b2b2b",
-                    fontWeight: 600,
-                    fontSize: 13,
-                    lineHeight: "18px",
-                    padding: "10px 14px",
-                    cursor: "pointer",
-                    boxShadow: "0 10px 24px rgba(0, 0, 0, 0.16)",
-                    transition: "bottom 150ms ease, background-color 150ms ease",
-                }}
-            >
-                AI Assistant
-            </button>
 
             <CanvasChatOverlay
                 open={chatOpen}

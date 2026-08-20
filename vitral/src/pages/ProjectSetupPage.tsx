@@ -1,6 +1,8 @@
 ﻿
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faArrowLeft, faCheck, faPlus, faXmark } from "@fortawesome/free-solid-svg-icons";
 
 import {
     createDocument,
@@ -826,426 +828,588 @@ export function ProjectSetupPage() {
         ? (literatureTemplates.find((template) => template.id === selectedTemplate.id) ?? null)
         : null;
 
+    const leaveSetup = () => navigate(isEditMode && projectId ? `/project/${projectId}` : "/projects");
+
     return (
         <div className={classes.page}>
-            <div className={classes.header}>
-                <h1>{isEditMode ? "Project Settings" : "Project Setup"}</h1>
-                <div className={classes.headerActions}>
+            <header className={classes.topBar}>
+                <div className={classes.topBarInner}>
                     <button
                         type="button"
-                        onClick={() => navigate(isEditMode && projectId ? `/project/${projectId}` : "/projects")}
+                        className={classes.backButton}
+                        title={isEditMode ? "Back to the project" : "Back to projects"}
+                        aria-label={isEditMode ? "Back to the project" : "Back to projects"}
+                        onClick={leaveSetup}
                     >
-                        Cancel
+                        <FontAwesomeIcon icon={faArrowLeft} />
                     </button>
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 12, opacity: 0.8 }}>LLM model</span>
-                        <select
-                            value={setup.llmModel}
-                            onChange={(event) => setSetup((prev) => ({ ...prev, llmModel: event.target.value }))}
+
+                    <div className={classes.identity}>
+                        <h1 className={classes.title}>{isEditMode ? "Project settings" : "New project"}</h1>
+                        <p className={classes.subtitle}>
+                            {isEditMode
+                                ? "Change the goal, the people and the timeline behind this project."
+                                : "Name it, borrow a shape from a template, and sketch the timeline. All of it stays editable later."}
+                        </p>
+                    </div>
+
+                    <div className={classes.topBarActions}>
+                        <button type="button" className={classes.ghostButton} onClick={leaveSetup}>
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            className={classes.primaryButton}
+                            onClick={onSubmitProjectSetup}
+                            disabled={submitting}
                         >
-                            {LLM_MODEL_OPTIONS.map((model) => (
-                                <option key={model} value={model}>{model}</option>
-                            ))}
-                        </select>
-                    </label>
-                    <button type="button" onClick={onSubmitProjectSetup} disabled={submitting}>
-                        {submitting ? (isEditMode ? "Saving..." : "Creating...") : (isEditMode ? "Save Changes" : "Create Project")}
-                    </button>
-                </div>
-            </div>
-
-            <div className={classes.tabs}>
-                <button
-                    type="button"
-                    className={activeTab === "form" ? classes.tabActive : classes.tab}
-                    onClick={() => setActiveTab("form")}
-                >
-                    Form
-                </button>
-                <button
-                    type="button"
-                    className={activeTab === "json" ? classes.tabActive : classes.tab}
-                    onClick={() => {
-                        setActiveTab("json");
-                        setJsonDraft(JSON.stringify(setup, null, 2));
-                    }}
-                >
-                    JSON
-                </button>
-            </div>
-
-            {error ? <p className={classes.error}>{error}</p> : null}
-
-            {activeTab === "json" ? (
-                <div className={classes.jsonPanel}>
-                    <div className={classes.jsonActions}>
-                        <button type="button" onClick={triggerJsonImport}>
-                            Import JSON
-                        </button>
-                        <button type="button" onClick={() => exportJson("everything")}>
-                            Export JSON (Everything)
-                        </button>
-                        <button type="button" onClick={() => exportJson("configs")}>
-                            Export JSON (Configs only)
+                            {submitting
+                                ? (isEditMode ? "Saving…" : "Creating…")
+                                : (isEditMode ? "Save changes" : "Create project")}
                         </button>
                     </div>
-                    <input
-                        ref={importInputRef}
-                        type="file"
-                        accept="application/json,.json"
-                        hidden
-                        onChange={(event) => {
-                            const file = event.target.files?.[0] ?? null;
-                            void onImportJsonFile(file);
-                            event.target.value = "";
-                        }}
-                    />
-                    <textarea
-                        className={classes.jsonArea}
-                        value={jsonDraft}
-                        onChange={(event) => setJsonDraft(event.target.value)}
-                    />
-                    <button type="button" onClick={applyJsonToForm}>Apply JSON</button>
                 </div>
-            ) : (
-                <div className={classes.form}>
-                    <section className={classes.section}>
-                        <h2>Project</h2>
-                        <label>
-                            Project name
-                            <input
-                                type="text"
-                                value={setup.projectName}
-                                onChange={(event) => setSetup((prev) => ({ ...prev, projectName: event.target.value }))}
-                            />
-                        </label>
-                        <label>
-                            Goal
-                            <textarea
-                                rows={3}
-                                value={setup.goal}
-                                onChange={(event) => setSetup((prev) => ({ ...prev, goal: event.target.value }))}
-                            />
-                        </label>
-                    </section>
+            </header>
 
+            <main className={classes.shell}>
+                <div className={classes.tabs} role="tablist" aria-label="Setup editor">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === "form"}
+                        className={activeTab === "form" ? classes.tabActive : classes.tab}
+                        onClick={() => setActiveTab("form")}
+                    >
+                        Form
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === "json"}
+                        className={activeTab === "json" ? classes.tabActive : classes.tab}
+                        onClick={() => {
+                            setActiveTab("json");
+                            setJsonDraft(JSON.stringify(setup, null, 2));
+                        }}
+                    >
+                        JSON
+                    </button>
+                </div>
+
+                {error ? <p className={classes.error} role="alert">{error}</p> : null}
+
+                {activeTab === "json" ? (
                     <section className={classes.section}>
-                        <h2>Templates</h2>
-                        <p className={classes.templateHint}>Select one template. It will auto-populate participants and timeline.</p>
-                        {selectedTemplateLabel ? (
-                            <p className={classes.templateHint}>Selected template: {selectedTemplateLabel}</p>
-                        ) : null}
-                        <div className={classes.templateGrid}>
-                            <div className={classes.templateColumn}>
-                                <h3>Literature</h3>
-                                <div className={classes.pillWrap}>
-                                    {literatureTemplates.map((template) => (
-                                        <button
-                                            key={template.id}
-                                            type="button"
-                                            className={
-                                                selectedTemplate?.kind === "literature" && selectedTemplate.id === template.id
-                                                    ? classes.pillActive
-                                                    : classes.pill
-                                            }
-                                            onClick={() => applyLiteratureTemplate(template)}
-                                        >
-                                            {template.name}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className={classes.templateColumn}>
-                                <h3>Previous Projects</h3>
-                                <div className={classes.pillWrap}>
-                                    {(previousProjects.length > 0 ? previousProjects : [{ id: "none", title: "No previous projects yet" }]).map((project) => (
-                                        <button
-                                            key={project.id}
-                                            type="button"
-                                            disabled={project.id === "none" || templateLoading}
-                                            className={
-                                                selectedTemplate?.kind === "previous" && selectedTemplate.id === project.id
-                                                    ? classes.pillActive
-                                                    : classes.pill
-                                            }
-                                            onClick={() => {
-                                                if (project.id === "none") return;
-                                                void applyPreviousProjectTemplate(project);
-                                            }}
-                                        >
-                                            {project.title}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
+                        <div className={classes.sectionHead}>
+                            <h2 className={classes.sectionTitle}>Raw setup</h2>
+                            <p className={classes.sectionHint}>
+                                The same configuration as JSON. Apply it to push your edits back into the form.
+                            </p>
                         </div>
-                    </section>
 
-                    <section className={classes.section}>
-                        <h2>Participants</h2>
-                        <div className={classes.roleRow}>
-                            <input
-                                type="text"
-                                placeholder="New role"
-                                value={newRole}
-                                onChange={(event) => setNewRole(event.target.value)}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const role = newRole.trim();
-                                    if (!role) return;
-                                    setSetup((prev) => ({
-                                        ...prev,
-                                        availableRoles: prev.availableRoles.includes(role)
-                                            ? prev.availableRoles
-                                            : [...prev.availableRoles, role],
-                                    }));
-                                    setNewRole("");
-                                }}
-                            >
-                                Add Role
+                        <div className={classes.buttonRow}>
+                            <button type="button" className={classes.secondaryButton} onClick={triggerJsonImport}>
+                                Import JSON
+                            </button>
+                            <button type="button" className={classes.secondaryButton} onClick={() => exportJson("everything")}>
+                                Export everything
+                            </button>
+                            <button type="button" className={classes.secondaryButton} onClick={() => exportJson("configs")}>
+                                Export configs only
                             </button>
                         </div>
-                        {setup.participants.map((participant) => (
-                            <div key={participant.id} className={classes.participantRow}>
-                                <input
-                                    type="text"
-                                    value={participant.name}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        participants: prev.participants.map((item) => (
-                                            item.id === participant.id ? { ...item, name: event.target.value } : item
-                                        )),
-                                    }))}
-                                />
-                                <select
-                                    value={participant.role}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        participants: prev.participants.map((item) => (
-                                            item.id === participant.id ? { ...item, role: event.target.value } : item
-                                        )),
-                                    }))}
-                                >
-                                    {setup.availableRoles.map((role) => (
-                                        <option key={role} value={role}>{role}</option>
-                                    ))}
-                                </select>
-                                <button
-                                    type="button"
-                                    onClick={() => setSetup((prev) => ({
-                                        ...prev,
-                                        participants: prev.participants.filter((item) => item.id !== participant.id),
-                                    }))}
-                                    disabled={setup.participants.length <= 1}
-                                >
-                                    Remove
-                                </button>
-                            </div>
-                        ))}
-                        <button
-                            type="button"
-                            onClick={() => setSetup((prev) => ({
-                                ...prev,
-                                participants: [
-                                    ...prev.participants,
-                                    {
-                                        id: crypto.randomUUID(),
-                                        name: `Participant ${prev.participants.length + 1}`,
-                                        role: prev.availableRoles[0] || "Researcher",
-                                    },
-                                ],
-                            }))}
-                        >
-                            Add Participant
-                        </button>
-                    </section>
 
-                    <section className={classes.section}>
-                        <h2>Timeline</h2>
-                        <div className={classes.timelineRange}>
-                            <label>
-                                Expected start
-                                <input
-                                    type="date"
-                                    value={setup.timeline.expectedStart}
-                                    onChange={(event) => setSetup((prev) => {
-                                        const nextTimeline = {
-                                            ...prev.timeline,
-                                            expectedStart: event.target.value,
-                                        };
-                                        if (!selectedLiteratureTemplate) {
-                                            return { ...prev, timeline: nextTimeline };
-                                        }
-                                        return {
-                                            ...prev,
-                                            timeline: projectLiteratureTemplateTimeline(nextTimeline, selectedLiteratureTemplate),
-                                        };
-                                    })}
-                                />
-                            </label>
-                            <label>
-                                Expected end
-                                <input
-                                    type="date"
-                                    value={setup.timeline.expectedEnd}
-                                    onChange={(event) => setSetup((prev) => {
-                                        const nextTimeline = {
-                                            ...prev.timeline,
-                                            expectedEnd: event.target.value,
-                                        };
-                                        if (!selectedLiteratureTemplate) {
-                                            return { ...prev, timeline: nextTimeline };
-                                        }
-                                        return {
-                                            ...prev,
-                                            timeline: projectLiteratureTemplateTimeline(nextTimeline, selectedLiteratureTemplate),
-                                        };
-                                    })}
-                                />
-                            </label>
+                        <input
+                            ref={importInputRef}
+                            type="file"
+                            accept="application/json,.json"
+                            hidden
+                            onChange={(event) => {
+                                const file = event.target.files?.[0] ?? null;
+                                void onImportJsonFile(file);
+                                event.target.value = "";
+                            }}
+                        />
+
+                        <textarea
+                            className={classes.jsonArea}
+                            value={jsonDraft}
+                            spellCheck={false}
+                            onChange={(event) => setJsonDraft(event.target.value)}
+                        />
+
+                        <div className={classes.buttonRow}>
+                            <button type="button" className={classes.secondaryButton} onClick={applyJsonToForm}>
+                                Apply JSON
+                            </button>
                         </div>
+                    </section>
+                ) : (
+                    <div className={classes.form}>
+                        <section className={classes.section}>
+                            <div className={classes.sectionHead}>
+                                <h2 className={classes.sectionTitle}>Project</h2>
+                                <p className={classes.sectionHint}>What it is called, and what it is trying to achieve.</p>
+                            </div>
 
-                        <h3>Milestones</h3>
-                        {setup.timeline.milestones.map((milestone) => (
-                            <div key={milestone.id} className={classes.timelineRow}>
-                                <input
-                                    type="text"
-                                    value={milestone.name}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        timeline: {
-                                            ...prev.timeline,
-                                            milestones: prev.timeline.milestones.map((item) => (
-                                                item.id === milestone.id ? { ...item, name: event.target.value } : item
-                                            )),
-                                        },
-                                    }))}
+                            <div className={classes.fieldGrid}>
+                                <label className={classes.field}>
+                                    <span className={classes.fieldLabel}>Project name</span>
+                                    <input
+                                        className={classes.input}
+                                        type="text"
+                                        value={setup.projectName}
+                                        onChange={(event) => setSetup((prev) => ({ ...prev, projectName: event.target.value }))}
+                                    />
+                                </label>
+
+                                <label className={classes.field}>
+                                    <span className={classes.fieldLabel}>LLM model</span>
+                                    <select
+                                        className={classes.select}
+                                        value={setup.llmModel}
+                                        onChange={(event) => setSetup((prev) => ({ ...prev, llmModel: event.target.value }))}
+                                    >
+                                        {LLM_MODEL_OPTIONS.map((model) => (
+                                            <option key={model} value={model}>{model}</option>
+                                        ))}
+                                    </select>
+                                    <span className={classes.fieldHint}>Used for card generation and the canvas assistant.</span>
+                                </label>
+                            </div>
+
+                            <label className={classes.field}>
+                                <span className={classes.fieldLabel}>Goal</span>
+                                <textarea
+                                    className={classes.textarea}
+                                    rows={3}
+                                    value={setup.goal}
+                                    onChange={(event) => setSetup((prev) => ({ ...prev, goal: event.target.value }))}
                                 />
+                                <span className={classes.fieldHint}>
+                                    Optional. When this changes, saving asks the model for extra milestones to match it.
+                                </span>
+                            </label>
+                        </section>
+
+                        <section className={classes.section}>
+                            <div className={classes.sectionHead}>
+                                <h2 className={classes.sectionTitle}>Template</h2>
+                                <p className={classes.sectionHint}>
+                                    Optional. Pick one and it fills in the participants and the timeline below.
+                                </p>
+                            </div>
+
+                            {selectedTemplateLabel ? (
+                                <p className={classes.selectedTemplate}>
+                                    <FontAwesomeIcon icon={faCheck} className={classes.selectedTemplateIcon} />
+                                    Using <strong>{selectedTemplateLabel}</strong>
+                                </p>
+                            ) : null}
+
+                            <div className={classes.templateGrid}>
+                                <div className={classes.templateColumn}>
+                                    <h3 className={classes.columnTitle}>From literature</h3>
+                                    {literatureTemplates.length === 0 ? (
+                                        <p className={classes.emptyNote}>No literature templates available.</p>
+                                    ) : (
+                                        <div className={classes.optionList}>
+                                            {literatureTemplates.map((template) => (
+                                                <button
+                                                    key={template.id}
+                                                    type="button"
+                                                    aria-pressed={selectedTemplate?.kind === "literature" && selectedTemplate.id === template.id}
+                                                    className={
+                                                        selectedTemplate?.kind === "literature" && selectedTemplate.id === template.id
+                                                            ? `${classes.option} ${classes.optionActive}`
+                                                            : classes.option
+                                                    }
+                                                    onClick={() => applyLiteratureTemplate(template)}
+                                                >
+                                                    <span className={classes.optionMark} aria-hidden="true">
+                                                        <FontAwesomeIcon icon={faCheck} />
+                                                    </span>
+                                                    {template.name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className={classes.templateColumn}>
+                                    <h3 className={classes.columnTitle}>From a previous project</h3>
+                                    {previousProjects.length === 0 ? (
+                                        <p className={classes.emptyNote}>No previous projects yet.</p>
+                                    ) : (
+                                        <div className={classes.optionList}>
+                                            {previousProjects.map((project) => (
+                                                <button
+                                                    key={project.id}
+                                                    type="button"
+                                                    disabled={templateLoading}
+                                                    aria-pressed={selectedTemplate?.kind === "previous" && selectedTemplate.id === project.id}
+                                                    className={
+                                                        selectedTemplate?.kind === "previous" && selectedTemplate.id === project.id
+                                                            ? `${classes.option} ${classes.optionActive}`
+                                                            : classes.option
+                                                    }
+                                                    onClick={() => {
+                                                        void applyPreviousProjectTemplate(project);
+                                                    }}
+                                                >
+                                                    <span className={classes.optionMark} aria-hidden="true">
+                                                        <FontAwesomeIcon icon={faCheck} />
+                                                    </span>
+                                                    {project.title}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className={classes.section}>
+                            <div className={classes.sectionHead}>
+                                <h2 className={classes.sectionTitle}>Participants</h2>
+                                <p className={classes.sectionHint}>
+                                    Who is working on this. Roles are shared across the project and can be assigned to cards later.
+                                </p>
+                            </div>
+
+                            <div className={classes.roleRow}>
                                 <input
-                                    type="date"
-                                    value={milestone.occurredAt}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        timeline: {
-                                            ...prev.timeline,
-                                            milestones: prev.timeline.milestones.map((item) => (
-                                                item.id === milestone.id ? { ...item, occurredAt: event.target.value } : item
-                                            )),
-                                        },
-                                    }))}
+                                    className={classes.input}
+                                    type="text"
+                                    placeholder="New role, e.g. Facilitator"
+                                    value={newRole}
+                                    onChange={(event) => setNewRole(event.target.value)}
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => setSetup((prev) => ({
-                                        ...prev,
-                                        timeline: {
-                                            ...prev.timeline,
-                                            milestones: prev.timeline.milestones.filter((item) => item.id !== milestone.id),
-                                        },
-                                    }))}
+                                    className={classes.secondaryButton}
+                                    onClick={() => {
+                                        const role = newRole.trim();
+                                        if (!role) return;
+                                        setSetup((prev) => ({
+                                            ...prev,
+                                            availableRoles: prev.availableRoles.includes(role)
+                                                ? prev.availableRoles
+                                                : [...prev.availableRoles, role],
+                                        }));
+                                        setNewRole("");
+                                    }}
                                 >
-                                    Remove
+                                    Add role
                                 </button>
                             </div>
-                        ))}
-                        <button
-                            type="button"
-                            onClick={() => setSetup((prev) => ({
-                                ...prev,
-                                timeline: {
-                                    ...prev.timeline,
-                                    milestones: [
-                                        ...prev.timeline.milestones,
+
+                            <div className={classes.roleChips}>
+                                {setup.availableRoles.map((role) => (
+                                    <span key={role} className={classes.roleChip}>{role}</span>
+                                ))}
+                            </div>
+
+                            <div className={classes.rows}>
+                                <div className={`${classes.participantRow} ${classes.rowHead}`}>
+                                    <span>Name</span>
+                                    <span>Role</span>
+                                    <span />
+                                </div>
+
+                                {setup.participants.map((participant) => (
+                                    <div key={participant.id} className={classes.participantRow}>
+                                        <input
+                                            className={classes.input}
+                                            type="text"
+                                            value={participant.name}
+                                            onChange={(event) => setSetup((prev) => ({
+                                                ...prev,
+                                                participants: prev.participants.map((item) => (
+                                                    item.id === participant.id ? { ...item, name: event.target.value } : item
+                                                )),
+                                            }))}
+                                        />
+                                        <select
+                                            className={classes.select}
+                                            value={participant.role}
+                                            onChange={(event) => setSetup((prev) => ({
+                                                ...prev,
+                                                participants: prev.participants.map((item) => (
+                                                    item.id === participant.id ? { ...item, role: event.target.value } : item
+                                                )),
+                                            }))}
+                                        >
+                                            {setup.availableRoles.map((role) => (
+                                                <option key={role} value={role}>{role}</option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            type="button"
+                                            className={classes.rowRemove}
+                                            title="Remove participant"
+                                            aria-label={`Remove ${participant.name || "participant"}`}
+                                            onClick={() => setSetup((prev) => ({
+                                                ...prev,
+                                                participants: prev.participants.filter((item) => item.id !== participant.id),
+                                            }))}
+                                            disabled={setup.participants.length <= 1}
+                                        >
+                                            <FontAwesomeIcon icon={faXmark} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <button
+                                type="button"
+                                className={classes.addButton}
+                                onClick={() => setSetup((prev) => ({
+                                    ...prev,
+                                    participants: [
+                                        ...prev.participants,
                                         {
                                             id: crypto.randomUUID(),
-                                            name: `Milestone ${prev.timeline.milestones.length + 1}`,
-                                            occurredAt: prev.timeline.expectedStart,
-                                            generatedBy: "manual",
+                                            name: `Participant ${prev.participants.length + 1}`,
+                                            role: prev.availableRoles[0] || "Researcher",
                                         },
                                     ],
-                                },
-                            }))}
-                        >
-                            Add Milestone
-                        </button>
+                                }))}
+                            >
+                                <FontAwesomeIcon icon={faPlus} />
+                                Add participant
+                            </button>
+                        </section>
 
-                        <h3>Stages</h3>
-                        <label>
-                            Number of stages
-                            <input
-                                type="number"
-                                min={1}
-                                max={20}
-                                value={setup.timeline.stages.length}
-                                onChange={(event) => {
-                                    const nextCount = Math.max(1, Math.min(20, Number(event.target.value) || 1));
-                                    setSetup((prev) => {
-                                        const stages = [...prev.timeline.stages];
-                                        while (stages.length < nextCount) {
-                                            const number = stages.length + 1;
-                                            stages.push({
-                                                id: crypto.randomUUID(),
-                                                name: `Stage ${number}`,
-                                                start: prev.timeline.expectedStart,
-                                                end: prev.timeline.expectedEnd,
-                                            });
-                                        }
-                                        while (stages.length > nextCount) {
-                                            stages.pop();
-                                        }
-                                        return { ...prev, timeline: { ...prev.timeline, stages } };
-                                    });
-                                }}
-                            />
-                        </label>
-                        {setup.timeline.stages.map((stage) => (
-                            <div key={stage.id} className={classes.timelineRow}>
-                                <input
-                                    type="text"
-                                    value={stage.name}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        timeline: {
-                                            ...prev.timeline,
-                                            stages: prev.timeline.stages.map((item) => (
-                                                item.id === stage.id ? { ...item, name: event.target.value } : item
-                                            )),
-                                        },
-                                    }))}
-                                />
-                                <input
-                                    type="date"
-                                    value={stage.start}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        timeline: {
-                                            ...prev.timeline,
-                                            stages: prev.timeline.stages.map((item) => (
-                                                item.id === stage.id ? { ...item, start: event.target.value } : item
-                                            )),
-                                        },
-                                    }))}
-                                />
-                                <input
-                                    type="date"
-                                    value={stage.end}
-                                    onChange={(event) => setSetup((prev) => ({
-                                        ...prev,
-                                        timeline: {
-                                            ...prev.timeline,
-                                            stages: prev.timeline.stages.map((item) => (
-                                                item.id === stage.id ? { ...item, end: event.target.value } : item
-                                            )),
-                                        },
-                                    }))}
-                                />
+                        <section className={classes.section}>
+                            <div className={classes.sectionHead}>
+                                <h2 className={classes.sectionTitle}>Timeline</h2>
+                                <p className={classes.sectionHint}>
+                                    The span the project is expected to run over, and the milestones and stages inside it.
+                                </p>
                             </div>
-                        ))}
-                    </section>
-                </div>
-            )}
+
+                            <div className={classes.fieldGrid}>
+                                <label className={classes.field}>
+                                    <span className={classes.fieldLabel}>Expected start</span>
+                                    <input
+                                        className={classes.input}
+                                        type="date"
+                                        value={setup.timeline.expectedStart}
+                                        onChange={(event) => setSetup((prev) => {
+                                            const nextTimeline = {
+                                                ...prev.timeline,
+                                                expectedStart: event.target.value,
+                                            };
+                                            if (!selectedLiteratureTemplate) {
+                                                return { ...prev, timeline: nextTimeline };
+                                            }
+                                            return {
+                                                ...prev,
+                                                timeline: projectLiteratureTemplateTimeline(nextTimeline, selectedLiteratureTemplate),
+                                            };
+                                        })}
+                                    />
+                                </label>
+                                <label className={classes.field}>
+                                    <span className={classes.fieldLabel}>Expected end</span>
+                                    <input
+                                        className={classes.input}
+                                        type="date"
+                                        value={setup.timeline.expectedEnd}
+                                        onChange={(event) => setSetup((prev) => {
+                                            const nextTimeline = {
+                                                ...prev.timeline,
+                                                expectedEnd: event.target.value,
+                                            };
+                                            if (!selectedLiteratureTemplate) {
+                                                return { ...prev, timeline: nextTimeline };
+                                            }
+                                            return {
+                                                ...prev,
+                                                timeline: projectLiteratureTemplateTimeline(nextTimeline, selectedLiteratureTemplate),
+                                            };
+                                        })}
+                                    />
+                                </label>
+                            </div>
+
+                            <div className={classes.subsection}>
+                                <h3 className={classes.subsectionTitle}>Milestones</h3>
+
+                                <div className={classes.rows}>
+                                    <div className={`${classes.milestoneRow} ${classes.rowHead}`}>
+                                        <span>Name</span>
+                                        <span>Date</span>
+                                        <span />
+                                    </div>
+
+                                    {setup.timeline.milestones.map((milestone) => (
+                                        <div key={milestone.id} className={classes.milestoneRow}>
+                                            <input
+                                                className={classes.input}
+                                                type="text"
+                                                value={milestone.name}
+                                                onChange={(event) => setSetup((prev) => ({
+                                                    ...prev,
+                                                    timeline: {
+                                                        ...prev.timeline,
+                                                        milestones: prev.timeline.milestones.map((item) => (
+                                                            item.id === milestone.id ? { ...item, name: event.target.value } : item
+                                                        )),
+                                                    },
+                                                }))}
+                                            />
+                                            <input
+                                                className={classes.input}
+                                                type="date"
+                                                value={milestone.occurredAt}
+                                                onChange={(event) => setSetup((prev) => ({
+                                                    ...prev,
+                                                    timeline: {
+                                                        ...prev.timeline,
+                                                        milestones: prev.timeline.milestones.map((item) => (
+                                                            item.id === milestone.id ? { ...item, occurredAt: event.target.value } : item
+                                                        )),
+                                                    },
+                                                }))}
+                                            />
+                                            <button
+                                                type="button"
+                                                className={classes.rowRemove}
+                                                title="Remove milestone"
+                                                aria-label={`Remove ${milestone.name || "milestone"}`}
+                                                onClick={() => setSetup((prev) => ({
+                                                    ...prev,
+                                                    timeline: {
+                                                        ...prev.timeline,
+                                                        milestones: prev.timeline.milestones.filter((item) => item.id !== milestone.id),
+                                                    },
+                                                }))}
+                                            >
+                                                <FontAwesomeIcon icon={faXmark} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <button
+                                    type="button"
+                                    className={classes.addButton}
+                                    onClick={() => setSetup((prev) => ({
+                                        ...prev,
+                                        timeline: {
+                                            ...prev.timeline,
+                                            milestones: [
+                                                ...prev.timeline.milestones,
+                                                {
+                                                    id: crypto.randomUUID(),
+                                                    name: `Milestone ${prev.timeline.milestones.length + 1}`,
+                                                    occurredAt: prev.timeline.expectedStart,
+                                                    generatedBy: "manual",
+                                                },
+                                            ],
+                                        },
+                                    }))}
+                                >
+                                    <FontAwesomeIcon icon={faPlus} />
+                                    Add milestone
+                                </button>
+                            </div>
+
+                            <div className={classes.subsection}>
+                                <div className={classes.subsectionHead}>
+                                    <h3 className={classes.subsectionTitle}>Stages</h3>
+                                    <label className={classes.inlineField}>
+                                        <span className={classes.fieldLabel}>How many</span>
+                                        <input
+                                            className={`${classes.input} ${classes.numberInput}`}
+                                            type="number"
+                                            min={1}
+                                            max={20}
+                                            value={setup.timeline.stages.length}
+                                            onChange={(event) => {
+                                                const nextCount = Math.max(1, Math.min(20, Number(event.target.value) || 1));
+                                                setSetup((prev) => {
+                                                    const stages = [...prev.timeline.stages];
+                                                    while (stages.length < nextCount) {
+                                                        const number = stages.length + 1;
+                                                        stages.push({
+                                                            id: crypto.randomUUID(),
+                                                            name: `Stage ${number}`,
+                                                            start: prev.timeline.expectedStart,
+                                                            end: prev.timeline.expectedEnd,
+                                                        });
+                                                    }
+                                                    while (stages.length > nextCount) {
+                                                        stages.pop();
+                                                    }
+                                                    return { ...prev, timeline: { ...prev.timeline, stages } };
+                                                });
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+
+                                <div className={classes.rows}>
+                                    <div className={`${classes.stageRow} ${classes.rowHead}`}>
+                                        <span>Name</span>
+                                        <span>Start</span>
+                                        <span>End</span>
+                                    </div>
+
+                                    {setup.timeline.stages.map((stage) => (
+                                        <div key={stage.id} className={classes.stageRow}>
+                                            <input
+                                                className={classes.input}
+                                                type="text"
+                                                value={stage.name}
+                                                onChange={(event) => setSetup((prev) => ({
+                                                    ...prev,
+                                                    timeline: {
+                                                        ...prev.timeline,
+                                                        stages: prev.timeline.stages.map((item) => (
+                                                            item.id === stage.id ? { ...item, name: event.target.value } : item
+                                                        )),
+                                                    },
+                                                }))}
+                                            />
+                                            <input
+                                                className={classes.input}
+                                                type="date"
+                                                value={stage.start}
+                                                onChange={(event) => setSetup((prev) => ({
+                                                    ...prev,
+                                                    timeline: {
+                                                        ...prev.timeline,
+                                                        stages: prev.timeline.stages.map((item) => (
+                                                            item.id === stage.id ? { ...item, start: event.target.value } : item
+                                                        )),
+                                                    },
+                                                }))}
+                                            />
+                                            <input
+                                                className={classes.input}
+                                                type="date"
+                                                value={stage.end}
+                                                onChange={(event) => setSetup((prev) => ({
+                                                    ...prev,
+                                                    timeline: {
+                                                        ...prev.timeline,
+                                                        stages: prev.timeline.stages.map((item) => (
+                                                            item.id === stage.id ? { ...item, end: event.target.value } : item
+                                                        )),
+                                                    },
+                                                }))}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                )}
+            </main>
         </div>
     );
 }

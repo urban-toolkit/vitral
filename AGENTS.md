@@ -115,6 +115,32 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 - Zoom mode reads the viewport through `onMove`, never `useViewport()`/`useStore` in `ProjectEditorPage` — that callback fires every animation frame and re-rendering a 4000-line component at 60Hz is ruinous. It early-returns off refs unless the level band actually changed. `levelForZoom` uses a **multiplicative** dead band because zoom is geometric.
 - Never `fitView` on a level change while `levelFollowsZoom` is on: writing the viewport there can bounce the zoom back across the threshold and fights the user's gesture.
 - Glyph counts describe the **filtered** canvas, not the whole project. That is deliberate — a glyph must not promise more than expanding it would reveal.
+- The level segments, the follow-zoom toggle, the focus breadcrumb and the assistant button are **one panel** in the bottom-right corner (`CanvasLevelControl`), rendered as a React Flow `bottom-right` `Panel` offset by `RIGHT_SIDEBAR_WIDTH_PX`. It is two short rows on purpose: the canvas tool bar owns the bottom centre, and a single long bar in that corner runs into it on a 1440-wide screen. The minimap sits above it, so `MINIMAP_LEVEL_PANEL_CLEARANCE_PX` / `..._FOCUSED_CLEARANCE_PX` mirror the panel's two heights — change one and change the other.
+
+20. Edges meet the card border that faces the other card
+- `RelationEdge` ignores the handle geometry React Flow hands it and draws between the two border points on the straight line joining the node centres (`floatingEdgePath.ts`). Cards keep a target handle left and a source handle right, so **every edge would otherwise leave right and arrive left** — an S-curve for a card sitting directly above another, which is exactly what the orbit layout produces.
+- The path is a cubic bowed a few percent off the straight run, never a routed one: connections have to read as direct. The bow's sign follows the direction of travel, so `A -> B` and `B -> A` separate instead of overlapping.
+- **Direction still matters.** The path keeps its source -> target parameter order, so the source-end arrow (`orient="auto-start-reverse"`, drawn only when both ends are card labels) points where it always did. Do not "simplify" by swapping the endpoints.
+- `useInternalNode` is what makes it live: it re-renders the edge when either node moves or is measured, and — unlike `useViewport` — not on pan or zoom. Until both nodes are measured, `getFloatingEdgePath` has no box to aim at and the handle-based bezier is used instead, so edges are never missing on first paint.
+- Handles are `opacity: 0` until the node is hovered (`FlowCanvas.module.css`). They are still the grip for dragging a new connection — `opacity: 0` keeps pointer events — but nothing terminates there any more, so they must not advertise an attachment point.
+
+21. Automatic `referenced by` / `iteration of` edges are gated on evidence, not on a raw score
+- These are the only edges the app creates without being asked, and they feed everything downstream: salience weights degree and cross-tree links, phase clustering reads them as affinity, so a wrong edge does not merely clutter the canvas -- it changes which cards get promoted and what a phase is called.
+- **The embedded text is title + description only** (`serializeNodeForEmbedding`). It used to carry `Card label:/Card title:/Card description:` scaffolding, identical in every card, which put a large constant component in every vector -- lifting all cosines into a narrow band near the top and squeezing the gap between a real match and an unrelated one. Removing it is what made an absolute threshold mean anything. Changing this text again **must** bump `EMBEDDING_TEXT_VERSION`; stored vectors are keyed by `model@vN` and a stale signature is treated as missing.
+- The label is a **filter**, never content. It belongs in the SQL `WHERE`, not in the embedded string.
+- The decision lives client-side in `similarityDecision.ts` because it needs the live graph (chronology, existing automatic degree), which the saved snapshot may lag. The backend only retrieves and calibrates.
+- Gates, in the order they do work: **level** (absolute floor), **separation** (clear of the best rejected candidate, or of the cohort median when nothing was rejected), **degree** (a card already carrying `MAX_AUTO_DEGREE` automatic edges takes no more). Separation is what kills a hub: a card that everything is similar to always has its runner-up right behind it.
+- A **robust z-score against the cohort is deliberately not a gate.** It was tried, and measured: on real probes the linked and rejected populations *overlap* on z (linked 1.93-4.93, rejected 1.50-2.73) because its denominator depends on how topically central the query card is. It is still computed and stored on the edge as evidence. Do not promote it back to a gate without new measurements.
+- `iteration of` claims one card *supersedes* another, so it needs a second independent signal, not just a higher cosine: the target must be **chronologically older** and the two titles must share `ITERATION_TITLE_OVERLAP` by Jaccard. It is deliberately **not** restricted to one activity tree -- a later activity revising an earlier activity's requirement is the most meaningful case there is.
+- Every automatic edge records `similarity`, `similarityZ`, `similarityMargin` and `autoLinked` in `edge.data`, so a questionable relation can be explained after the fact and thresholds retuned against real projects.
+- Thresholds are empirical. `npm run test:similarity` pins them against probes taken from a real canvas; change a threshold, the text, or the model and that check has to be re-run and its numbers updated.
+
+22. Similarity retrieval is a database search, not a scan
+- `POST /state/:id/cards/similarity` takes **only the new cards**. The server already holds the canvas; shipping every existing card's text on every file drop bought nothing but a payload that grew with the project and a silent `slice(0, 500)` truncation in arbitrary order at the far end.
+- Candidates come from one indexed query per new card that scores, ranks and computes the cohort's median and MAD **in Postgres** (`percentile_cont` over a CTE). The old path pulled every vector out as `embedding::text` -- roughly 11 MB and ~768k `Number()` calls at 500 cards -- and did the cosine in JS. Do not reintroduce that.
+- The route is **self-healing**: it embeds and stores any card in the document that the index is missing at the current signature, capped at `SIMILARITY_HEAL_LIMIT` per pass. That one mechanism covers the queue's debounce window, edited text, projects duplicated before the `label` column existed, and every card in every project the first time it is seen after an `EMBEDDING_TEXT_VERSION` bump.
+- Embedding calls are chunked (`SIMILARITY_EMBED_CHUNK`). A failure returns `status: "degraded"`, never an empty match list -- "the lookup broke" and "nothing is similar" have to stay distinguishable, and the client logs rather than silently adding no edges.
+- Project duplication copies `label` and `model` along with the vectors; without them a duplicate looks entirely unembedded.
 
 ## Key Areas and Files
 
@@ -162,6 +188,30 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   - `vitral/src/pages/projectEditor/activityOrbitLayout.ts`
   - `vitral/src/pages/ProjectEditorPage.tsx` (`viewBaseNodes` -> `displayedEdges` -> `displayedNodes`)
   - `vitral/src/components/sidebar/CanvasSidebar.tsx` (view switcher)
+
+- Automatic similarity edges (`referenced by` / `iteration of`):
+  - `vitral/src/pages/projectEditor/similarityDecision.ts` (the gates, and why each one is there)
+  - `vitral/src/pages/projectEditor/similarityDecision.test.ts` (`npm run test:similarity`)
+  - `vitral/src/pages/projectEditor/useFileAttachmentProcessing.ts` (where they are created)
+  - `vitral/src/utils/textTokens.ts` (the lexical second opinion, shared with phase clustering)
+  - `backend/src/routes/state.ts` (`/cards/similarity`: retrieval, calibration, backfill)
+  - `backend/src/services/nodeEmbeddings.ts` (embedding text, version signature)
+  - `backend/db/migrations/014_embedding_label_and_hnsw.sql`
+
+- Edge routing between cards:
+  - `vitral/src/components/edges/floatingEdgePath.ts`
+  - `vitral/src/components/edges/RelationEdge.tsx`
+  - `vitral/src/pages/projectEditor/FlowCanvas.module.css` (handle visibility)
+
+- Canvas corner controls (levels + follow zoom + focus breadcrumb + assistant):
+  - `vitral/src/pages/projectEditor/CanvasLevelControl.tsx`
+  - `vitral/src/pages/projectEditor/FlowCanvas.tsx` (`levelControl`, `levelControlRightOffsetPx`)
+  - `vitral/src/pages/ProjectEditorPage.tsx` (minimap clearance constants)
+
+- Project setup / settings screen:
+  - `vitral/src/pages/ProjectSetupPage.tsx`
+  - `vitral/src/pages/ProjectSetupPage.module.css`
+  - `vitral/src/styles/tokens.css` (the tokens that screen is built from)
 
 - Canvas file drop + activity drop rings:
   - `vitral/src/pages/projectEditor/canvasGeometry.ts`

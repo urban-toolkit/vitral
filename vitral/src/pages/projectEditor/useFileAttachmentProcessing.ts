@@ -4,6 +4,12 @@ import { parseFile } from "@/func/FileParser";
 import { llmCardsToNodes, requestCardsLLM } from "@/func/LLMRequest";
 import type { LlmProjectSettingsContext } from "@/func/LLMRequest";
 import { compareCardsSimilarity, createFile } from "@/api/stateApi";
+import {
+    decideSimilarityEdges,
+    SIMILARITY_TUNING,
+    type IterationEvidence,
+} from "@/pages/projectEditor/similarityDecision";
+import { connectionKindFromEdge, isEdgeActive } from "@/pages/projectEditor/graphSemantics";
 import { addNode, attachFileIdToNode, addNodes, connectEdges } from "@/store/flowSlice";
 import { upsertFile } from "@/store/filesSlice";
 import { relationLabelFor } from "@/utils/relationships";
@@ -24,12 +30,29 @@ type Args = {
 };
 
 const KNOWN_CARD_LABELS = new Set(["person", "activity", "requirement", "concept", "insight", "object"]);
-const ITERATION_OF_SIMILARITY_THRESHOLD = 0.85;
-const REFERENCED_BY_SIMILARITY_THRESHOLD = 0.7;
 const REFERENCED_BY_LABEL = "referenced by";
 const ITERATION_OF_LABEL = "iteration of";
 const DEBUG_SIMILARITY_SCORES = String(import.meta.env.VITE_DEBUG_SIMILARITY_SCORES ?? "").toLowerCase() === "true";
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "ogg", "ogv", "avi"]);
+
+/**
+ * Automatic edges already attached to each card, both ends counted.
+ *
+ * This is what stops one card becoming a hub. A long, topic-summarising title sits near the centre
+ * of a project's subject matter and therefore wins "most similar" against cards that have nothing
+ * to do with each other — and because salience weights degree, such a hub does not just clutter the
+ * canvas, it hijacks which cards get promoted when the canvas is abstracted.
+ */
+function countAutoLinkDegree(edges: edgeType[]): Map<string, number> {
+    const degree = new Map<string, number>();
+    for (const edge of edges) {
+        if (!isEdgeActive(edge)) continue;
+        if (connectionKindFromEdge(edge) === "regular") continue;
+        degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
+        degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
+    }
+    return degree;
+}
 
 function normalizeArtifactEntity(entity: string | undefined): string {
     const normalized = String(entity ?? "").trim().toLowerCase();
@@ -250,17 +273,6 @@ export function useFileAttachmentProcessing({
                     dispatch(connectEdges(activityEdges));
                 }
 
-                const existingCardsForSimilarity = nodesRef.current
-                    .filter((node) => node.type === "card" && node.id !== rootActivityNodeId)
-                    .map((node) => {
-                        const data = node.data as Record<string, unknown>;
-                        return {
-                            id: node.id,
-                            label: normalizeArtifactEntity(String(data.label ?? "")),
-                            title: typeof data.title === "string" ? data.title : "",
-                            description: typeof data.description === "string" ? data.description : "",
-                        };
-                    });
                 const newCardsForSimilarity = nodesToAdd.map((node) => {
                     const data = node.data as Record<string, unknown>;
                     return {
@@ -271,59 +283,96 @@ export function useFileAttachmentProcessing({
                     };
                 });
 
-                if (existingCardsForSimilarity.length > 0 && newCardsForSimilarity.length > 0) {
+                if (newCardsForSimilarity.length > 0) {
                     void (async () => {
                         try {
+                            // Only the new cards travel: the server holds the canvas and searches
+                            // its own vector index.
                             const similarity = await compareCardsSimilarity(projectId, {
                                 newCards: newCardsForSimilarity,
-                                existingCards: existingCardsForSimilarity,
                             }, signal);
                             if (signal.aborted) return;
+
+                            if (similarity.status !== "ok") {
+                                console.warn(
+                                    `Similarity lookup unavailable (${similarity.status}); no automatic relations were added.`,
+                                );
+                                return;
+                            }
 
                             const relationEdges: edgeType[] = [];
                             const queueRelationEdge = buildEdgeQueuer(relationEdges);
 
+                            // Degree is counted against the live graph *plus* what this pass has
+                            // already queued, so one extraction cannot pile six edges onto the same
+                            // card by never noticing its own work.
+                            const autoDegree = countAutoLinkDegree(edgesRef.current);
+                            const evidenceOf = (cardId: string): IterationEvidence | null => {
+                                const node = generatedNodeById.get(cardId)
+                                    ?? nodesRef.current.find((candidate) => candidate.id === cardId);
+                                if (!node) return null;
+                                const data = (node.data ?? {}) as Record<string, unknown>;
+                                const createdAt = typeof data.createdAt === "string" ? Date.parse(data.createdAt) : NaN;
+                                return {
+                                    title: typeof data.title === "string" ? data.title : "",
+                                    createdAtMs: Number.isFinite(createdAt) ? createdAt : null,
+                                };
+                            };
+
                             for (const match of similarity.matches) {
-                                const targetNodeId = match.newCardId;
-                                const matchedCardId = match.existingCardId;
-                                const similarityScore = match.similarity;
+                                const verdicts = decideSimilarityEdges(match, {
+                                    evidenceOf,
+                                    autoDegreeOf: (cardId) => autoDegree.get(cardId) ?? 0,
+                                });
+
                                 if (DEBUG_SIMILARITY_SCORES) {
                                     console.log("[similarity]", {
-                                        newCardId: targetNodeId,
-                                        matchedCardId,
-                                        similarityScore,
-                                        iterationThreshold: ITERATION_OF_SIMILARITY_THRESHOLD,
-                                        referencedByThreshold: REFERENCED_BY_SIMILARITY_THRESHOLD,
+                                        newCardId: match.newCardId,
+                                        baseline: match.baseline,
+                                        candidates: match.candidates,
+                                        accepted: verdicts,
+                                        tuning: SIMILARITY_TUNING,
                                     });
                                 }
 
-                                if (!matchedCardId || matchedCardId === targetNodeId) continue;
-                                if (similarityScore < REFERENCED_BY_SIMILARITY_THRESHOLD) continue;
+                                for (const verdict of verdicts) {
+                                    const generatedNode = generatedNodeById.get(match.newCardId);
+                                    const normalizedEntity = normalizeArtifactEntity(
+                                        String((generatedNode?.data as Record<string, unknown> | undefined)?.label ?? ""),
+                                    );
+                                    const existingNode = nodesRef.current.find((node) => node.id === verdict.existingCardId);
+                                    const existingLabel = normalizeArtifactEntity(
+                                        String((existingNode?.data as Record<string, unknown> | undefined)?.label ?? normalizedEntity),
+                                    );
+                                    const label = verdict.kind === "iteration_of"
+                                        ? ITERATION_OF_LABEL
+                                        : REFERENCED_BY_LABEL;
 
-                                const generatedNode = generatedNodeById.get(targetNodeId);
-                                const normalizedEntity = normalizeArtifactEntity(
-                                    String((generatedNode?.data as Record<string, unknown> | undefined)?.label ?? ""),
-                                );
-                                const existingNode = nodesRef.current.find((node) => node.id === matchedCardId);
-                                const existingLabel = normalizeArtifactEntity(
-                                    String((existingNode?.data as Record<string, unknown> | undefined)?.label ?? normalizedEntity),
-                                );
-                                const isIteration = similarityScore > ITERATION_OF_SIMILARITY_THRESHOLD;
-                                const label = isIteration ? ITERATION_OF_LABEL : REFERENCED_BY_LABEL;
-
-                                queueRelationEdge({
-                                    id: crypto.randomUUID(),
-                                    source: targetNodeId,
-                                    target: matchedCardId,
-                                    type: "relation",
-                                    label,
-                                    data: {
+                                    queueRelationEdge({
+                                        id: crypto.randomUUID(),
+                                        source: match.newCardId,
+                                        target: verdict.existingCardId,
+                                        type: "relation",
                                         label,
-                                        from: normalizedEntity,
-                                        to: existingLabel,
-                                        kind: isIteration ? "iteration_of" : "referenced_by",
-                                    },
-                                });
+                                        data: {
+                                            label,
+                                            from: normalizedEntity,
+                                            to: existingLabel,
+                                            kind: verdict.kind,
+                                            // Kept on the edge so a questionable relation can be
+                                            // explained after the fact, and so thresholds can be
+                                            // retuned against real projects rather than guessed at.
+                                            autoLinked: true,
+                                            similarity: verdict.similarity,
+                                            similarityZ: verdict.z,
+                                            similarityMargin: verdict.margin,
+                                        },
+                                    });
+                                    autoDegree.set(
+                                        verdict.existingCardId,
+                                        (autoDegree.get(verdict.existingCardId) ?? 0) + 1,
+                                    );
+                                }
                             }
 
                             if (relationEdges.length > 0 && !signal.aborted) {

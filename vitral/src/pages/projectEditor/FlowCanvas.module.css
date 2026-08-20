@@ -55,3 +55,21 @@
 .resetPositionsButton:hover {
     background: #f2f2f2;
 }
+
+/* Edges no longer terminate at the handles — `RelationEdge` draws them between the card borders
+   that face each other — so leaving two solid dots pinned left and right would advertise an
+   attachment point that is not used any more. They stay put as the grip for dragging a new
+   connection, and only come forward when the pointer is on the node. */
+.flowCanvas :global(.react-flow__handle) {
+    opacity: 0;
+    background: #9a9a9a;
+    border-color: #ffffff;
+    transition: opacity 120ms ease;
+}
+
+.flowCanvas :global(.react-flow__node):hover :global(.react-flow__handle),
+.flowCanvas :global(.react-flow__handle.connecting),
+.flowCanvas :global(.react-flow__handle.connectingfrom),
+.flowCanvas :global(.react-flow__handle.connectingto) {
+    opacity: 1;
+}

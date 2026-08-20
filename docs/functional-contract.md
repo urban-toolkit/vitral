@@ -118,6 +118,7 @@ Covered areas:
 - Activity trees that would collide at the slot pitch are offset vertically, so the canvas grows in both axes rather than only sideways.
 - Blueprint groups/components keep their nested structure and are translated in as one block.
 - Node positions are fully derived; node dragging is disabled in every view.
+- Relations are drawn between the card borders that face each other rather than between fixed left/right handles, so a connection reads as a near-straight line whichever way the cards sit; the source -> target direction and its arrow are unchanged.
 - System view hides cards and keeps blueprint components (+ needed ancestors).
 - Card type filtering applies to relevant card labels while preserving non-card scope behavior.
 - Natural-language query and chat are playback-aware and can apply node filters.
@@ -125,6 +126,8 @@ Covered areas:
 
 ### Contract Details
 - Query/chat retrieval pipeline supports structured + semantic/vector behavior with fallback ranking.
+- Automatically inferred `referenced by` / `iteration of` edges are the only relations the app creates unasked. A pair is linked only when the match clears an absolute similarity floor *and* stands clear of the next-best candidate; a card that has already accumulated `MAX_AUTO_DEGREE` automatic edges accepts no more, so no single card can become a hub. `iteration of` additionally requires the target to be older and the two titles to overlap lexically.
+- Card embeddings cover title and description only; the card label filters the search rather than being embedded. Changing that text requires an embedding version bump, after which the index rebuilds itself lazily.
 
 ## 5) Timeline Core
 
@@ -216,7 +219,7 @@ Covered areas:
 | Stage create/resize | Stage IDs, ordered timeline boundaries, drag guard rules | Create stage, resize boundaries, ensure no overlap/inversion, reload and verify persistence. |
 | Substage create/edit/delete | Substage IDs, parent stage relation, date range | Brush-create substage, rename/move/delete, reload and verify exact placement. |
 | Knowledge explosion from activity file | Activity card type, attachment metadata, extraction results, generated edges | Attach non-video file to activity; confirm cards/edges appear and root attachment persists even if extraction partially fails. |
-| Cross-tree relation inference | Node embeddings, similarity scores, label constraints, relation thresholds | Trigger extraction with similar cards; confirm only `iteration of` / `referenced by` edges are added by threshold rules. |
+| Cross-tree relation inference | Node embeddings, candidate ranking, label filter, level/separation/degree gates | Trigger extraction with similar cards; confirm `iteration of` / `referenced by` edges are added only where a match clears the absolute floor *and* is clearly ahead of its runner-up, and that no single card accumulates more than `MAX_AUTO_DEGREE` of them. |
 | Card relevance label | Card node data (`relevance`) | Toggle relevant/irrelevant and verify filters/query behavior reflects state. |
 | Requirement assignment | Participants list, card assignment field | Assign requirement card to participant; reload and verify assignment persists and displays correctly. |
 | Manual card editing | Card title/description + edit timestamp metadata | Edit title/description; reload and verify content + edit metadata behavior. |

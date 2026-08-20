@@ -11,7 +11,14 @@ import { readdir, readFile } from "node:fs/promises";
 import { createGzip } from "node:zlib";
 import { streamToBuffer, streamToString } from "../utils/streams.js";
 import { safeFilename } from "../utils/files.js";
-import { computeNodeEmbeddingDelta, createNodeEmbeddingQueue } from "../services/nodeEmbeddings.js";
+import {
+    computeNodeEmbeddingDelta,
+    createNodeEmbeddingQueue,
+    embeddingSignature,
+    embeddingTextForCard,
+    extractEmbeddableCards,
+    normalizeEmbeddingLabel,
+} from "../services/nodeEmbeddings.js";
 import { applyStructuredFilters, extractCardNodesForSearch, parseNaturalLanguageNodeQuery, type CardNodeForSearch } from "../services/nodeSearch.js";
 import {
     diffProvenanceSnapshots,
@@ -70,8 +77,27 @@ type SimilarityCardInput = {
 
 type CompareCardsSimilarityBody = {
     newCards?: SimilarityCardInput[];
-    existingCards?: SimilarityCardInput[];
 };
+
+type SimilarityCard = { id: string; label: string; title: string; description: string };
+type SimilarityStatus = "ok" | "degraded" | "unavailable";
+type SimilarityCohortRow = { node_id: string; sim: number; median: number; mad: number; sampled: number };
+type SimilarityMatch = {
+    newCardId: string;
+    candidates: Array<{ existingCardId: string; similarity: number }>;
+    baseline: { median: number; mad: number; sampled: number } | null;
+};
+
+/** Cards generated from one file. Well past what any single extraction produces. */
+const SIMILARITY_MAX_NEW_CARDS = 160;
+/** Nearest slice of a label cohort used for both the candidates and the baseline statistics. */
+const SIMILARITY_COHORT_LIMIT = 512;
+/** How many candidates the client gets to reason about. It needs the runner-up, not just the best. */
+const SIMILARITY_CANDIDATE_LIMIT = 8;
+/** Inputs per embeddings request, matching the queue's batching. */
+const SIMILARITY_EMBED_CHUNK = 96;
+/** Ceiling on one backfill pass, so a never-embedded project converges over a few drops. */
+const SIMILARITY_HEAL_LIMIT = 512;
 
 const TEXT_EXTENSIONS = new Set([
     "txt", "json", "ipynb", "csv", "py", "js", "ts", "tsx", "jsx", "html", "css", "md",
@@ -198,49 +224,6 @@ function rankNodesBySemanticQuery(
         })
         .slice(0, limit)
         .map((entry) => entry.id);
-}
-
-function embeddingTextFromCard(card: { label: string; title: string; description: string }): string {
-    return [
-        `Card label: ${card.label}`,
-        `Card title: ${card.title}`,
-        `Card description: ${card.description}`,
-    ].join("\n");
-}
-
-/**
- * node-pg has no pgvector type parser, so `embedding::text` arrives as a `[f1,f2,...]` literal.
- * Returns null for anything unparseable so the caller can fall back to a live embed.
- */
-function parsePgVector(raw: string): number[] | null {
-    if (typeof raw !== "string") return null;
-    const trimmed = raw.trim();
-    if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
-    const body = trimmed.slice(1, -1);
-    if (body.trim() === "") return null;
-
-    const parts = body.split(",");
-    const values = new Array<number>(parts.length);
-    for (let i = 0; i < parts.length; i++) {
-        const value = Number(parts[i]);
-        if (!Number.isFinite(value)) return null;
-        values[i] = value;
-    }
-    return values;
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
-    for (let i = 0; i < a.length; i++) {
-        dot += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
-    }
-    if (normA <= 0 || normB <= 0) return 0;
-    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 function isUuid(value: string): boolean {
@@ -2213,9 +2196,127 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         });
     });
 
+    // --- Card similarity: retrieval helpers. ---
+
     /**
-     * Compare newly generated cards against existing canvas cards using embeddings.
+     * Embeds in bounded chunks. The queue has always chunked; this path used to send every card in
+     * one request, which both risks the per-request token ceiling and fails all-or-nothing.
+     * Returns null when any chunk comes back the wrong shape, so the caller can report `degraded`
+     * instead of publishing zeros that look like "nothing matched".
+     */
+    const embedTexts = async (texts: string[]): Promise<number[][] | null> => {
+        if (!openAiClient || texts.length === 0) return texts.length === 0 ? [] : null;
+
+        const vectors: number[][] = [];
+        for (let start = 0; start < texts.length; start += SIMILARITY_EMBED_CHUNK) {
+            const chunk = texts.slice(start, start + SIMILARITY_EMBED_CHUNK);
+            const response = await openAiClient.embeddings.create({
+                model: embeddingModel,
+                input: chunk,
+            });
+            const data = Array.isArray(response.data) ? response.data : [];
+            if (data.length !== chunk.length) return null;
+            for (const item of data) {
+                if (!Array.isArray(item.embedding)) return null;
+                vectors.push(item.embedding);
+            }
+        }
+        return vectors;
+    };
+
+    /**
+     * Embeds and stores any card in this document that the index is missing at the current
+     * signature, and returns how many it wrote.
+     *
+     * "Missing" covers every way the index falls behind at once: a card saved inside the queue's
+     * debounce window, a card edited since it was embedded, a project duplicated before its rows
+     * carried a label, and -- the big one -- every card in every project the first time it is seen
+     * after `EMBEDDING_TEXT_VERSION` changes. Old vectors are not deleted; they simply stop
+     * matching the signature and are overwritten in place.
+     */
+    const healDocumentEmbeddings = async (
+        docId: string,
+        signature: string,
+        logger: Pick<typeof app.log, "info" | "warn">,
+    ): Promise<number> => {
+        const stateRow = await app.pg.query<{ state: unknown }>(
+            `SELECT state FROM documents WHERE id = $1::uuid`,
+            [docId],
+        );
+        const state = stateRow.rows[0]?.state;
+        if (!state) return 0;
+
+        const embeddable = extractEmbeddableCards(state);
+        if (embeddable.length === 0) return 0;
+
+        const current = await app.pg.query<{ node_id: string }>(
+            `
+            SELECT node_id
+            FROM document_node_embeddings
+            WHERE doc_id = $1::uuid
+              AND model = $2
+              AND node_id = ANY($3::text[])
+            `,
+            [docId, signature, embeddable.map((card) => card.nodeId)],
+        );
+        const fresh = new Set(current.rows.map((row) => row.node_id));
+        const stale = embeddable.filter((card) => !fresh.has(card.nodeId));
+        if (stale.length === 0) return 0;
+
+        // A project that has never been embedded would otherwise make one drop pay for the whole
+        // backlog. Capping means it converges over a few passes instead, and nothing waits on it:
+        // the cards are already on the canvas by the time this route is called.
+        const batch = stale.slice(0, SIMILARITY_HEAL_LIMIT);
+        const vectors = await embedTexts(batch.map((card) => card.text));
+        if (!vectors) {
+            logger.warn({ component: "cards-similarity", pending: batch.length }, "Embedding backfill failed.");
+            return 0;
+        }
+
+        const valuesSql: string[] = [];
+        const values: unknown[] = [];
+        batch.forEach((card, index) => {
+            const base = values.length;
+            valuesSql.push(`($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}::vector, $${base + 6})`);
+            values.push(docId, card.nodeId, card.label, card.text, `[${vectors[index].join(",")}]`, signature);
+        });
+
+        await app.pg.query(
+            `
+            INSERT INTO document_node_embeddings (doc_id, node_id, label, node_text, embedding, model)
+            VALUES ${valuesSql.join(", ")}
+            ON CONFLICT (doc_id, node_id) DO UPDATE
+            SET
+                label = EXCLUDED.label,
+                node_text = EXCLUDED.node_text,
+                embedding = EXCLUDED.embedding,
+                model = EXCLUDED.model,
+                updated_at = now()
+            `,
+            values,
+        );
+
+        if (stale.length > batch.length) {
+            logger.info(
+                { component: "cards-similarity", written: batch.length, remaining: stale.length - batch.length },
+                "Embedding backfill capped; will continue on the next pass.",
+            );
+        }
+        return batch.length;
+    };
+    /**
+     * Candidate matches for newly generated cards, from the stored embedding index.
      * POST /api/state/:id/cards/similarity
+     *
+     * This route only *retrieves and calibrates*; it never decides whether an edge should exist.
+     * That decision needs the live canvas graph (chronology, existing similarity degree), which the
+     * client has and the saved snapshot may not, so it lives in `similarityDecision.ts` there.
+     *
+     * Two things come back per new card: the nearest few cards of the same label, and the shape of
+     * the distribution they were drawn from. The distribution is the point. A raw cosine from
+     * `text-embedding-3-small` has no absolute meaning -- unrelated short texts sit comfortably at
+     * 0.7 -- so the only defensible question is whether a match stands out from its own cohort, and
+     * that bar has to move as a project grows and its cards get more alike.
      */
     app.post("/state/:id/cards/similarity", async (request, reply) => {
         const { id } = request.params as { id: string };
@@ -2224,155 +2325,150 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
 
         const body = request.body as CompareCardsSimilarityBody;
-        const normalizeCard = (raw: SimilarityCardInput): { id: string; label: string; title: string; description: string } | null => {
+        const normalizeCard = (raw: SimilarityCardInput): SimilarityCard | null => {
             const cardId = typeof raw.id === "string" ? raw.id.trim() : "";
             if (!cardId) return null;
-            const normalizedLabelRaw = typeof raw.label === "string" ? raw.label.trim().toLowerCase() : "";
-            const label = normalizedLabelRaw === "task" ? "requirement" : normalizedLabelRaw;
             return {
                 id: cardId,
-                label,
+                label: normalizeEmbeddingLabel(raw.label),
                 title: typeof raw.title === "string" ? raw.title : "",
                 description: typeof raw.description === "string" ? raw.description : "",
             };
         };
 
         const newCards = Array.isArray(body?.newCards)
-            ? body.newCards.map(normalizeCard).filter((card): card is { id: string; label: string; title: string; description: string } => Boolean(card)).slice(0, 160)
-            : [];
-        const existingCards = Array.isArray(body?.existingCards)
-            ? body.existingCards.map(normalizeCard).filter((card): card is { id: string; label: string; title: string; description: string } => Boolean(card)).slice(0, 500)
+            ? body.newCards
+                .map(normalizeCard)
+                .filter((card): card is SimilarityCard => Boolean(card))
+                // A card with neither title nor description has nothing to match on, and the
+                // embeddings API rejects an empty input string.
+                .filter((card) => embeddingTextForCard(card) !== "")
+                .slice(0, SIMILARITY_MAX_NEW_CARDS)
             : [];
 
-        if (newCards.length === 0) {
-            return reply.send({ matches: [] });
-        }
+        const emptyResult = (status: SimilarityStatus) => reply.send({
+            status,
+            matches: newCards.map((card) => ({
+                newCardId: card.id,
+                candidates: [],
+                baseline: null,
+            })),
+        });
 
-        if (existingCards.length === 0 || !openAiClient) {
-            return reply.send({
-                matches: newCards.map((card) => ({
-                    newCardId: card.id,
-                    existingCardId: null,
-                    similarity: 0,
-                })),
-            });
-        }
+        if (newCards.length === 0) return reply.send({ status: "ok", matches: [] });
+        if (!openAiClient) return emptyResult("unavailable");
 
         const startedAt = Date.now();
+        const signature = embeddingSignature(embeddingModel);
 
         try {
-            // Existing cards were already embedded by the background queue when they were saved,
-            // so re-embedding the whole canvas on every file drop is pure duplicate work. Reuse
-            // the stored vectors and only pay for what is genuinely missing.
-            const cachedVectorByNodeId = new Map<string, number[]>();
-            try {
-                const cached = await app.pg.query<{ node_id: string; node_text: string; embedding: string }>(
+            const embeddingTableReady = await app.pg.query<{ table_name: string | null }>(
+                `SELECT to_regclass('public.document_node_embeddings') AS table_name`,
+            );
+            if (!embeddingTableReady.rows[0]?.table_name) return emptyResult("unavailable");
+
+            // --- Bring the index up to date for this document. ---
+            //
+            // The client no longer ships the whole canvas on every drop: the server already has it.
+            // What it does have to handle is an index that has fallen behind -- a card saved inside
+            // the embedding queue's debounce window, a card whose text changed, or every card in
+            // the project the first time it is seen after the embedding recipe was versioned.
+            // Embedding the stragglers here (and storing them) means the gap closes by itself
+            // instead of quietly returning worse matches forever.
+            const healed = await healDocumentEmbeddings(id, signature, request.log);
+
+            // --- Embed the new cards. They are not saved yet, so they are never in the index. ---
+            const newVectors = await embedTexts(newCards.map((card) => embeddingTextForCard(card)));
+            if (!newVectors) return emptyResult("degraded");
+
+            const newCardIds = newCards.map((card) => card.id);
+            const matches: SimilarityMatch[] = [];
+
+            for (let index = 0; index < newCards.length; index += 1) {
+                const card = newCards[index];
+                const vectorLiteral = `[${newVectors[index].join(",")}]`;
+
+                // One query does the whole job: pull the nearest slice of this card's label cohort
+                // through the vector index, then read both the top candidates and the cohort's
+                // centre and spread off it. Scoring happens in Postgres, so what crosses the wire
+                // is a handful of ids and three numbers rather than every vector in the project.
+                //
+                // Capping the cohort at the nearest N biases the median upward on a large project,
+                // which only ever makes the outlier test harder to pass. Erring strict is the right
+                // direction here, and below the cap the cohort is exact.
+                const { rows } = await app.pg.query<SimilarityCohortRow>(
                     `
-                    SELECT node_id, node_text, embedding::text AS embedding
-                    FROM document_node_embeddings
-                    WHERE doc_id = $1::uuid
-                      AND node_id = ANY($2::text[])
-                      AND (model IS NULL OR model = $3)
+                    WITH cohort AS (
+                        SELECT node_id, 1 - (embedding <=> $2::vector) AS sim
+                        FROM document_node_embeddings
+                        WHERE doc_id = $1::uuid
+                          AND label = $3
+                          AND model = $4
+                          AND NOT (node_id = ANY($5::text[]))
+                        ORDER BY embedding <=> $2::vector
+                        LIMIT $6
+                    ),
+                    centre AS (
+                        SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY sim) AS median
+                        FROM cohort
+                    ),
+                    spread AS (
+                        SELECT
+                            percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(cohort.sim - centre.median)) AS mad,
+                            count(*)::int AS sampled
+                        FROM cohort CROSS JOIN centre
+                    )
+                    SELECT cohort.node_id, cohort.sim, centre.median, spread.mad, spread.sampled
+                    FROM cohort CROSS JOIN centre CROSS JOIN spread
+                    ORDER BY cohort.sim DESC
+                    LIMIT $7
                     `,
-                    [id, existingCards.map((card) => card.id), embeddingModel],
+                    [
+                        id,
+                        vectorLiteral,
+                        card.label,
+                        signature,
+                        newCardIds,
+                        SIMILARITY_COHORT_LIMIT,
+                        SIMILARITY_CANDIDATE_LIMIT,
+                    ],
                 );
 
-                const cachedRowById = new Map(cached.rows.map((row) => [row.node_id, row]));
-                for (const card of existingCards) {
-                    const row = cachedRowById.get(card.id);
-                    if (!row) continue;
-                    // The queue serializes the raw stored label while this route normalizes it
-                    // (lowercased, task -> requirement). Rather than reconcile the two, require
-                    // the texts to match exactly; anything else falls through to a live embed,
-                    // which is what happens for every card today anyway.
-                    if (row.node_text !== embeddingTextFromCard(card)) continue;
-                    const parsed = parsePgVector(row.embedding);
-                    if (parsed) cachedVectorByNodeId.set(card.id, parsed);
-                }
-            } catch (error) {
-                // A missing table or a failed probe just means no cache; never fail the request.
-                request.log.warn({ error }, "Failed to read cached node embeddings; embedding live.");
-            }
-
-            // Cache misses cover three cases, all handled the same way: the card was created
-            // within the queue's debounce window, its text was edited since it was embedded, or
-            // embeddings were never generated at all.
-            const staleExistingCards = existingCards.filter((card) => !cachedVectorByNodeId.has(card.id));
-            const cardsToEmbed = [...newCards, ...staleExistingCards];
-            const embeddingResponse = await openAiClient.embeddings.create({
-                model: embeddingModel,
-                input: cardsToEmbed.map((card) => embeddingTextFromCard(card)),
-            });
-
-            const vectors = Array.isArray(embeddingResponse.data)
-                ? embeddingResponse.data.map((item) => item.embedding).filter((v): v is number[] => Array.isArray(v))
-                : [];
-
-            if (vectors.length !== cardsToEmbed.length) {
-                request.log.warn(
-                    { expected: cardsToEmbed.length, actual: vectors.length },
-                    "Unexpected similarity embeddings response length.",
-                );
-                return reply.send({
-                    matches: newCards.map((card) => ({
-                        newCardId: card.id,
-                        existingCardId: null,
-                        similarity: 0,
+                const first = rows[0];
+                matches.push({
+                    newCardId: card.id,
+                    candidates: rows.map((row) => ({
+                        existingCardId: row.node_id,
+                        similarity: Number(row.sim),
                     })),
+                    baseline: first
+                        ? {
+                            median: Number(first.median),
+                            mad: Number(first.mad),
+                            sampled: Number(first.sampled),
+                        }
+                        : null,
                 });
             }
-
-            const newVectors = vectors.slice(0, newCards.length);
-            for (let i = 0; i < staleExistingCards.length; i++) {
-                cachedVectorByNodeId.set(staleExistingCards[i].id, vectors[newCards.length + i]);
-            }
-            const existingVectors = existingCards.map((card) => cachedVectorByNodeId.get(card.id) ?? []);
 
             request.log.info(
                 {
                     component: "cards-similarity",
                     newCards: newCards.length,
-                    existingCards: existingCards.length,
-                    cacheHits: existingCards.length - staleExistingCards.length,
-                    embedded: cardsToEmbed.length,
+                    healed,
+                    withCandidates: matches.filter((match) => match.candidates.length > 0).length,
                     durationMs: Date.now() - startedAt,
                 },
-                "Card similarity computed.",
+                "Card similarity candidates retrieved.",
             );
 
-            const matches = newCards.map((newCard, index) => {
-                const sourceVector = newVectors[index];
-                let bestId: string | null = null;
-                let bestSimilarity = 0;
-
-                for (let i = 0; i < existingCards.length; i++) {
-                    const existingCard = existingCards[i];
-                    if (existingCard.label !== newCard.label) continue;
-
-                    const similarity = cosineSimilarity(sourceVector, existingVectors[i]);
-                    if (similarity > bestSimilarity) {
-                        bestSimilarity = similarity;
-                        bestId = existingCard.id;
-                    }
-                }
-
-                return {
-                    newCardId: newCard.id,
-                    existingCardId: bestId,
-                    similarity: Number.isFinite(bestSimilarity) ? bestSimilarity : 0,
-                };
-            });
-
-            return reply.send({ matches });
+            return reply.send({ status: "ok", matches });
         } catch (error) {
-            request.log.warn({ error }, "Failed to compare card similarities with embeddings.");
-            return reply.send({
-                matches: newCards.map((card) => ({
-                    newCardId: card.id,
-                    existingCardId: null,
-                    similarity: 0,
-                })),
-            });
+            // `degraded` rather than an empty match list: "the lookup broke" and "nothing was
+            // similar" are the same shape otherwise, and the client would silently treat a failed
+            // embedding call as a canvas with no relationships in it.
+            request.log.warn({ error }, "Failed to retrieve card similarity candidates.");
+            return emptyResult("degraded");
         }
     });
 
@@ -2700,14 +2796,16 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             if (embeddingTable.rows[0]?.table_name) {
                 await client.query(
                     `
-                    INSERT INTO document_node_embeddings (doc_id, node_id, node_text, embedding)
-                    SELECT $1::uuid, node_id, node_text, embedding
+                    INSERT INTO document_node_embeddings (doc_id, node_id, label, node_text, embedding, model)
+                    SELECT $1::uuid, node_id, label, node_text, embedding, model
                     FROM document_node_embeddings
                     WHERE doc_id = $2::uuid
                     ON CONFLICT (doc_id, node_id) DO UPDATE
                     SET
+                        label = EXCLUDED.label,
                         node_text = EXCLUDED.node_text,
                         embedding = EXCLUDED.embedding,
+                        model = EXCLUDED.model,
                         updated_at = now()
                     `,
                     [duplicatedDocument.id, sourceDocId],

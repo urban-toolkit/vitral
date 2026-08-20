@@ -1,6 +1,7 @@
 import type { filePendingUpload, fileRecord, TimelineStatePayload } from "@/config/types";
 import { resolveApiBaseUrl } from "@/api/baseUrl";
 import { withDeadline } from "@/utils/abort";
+import type { SimilarityMatch } from "@/pages/projectEditor/similarityDecision";
 
 export type FlowStatePayload = {
     flow: {
@@ -169,17 +170,23 @@ export type SimilarityCardInput = {
     description: string;
 };
 
+/**
+ * Only the new cards go over the wire. The server already holds the rest of the canvas and searches
+ * its own vector index, so shipping every existing card's text on every file drop bought nothing
+ * except a payload that grew with the project (and a silent 500-card truncation at the far end).
+ */
 export type CompareCardsSimilarityRequest = {
     newCards: SimilarityCardInput[];
-    existingCards: SimilarityCardInput[];
 };
 
 export type CompareCardsSimilarityResponse = {
-    matches: Array<{
-        newCardId: string;
-        existingCardId: string | null;
-        similarity: number;
-    }>;
+    /**
+     * `degraded` means the lookup itself failed. Distinguished from an empty match list on purpose:
+     * "the embedding call broke" and "nothing on this canvas is similar" are otherwise the same
+     * shape, and the first one should not quietly read as the second.
+     */
+    status: "ok" | "degraded" | "unavailable";
+    matches: SimilarityMatch[];
 };
 
 export type SystemPaperQueryCard = {

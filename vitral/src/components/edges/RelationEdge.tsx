@@ -1,6 +1,8 @@
-import { memo } from "react";
-import type { EdgeProps } from '@xyflow/react';
-import { getBezierPath } from '@xyflow/react';
+import { memo, useMemo } from "react";
+import type { EdgeProps, InternalNode, Node } from '@xyflow/react';
+import { getBezierPath, useInternalNode } from '@xyflow/react';
+
+import { getFloatingEdgePath, type EdgeRect } from "@/components/edges/floatingEdgePath";
 
 const CARD_EDGE_LABELS = new Set([
   "person",
@@ -41,9 +43,21 @@ function resolveEdgeVisual(kind: string, label: string | undefined): EdgeVisualS
   };
 }
 
+/** The node's box in flow coordinates, or `null` while React Flow has yet to measure it. */
+function rectOf(node: InternalNode<Node> | undefined): EdgeRect | null {
+  if (!node) return null;
+  const width = node.measured?.width ?? node.width;
+  const height = node.measured?.height ?? node.height;
+  if (!width || !height) return null;
+  const { x, y } = node.internals.positionAbsolute;
+  return { x, y, width, height };
+}
+
 function RelationEdgeImpl(props: EdgeProps) {
   const {
     id,
+    source,
+    target,
     sourceX,
     sourceY,
     targetX,
@@ -54,7 +68,23 @@ function RelationEdgeImpl(props: EdgeProps) {
     data,
   } = props;
 
-  const [edgePath, labelX, labelY] = getBezierPath({
+  // Cards carry a target handle on the left and a source handle on the right, which would drag
+  // every edge out to those two sides. The relation still runs source -> target, but it is drawn
+  // between the card borders that actually face each other. `useInternalNode` re-renders this edge
+  // when either node moves or is measured — and, unlike `useViewport`, not when the canvas is
+  // panned or zoomed.
+  const sourceNode = useInternalNode(source);
+  const targetNode = useInternalNode(target);
+  const floating = useMemo(() => {
+    const sourceRect = rectOf(sourceNode);
+    const targetRect = rectOf(targetNode);
+    if (!sourceRect || !targetRect) return null;
+    return getFloatingEdgePath(sourceRect, targetRect);
+  }, [sourceNode, targetNode]);
+
+  // Until both nodes are measured there is no box to aim at, so fall back to the handle geometry
+  // React Flow already worked out.
+  const [handlePath, handleLabelX, handleLabelY] = getBezierPath({
     sourceX,
     sourceY,
     targetX,
@@ -62,6 +92,9 @@ function RelationEdgeImpl(props: EdgeProps) {
     sourcePosition,
     targetPosition,
   });
+  const edgePath = floating?.path ?? handlePath;
+  const labelX = floating?.labelX ?? handleLabelX;
+  const labelY = floating?.labelY ?? handleLabelY;
 
   const rawLabel = data?.label ?? props.label;
   const label: string | undefined =
