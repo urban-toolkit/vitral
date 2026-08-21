@@ -28,11 +28,11 @@ const CARD_SEPARATION_PX = Math.hypot(CARD_WIDTH_PX, CARD_HEIGHT_PX) + 24;
 /** Horizontal breathing room between two neighbouring activity slots. */
 const ACTIVITY_SLOT_GAP_PX = 280;
 /** Clearance between the bounding discs of two activity trees. */
-const ACTIVITY_TREE_GAP_PX = 200;
+export const ACTIVITY_TREE_GAP_PX = 200;
 /** Granularity of the vertical search that separates colliding trees. */
-const ACTIVITY_TREE_Y_STEP_PX = 200;
+export const ACTIVITY_TREE_Y_STEP_PX = 200;
 /** Backstop for that search; ~40k px of travel is far past any real project. */
-const ACTIVITY_TREE_Y_MAX_STEPS = 400;
+export const ACTIVITY_TREE_Y_MAX_STEPS = 400;
 const UNASSIGNED_BAND_GAP_PX = 420;
 const UNASSIGNED_ITEM_GAP_PX = 80;
 const BLUEPRINT_BAND_GAP_PX = 460;
@@ -135,18 +135,32 @@ function packOnionLayers(hopBuckets: nodeType[][]): nodeType[][] {
     return layers.filter((layer) => layer.length > 0);
 }
 
-type TreeDisc = { x: number; y: number; radius: number };
+export type TreeDisc = { x: number; y: number; radius: number };
 
 /**
  * Lowest-magnitude vertical offset at which a tree of `radius` centred on `x` clears every tree
  * already placed. Candidates alternate above and below zero, so the graph grows in both directions
  * around the time axis instead of drifting downward.
  */
-function resolveTreeCenterY(placed: TreeDisc[], x: number, radius: number): number {
-    const collidesAt = (y: number) => placed.some((disc) => {
+/** Exported for `activityOrbitLayout.placement.test.ts`, which checks it against a naive scan. */
+export function resolveTreeCenterY(placed: TreeDisc[], x: number, radius: number): number {
+    // Only a disc already within the required clearance horizontally can collide at any `y`, and its
+    // clearance does not depend on the candidate. Both were being recomputed inside all 401
+    // iterations of the scan below; hoisting them makes it O(steps x colliding) rather than
+    // O(steps x placed), and the squared comparison skips `Math.hypot`'s overflow-safe scaling. The
+    // results are identical.
+    const relevant: Array<{ y: number; slackSq: number }> = [];
+    for (const disc of placed) {
         const minDistance = disc.radius + radius + ACTIVITY_TREE_GAP_PX;
-        if (Math.abs(disc.x - x) >= minDistance) return false;
-        return Math.hypot(disc.x - x, disc.y - y) < minDistance;
+        const dx = disc.x - x;
+        if (Math.abs(dx) >= minDistance) continue;
+        relevant.push({ y: disc.y, slackSq: (minDistance * minDistance) - (dx * dx) });
+    }
+    if (relevant.length === 0) return 0;
+
+    const collidesAt = (y: number) => relevant.some((disc) => {
+        const dy = disc.y - y;
+        return (dy * dy) < disc.slackSq;
     });
 
     for (let step = 0; step <= ACTIVITY_TREE_Y_MAX_STEPS; step += 1) {
@@ -175,7 +189,40 @@ function compareByLabelTitleId(a: nodeType, b: nodeType): number {
  * activity it is closest to in the graph. `activityIds` must be in chronological order: the queue
  * is seeded in that order, so an earlier activity wins when two are equally close.
  */
+/**
+ * Two-entry cache for `assignSatellitesToActivities`, keyed by reference on its inputs.
+ *
+ * The function is called once per pipeline pass by `buildActivityTreeMembership` and again by
+ * `buildActivityOrbitLayout`, and each call rebuilds the adjacency map, sorts every neighbour list and
+ * runs the multi-source BFS. In the common case — nothing deleted, all labels shown, no query — the
+ * filters above hand both call sites the identical arrays, so the second call is free. Two entries
+ * rather than one so an alternating pair of call sites cannot thrash it.
+ */
+const satelliteCache: Array<{
+    nodes: nodeType[];
+    edges: edgeType[];
+    activityKey: string;
+    result: Map<string, SatelliteAssignment>;
+}> = [];
+
 function assignSatellitesToActivities(
+    nodes: nodeType[],
+    edges: edgeType[],
+    activityIds: string[],
+): Map<string, SatelliteAssignment> {
+    const activityKey = activityIds.join("|");
+    for (const entry of satelliteCache) {
+        if (entry.nodes === nodes && entry.edges === edges && entry.activityKey === activityKey) {
+            return entry.result;
+        }
+    }
+    const result = computeSatellitesToActivities(nodes, edges, activityIds);
+    satelliteCache.unshift({ nodes, edges, activityKey, result });
+    satelliteCache.length = Math.min(satelliteCache.length, 2);
+    return result;
+}
+
+function computeSatellitesToActivities(
     nodes: nodeType[],
     edges: edgeType[],
     activityIds: string[],
@@ -484,6 +531,11 @@ export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): 
         const next = positionById.get(node.id);
         if (!next) return node;
         if (node.position.x === next.x && node.position.y === next.y) return node;
-        return { ...node, position: next };
+        // Carry a size across with the new object. React Flow rebuilds an internal node whenever the
+        // user node's identity changes and takes `measured` from that object alone, so a node moved by
+        // the layout would otherwise arrive unmeasured and every edge touching it would snap to handle
+        // geometry for a frame. A real measurement always wins; this only fills the gap, from the same
+        // declared size the layout just used to place it.
+        return { ...node, position: next, measured: node.measured ?? nodeSizeOf(node) };
     });
 }

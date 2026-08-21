@@ -2,6 +2,11 @@
 	width: 200px;
 	height: 260px;
 	color: black;
+	/* `.flipCard`'s `perspective` used to make this the containing block for React Flow's absolutely
+	   positioned handles. Perspective is now applied only mid-flip, so say it outright. */
+	position: relative;
+	/* Layout and style containment only. `paint` would clip the handles, which straddle this box. */
+	contain: layout style;
 }
 
 .title {
@@ -89,12 +94,14 @@
 	text-align: center;
 }
 
+/* No `backdrop-filter` on card faces. The canvas paints a flat `#ffffff` and mounts no
+   `<Background>`, so blurring the backdrop produced almost nothing visible while forcing a readback
+   and a separate blur pass into its own render surface for every face on every pan and zoom frame.
+   The translucent fills stay: they are what lets an edge show through a card. */
 .socialCard {
 	background-color: var(--technical-color);
 	border-radius: 16px;
 	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-	backdrop-filter: blur(4px);
-	-webkit-backdrop-filter: blur(4px);
 	border: 1px solid rgba(255, 255, 255, 0.39);
 }
 
@@ -102,8 +109,6 @@
 	background-color: var(--technical-color-darker);
 	border-radius: 16px;
 	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-	backdrop-filter: blur(4px);
-	-webkit-backdrop-filter: blur(4px);
 	border: 1px solid rgba(255, 255, 255, 0.39);
 }
 
@@ -116,8 +121,6 @@
 	background-color: var(--technical-color);
 	border-radius: 16px;
 	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-	backdrop-filter: blur(4px);
-	-webkit-backdrop-filter: blur(4px);
 	border: 1px solid rgba(255, 255, 255, 0.39);
 }
 
@@ -125,8 +128,6 @@
 	background-color: var(--technical-color-darker);
 	border-radius: 16px;
 	box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-	backdrop-filter: blur(4px);
-	-webkit-backdrop-filter: blur(4px);
 	border: 1px solid rgba(255, 255, 255, 0.39);
 }
 
@@ -271,13 +272,24 @@
 }
 
 
-/* Flip animation */
+/* Flip animation
+
+   3D is expensive on a canvas. `perspective`, `transform-style: preserve-3d` and
+   `backface-visibility: hidden` each force a card into its own composited 3D rendering context,
+   which the compositor has to re-rasterise at every new zoom scale — and with both faces mounted at
+   all times that was two such surfaces per card.
+
+   None of it is needed at rest. A card resting on its back mounts only its back face, and the
+   inner's `rotateY(180deg)` composed with that face's own `rotateY(180deg)` flattens to the identity
+   transform, so the back reads the right way round with no 3D context at all. The three `*3d` /
+   `*HideBackface` classes below are applied only for the ~800ms a flip is actually in flight; see
+   `face` and `flipping` in `Card.tsx`. */
 
 .flipIcon {
 	cursor: pointer;
 }
 
-.flipCard {
+.flipCard3d {
 	perspective: 1000px;
 }
 
@@ -290,7 +302,12 @@
 	width: 100%;
 	height: 100%;
 	text-align: center;
+	/* Declared unconditionally and deliberately: an unchanging transition costs nothing, and keeping
+	   it in the settled style is what lets a flip animate from a single class change. */
 	transition: transform 0.8s;
+}
+
+.flipCardInner3d {
 	transform-style: preserve-3d;
 }
 
@@ -303,6 +320,13 @@
 	position: absolute;
 	width: 100%;
 	height: 100%;
+	/* Nothing crosses a face's border box — `.labelIcon` overhangs `.attachments`, which starts well
+	   inside it — so paint containment is safe here and walls each face off from the other. */
+	contain: layout paint style;
+}
+
+/* Only meaningful while both faces are mounted, i.e. mid-flip. */
+.flipCardHideBackface {
 	-webkit-backface-visibility: hidden;
 	/* Safari */
 	backface-visibility: hidden;
@@ -323,3 +347,66 @@
 }
 
 /* ============================= */
+
+/* Cheap-paint mode — see `CANVAS_MOVING_CLASS` in `FlowCanvas.tsx`. A 30px shadow spread across the
+   card faces and their label icons is re-rasterised at every new scale during a zoom, and is not
+   what the user is looking at while the canvas is in motion. `border-radius` deliberately stays:
+   a card squaring off mid-gesture is very visible. */
+:global(.canvas-moving) .socialCard,
+:global(.canvas-moving) .socialCardBack,
+:global(.canvas-moving) .techCard,
+:global(.canvas-moving) .techCardBack,
+:global(.canvas-moving) .labelIcon {
+	box-shadow: none;
+}
+
+/* Level of detail. `data-lod` is written onto the flow wrapper by `useCanvasLod` from the pan/zoom
+   animation frame, through a ref — never from React state. These rules are the whole cost of a tier
+   change: one style recalculation over the subtree, no reconciliation, no relayout of the graph.
+   `:not(:focus-within)` keeps a card that is being edited in full detail, so a tier flip mid-edit
+   cannot hide the caret. */
+
+/* Below ~140px wide the 9-12px chrome renders at 2-8px and carries nothing. The 16px title is all
+   that is left worth drawing, and with its neighbours gone it takes the whole card. */
+:global([data-lod="mid"]) .card:not(:focus-within) .header,
+:global([data-lod="mid"]) .card:not(:focus-within) .attachments,
+:global([data-lod="mid"]) .card:not(:focus-within) .assignedText,
+:global([data-lod="mid"]) .card:not(:focus-within) .flipCardBack {
+	display: none;
+}
+
+:global([data-lod="mid"]) .card:not(:focus-within) .flipCardFront {
+	justify-content: center;
+}
+
+/* Below ~32px nothing inside carries information. `content-visibility: hidden` skips the subtree's
+   layout and paint while keeping its box, leaving one rounded rectangle. The box cannot collapse —
+   `.card` is a fixed 200x260 — but the intrinsic size is declared anyway so React Flow's
+   ResizeObserver can never read a number other than the one `canvasGeometry` declares. */
+:global([data-lod="far"]) .card:not(:focus-within) .flipCardInner {
+	content-visibility: hidden;
+	contain-intrinsic-size: 200px 260px;
+}
+
+:global([data-lod="far"]) .card:not(:focus-within) {
+	background: var(--technical-color);
+	border-radius: 16px;
+}
+
+/* Highlight, driven by `store/canvasHighlightStore.ts` rather than by an injected `node.style` — see
+   that module for why. Applied to the card rather than to React Flow's node wrapper: the card fills
+   the node box, so the outline and the ring land where they always did. */
+.knowledgeHighlight {
+	outline: 3px solid #5bbad6;
+	outline-offset: 2px;
+	border-radius: 10px;
+}
+
+.assetHighlight {
+	box-shadow: 0 0 0 3px rgba(0, 168, 219, 0.85);
+	border-radius: 18px;
+}
+
+.assetHighlight.knowledgeHighlight {
+	box-shadow: 0 0 0 3px rgba(0, 168, 219, 0.85), 0 0 0 6px rgba(231, 127, 35, 0.65);
+}

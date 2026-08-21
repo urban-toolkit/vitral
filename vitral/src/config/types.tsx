@@ -167,6 +167,16 @@ export type nodeType = {
      */
     width?: number,
     height?: number,
+    /**
+     * The size React Flow ends up using for geometry — floating edges aim at this box.
+     *
+     * Normally React Flow fills it in from a measurement, but it rebuilds a node's internals from
+     * scratch whenever the node object's identity changes, taking `measured` from that object alone.
+     * So anything that mints a new node object — the abstraction lens, the orbit layout — carries the
+     * size across here rather than letting the node spend a frame unmeasured. Measurements are not
+     * document content and are deliberately never persisted; see `handleNodesChange`.
+     */
+    measured?: { width?: number, height?: number },
     zIndex?: number
 }
 

@@ -5,12 +5,14 @@
     z-index: 12;
     display: flex;
     align-items: stretch;
-    background: rgba(255, 255, 255, 0.92);
+    /* Opaque, and no `backdrop-filter`: this panel is fixed over the canvas, so a blur here made
+       the browser read back and re-blur a full-height strip on every pan and zoom frame. Over the
+       flat white canvas at 0.92 alpha the blur was invisible anyway. */
+    background: #ffffff;
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-left: none;
     border-radius: 0 12px 12px 0;
     box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
-    backdrop-filter: blur(4px);
     overflow: visible;
 }
 

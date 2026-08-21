@@ -94,6 +94,33 @@ function edgeDedupKey(edge: edgeType): string {
     return `${source}|${target}|${label}|${kind}|${from}|${to}|${deleted}`;
 }
 
+/**
+ * Drops `select` changes that would set the flag to the value it already holds.
+ *
+ * `applyNodeChanges` / `applyEdgeChanges` rebuild an element for every change they are handed,
+ * whether or not it says anything new — so clicking an already-selected card or edge handed it a
+ * fresh object, which drops React Flow's cached internals for it and re-renders every element derived
+ * from it. Only `select` is filtered: it is the one change type that carries a value we can already
+ * see, and the only one React Flow emits speculatively.
+ */
+function dropNoOpSelectChanges<T extends { id?: string; selected?: boolean }>(
+    changes: unknown,
+    elements: readonly T[],
+): unknown {
+    if (!Array.isArray(changes)) return changes;
+    const selectedById = new Map<string, boolean>();
+    for (const element of elements) {
+        if (typeof element.id === "string") selectedById.set(element.id, element.selected === true);
+    }
+    const kept = changes.filter((change) => {
+        if (!isObjectRecord(change) || change.type !== "select") return true;
+        const id = typeof change.id === "string" ? change.id : "";
+        if (!id || !selectedById.has(id)) return true;
+        return selectedById.get(id) !== (change.selected === true);
+    });
+    return kept.length === changes.length ? changes : kept;
+}
+
 function dedupeEdges(edges: edgeType[]): edgeType[] {
     const seen = new Set<string>();
     const result: edgeType[] = [];
@@ -103,7 +130,10 @@ function dedupeEdges(edges: edgeType[]): edgeType[] {
         seen.add(key);
         result.push(edge);
     }
-    return result;
+    // Nothing was a duplicate, so hand the input back rather than a copy: this runs on every edge
+    // change including a click-to-select, and a new array there invalidated the whole derivation
+    // chain downstream.
+    return result.length === edges.length ? edges : result;
 }
 
 function blueprintGroupConfig(level: unknown): {
@@ -457,6 +487,14 @@ function ensureEdgeTimestamps(edge: edgeType): edgeType {
         ? normalizeIsoTimestamp(deletedAtRaw, "")
         : "";
 
+    // Already normalised: hand the same object back, so `applyEdgeChanges` alone decides which edges
+    // got a new identity. Otherwise selecting one edge gave all of them a new one, invalidating every
+    // `RelationEdge` memo and the node/edge derivation chain with them.
+    const deletedAtSettled = deletedAt !== ""
+        ? data.deletedAt === deletedAt
+        : !("deletedAt" in data);
+    if (data.createdAt === createdAt && deletedAtSettled) return edge;
+
     return {
         ...edge,
         data: {
@@ -582,22 +620,28 @@ const flowSlice = createSlice({
                 positionTimestampsByNodeId.set(nodeId, editAt);
             }
 
-            const a = applyNodeChanges(action.payload, state.nodes);
+            const a = applyNodeChanges(
+                dropNoOpSelectChanges(action.payload, state.nodes) as typeof action.payload,
+                state.nodes,
+            );
             state.nodes = a;
 
-            if (positionTimestampsByNodeId.size > 0) {
-                state.nodes = state.nodes.map((node) => {
-                    const at = positionTimestampsByNodeId.get(node.id);
-                    if (!at) return node;
-                    const enriched = ensureNodeHistory(node);
-                    const data = nodeDataRecord(enriched);
-                    const history = appendNodePositionSnapshot(readNodeHistory(data), at, enriched.position);
-                    const nextData = writeNodeHistory(stripNodeMeta(data), history);
-                    return {
-                        ...enriched,
-                        data: nextData as nodeType["data"],
-                    };
-                });
+            // Indexed assignment rather than `.map`, so only the nodes that actually got a position
+            // timestamp are replaced. Rebuilding the whole array handed every untouched node a new
+            // identity too, which drops React Flow's cached internals for it and re-renders every
+            // incident edge.
+            for (let index = 0; index < state.nodes.length; index += 1) {
+                const node = state.nodes[index];
+                const at = positionTimestampsByNodeId.get(node.id);
+                if (!at) continue;
+                const enriched = ensureNodeHistory(node);
+                const data = nodeDataRecord(enriched);
+                const history = appendNodePositionSnapshot(readNodeHistory(data), at, enriched.position);
+                const nextData = writeNodeHistory(stripNodeMeta(data), history);
+                state.nodes[index] = {
+                    ...enriched,
+                    data: nextData as nodeType["data"],
+                };
             }
 
             const hasRemoval = Array.isArray(action.payload)
@@ -608,7 +652,10 @@ const flowSlice = createSlice({
             }
         },
         onEdgesChange: (state, action) => {
-            const a = applyEdgeChanges(action.payload, state.edges);
+            const a = applyEdgeChanges(
+                dropNoOpSelectChanges(action.payload, state.edges) as typeof action.payload,
+                state.edges,
+            );
             state.edges = dedupeEdges(a.map((edge) => ensureEdgeTimestamps(edge)));
         },
         setTitle: (state, action) => {

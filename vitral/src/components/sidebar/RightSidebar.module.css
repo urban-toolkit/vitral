@@ -6,12 +6,12 @@
     z-index: 11;
     display: flex;
     align-items: stretch;
-    background: rgba(255, 255, 255, 0.92);
+    /* Opaque, and no `backdrop-filter` — see `CanvasSidebar.module.css`. */
+    background: #ffffff;
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-right: none;
     border-radius: 12px 0 0 12px;
     box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
-    backdrop-filter: blur(4px);
 }
 
 .panel {

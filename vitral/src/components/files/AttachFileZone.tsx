@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { memo, useCallback, useState } from "react";
 
 import classes from './AttachFileZone.module.css'
 
@@ -9,7 +9,7 @@ type AttachFileZoneProps = {
     accept?: string;
 };
 
-export function AttachFileZone({ onFileSelected, loading, accept, dropZoneCSS }: AttachFileZoneProps) {
+function AttachFileZoneImpl({ onFileSelected, loading, accept, dropZoneCSS }: AttachFileZoneProps) {
     const [isDragging, setIsDragging] = useState(false);
 
     // useEffect(() => {
@@ -116,3 +116,8 @@ export function AttachFileZone({ onFileSelected, loading, accept, dropZoneCSS }:
 
     );
 }
+/**
+ * Memoised: it is rendered by every card that has no attachment, and it re-mounted nothing but a file
+ * input on each of its parent card`s renders.
+ */
+export const AttachFileZone = memo(AttachFileZoneImpl);

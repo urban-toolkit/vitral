@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 import type { fileRecord } from "@/config/types";
 import classes from "./FilePreviewCard.module.css";
 
@@ -36,7 +38,7 @@ type Props = {
     thumbnailUrl?: string;
 };
 
-export function FilePreviewCard({
+function FilePreviewCardImpl({
     file,
     onClick,
     thumbnailUrl,
@@ -60,6 +62,14 @@ export function FilePreviewCard({
                             alt=""
                             className={classes.thumbImage}
                             loading="lazy"
+                            /* `thumbnailUrl` is the raw original, so a large attachment is decoded at
+                               full resolution for a 48x48 box and re-sampled by the compositor at
+                               every new zoom scale. Declaring the box removes the layout ambiguity
+                               and takes the decode off the critical path; a real thumbnail endpoint
+                               is the actual fix. */
+                            width={48}
+                            height={48}
+                            decoding="async"
                         />
                     ) : (
                         <span className={classes.extBadge}>
@@ -98,3 +108,6 @@ export function FilePreviewCard({
         </button>
     );
 }
+
+/** Memoised: this is what actually paints inside a card, including the thumbnail image. */
+export const FilePreviewCard = memo(FilePreviewCardImpl);

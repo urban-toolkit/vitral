@@ -91,11 +91,9 @@ import {
     selectAllDesignStudyEvents,
     selectAllStages,
     selectDefaultStages,
-    selectHighlightedKnowledgeNodeIds,
     selectParticipants,
     selectLlmModel,
     selectSystemScreenshotMarkers,
-    selectHoveredCodebaseFilePath,
     reconcileBlueprintCodebaseAutoLinks,
     selectTimelineStartEnd,
     updateBlueprintEvent,
@@ -136,6 +134,12 @@ import {
 import type { ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
 import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
 import { CanvasChatOverlay, type CanvasChatEntry } from "@/pages/projectEditor/CanvasChatOverlay";
+import { CanvasHighlightBridge } from "@/pages/projectEditor/CanvasHighlightBridge";
+import {
+    getHoveredAssetFileId,
+    setEmphasizedBlueprintComponentIds,
+    setHoveredAssetFileId,
+} from "@/store/canvasHighlightStore";
 import { EdgeConnectMenu, type EdgeConnectOption } from "@/pages/projectEditor/EdgeConnectMenu";
 import {
     TimelineDock,
@@ -166,14 +170,13 @@ const TIMELINE_TOGGLE_OFFSET_NO_TOOLBAR_PX = 20;
 // backend/src/routes/state.ts (the backend clamps regardless); keep the two in sync.
 const CANVAS_CHAT_MAX_RETRIEVAL_LIMIT = 200;
 
-function readNodeOpacity(style: { opacity?: unknown } | null | undefined): number | undefined {
-    const raw = style?.opacity;
-    if (typeof raw === "number") return Number.isFinite(raw) ? raw : undefined;
-    if (typeof raw === "string") {
-        const parsed = Number.parseFloat(raw);
-        return Number.isFinite(parsed) ? parsed : undefined;
-    }
-    return undefined;
+/**
+ * The same array back when a filter kept everything, so the memos downstream can compare by
+ * reference. `Array.prototype.filter` always allocates, which meant the derivation chain was handed
+ * a brand-new array on every pass even when nothing was filtered out.
+ */
+function keepAll<T>(source: readonly T[], kept: T[]): T[] {
+    return kept.length === source.length ? (source as T[]) : kept;
 }
 
 function readImageFileAsDataUrl(file: File): Promise<string> {
@@ -932,7 +935,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [activeQuery, setActiveQuery] = useState("");
     const [queryMatchedNodeIds, setQueryMatchedNodeIds] = useState<string[] | null>(null);
     const [chatOpen, setChatOpen] = useState(false);
-    const [chatInput, setChatInput] = useState("");
     const [chatMessages, setChatMessages] = useState<CanvasChatEntry[]>([]);
     const [chatLoading, setChatLoading] = useState(false);
     const [chatError, setChatError] = useState<string | null>(null);
@@ -945,7 +947,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [exportingProject, setExportingProject] = useState(false);
     const [exportingMarkdown, setExportingMarkdown] = useState(false);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
-    const [hoveredAssetFileId, setHoveredAssetFileId] = useState<string | null>(null);
     const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
     const [processingSystemScreenshot, setProcessingSystemScreenshot] = useState(false);
     const [knowledgePills, setKnowledgePills] = useState<KnowledgePill[]>([]);
@@ -978,8 +979,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const blueprintEvents = useSelector(selectAllBlueprintEvents);
     const systemScreenshotMarkers = useSelector(selectSystemScreenshotMarkers);
     const codebaseSubtracks = useSelector(selectCodebaseSubtracks);
-    const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
-    const highlightedKnowledgeNodeIds = useSelector(selectHighlightedKnowledgeNodeIds);
 
     const llmProjectSettings = useMemo<LlmProjectSettingsContext>(() => {
         const participantRecords = participants.map((participant) => ({
@@ -1053,16 +1052,20 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [playbackAt]);
     // Deleted cards never reach the canvas, and they must not bridge two trees while working out
     // which activity a card belongs to either, so tree membership is derived from the live graph.
+    // Every filter down this chain goes through `keepAll`, so a filter that removes nothing hands the
+    // same array on. In the default state — nothing deleted, all labels shown, no query, no playback —
+    // that makes `filteredNodes` literally `state.flow.nodes`, which is what lets `buildAbstractedGraph`
+    // short-circuit at level 3 and the satellite assignment reuse its cache.
     const liveNodes = useMemo(
-        () => nodes.filter((node) => (
+        () => keepAll(nodes, nodes.filter((node) => (
             toTimestampMs((node.data as Record<string, unknown>)?.deletedAt) === null
-        )),
+        ))),
         [nodes],
     );
     const liveEdges = useMemo(
-        () => edges.filter((edge) => (
+        () => keepAll(edges, edges.filter((edge) => (
             toTimestampMs((edge.data as Record<string, unknown> | undefined)?.deletedAt) === null
-        )),
+        ))),
         [edges],
     );
     const activityTreeMembership = useMemo(
@@ -1137,17 +1140,17 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 .map((node) => node.id),
         );
 
-        return liveNodes.filter((node) => {
+        return keepAll(liveNodes, liveNodes.filter((node) => {
             const activityId = activityTreeMembership.get(node.id);
             if (activityId === undefined) return true;
             return visibleActivityIds.has(activityId);
-        });
+        }));
     }, [activityTreeMembership, liveNodes, playbackAtTime]);
     const timelineContextEdges = useMemo(() => {
         const visibleNodeIds = new Set(timelineContextNodes.map((node) => node.id));
-        return liveEdges.filter((edge) => (
+        return keepAll(liveEdges, liveEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
-        ));
+        )));
     }, [liveEdges, timelineContextNodes]);
     const knowledgeProvenanceTriggerKey = useMemo(() => {
         let hash = 2166136261;
@@ -1650,7 +1653,31 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 if (!removedNodeId) continue;
                 softDeleteNode(removedNodeId);
             }
-            const passthroughChanges = immediateChanges.filter((change) => change.type !== "remove");
+            // Measured pixels belong to React Flow's own lookup, which `updateNodeInternals` has
+            // already written by the time this fires. Letting them into the document made a level flip
+            // — which changes a glyph's size while it keeps its activity's real id — rewrite
+            // `flow.nodes`, re-run the whole derivation chain, and POST the document twice. Every size
+            // this app cares about is declared in `canvasGeometry`, not measured.
+            const passthroughChanges = immediateChanges.filter((change) => (
+                change.type !== "remove" && change.type !== "dimensions"
+            ));
+            if (import.meta.env.DEV) {
+                // If the DOM ever disagrees with the declared size, dropping the measurement would
+                // leave the edges aiming at the wrong box. Say so rather than quietly mis-drawing.
+                for (const change of immediateChanges) {
+                    if (change.type !== "dimensions" || !change.dimensions) continue;
+                    const node = nodesRef.current.find((candidate) => candidate.id === change.id);
+                    if (!node) continue;
+                    const declared = nodeSizeOf(node);
+                    if (Math.abs(declared.width - change.dimensions.width) < 1
+                        && Math.abs(declared.height - change.dimensions.height) < 1) continue;
+                    console.warn(
+                        `[canvas] node ${change.id} measured ${change.dimensions.width}x${change.dimensions.height}`
+                        + ` but canvasGeometry declares ${declared.width}x${declared.height};`
+                        + " floating edges will aim at the declared box.",
+                    );
+                }
+            }
             if (passthroughChanges.length > 0) {
                 dispatch(onNodesChange(passthroughChanges));
             }
@@ -1977,6 +2004,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     //
     // Changing the level always drops the focus: a focus path names a phase or an activity in the
     // keyspace of the level it was opened at, and carrying it across would point at nothing.
+    // Read by `handleNodesChange`'s dev-only dimension check, which must not take `nodes` as a
+    // dependency: that would give the callback a new identity on every graph change and take the
+    // memoised canvas down with it.
+    const nodesRef = useRef(nodes);
+    useEffect(() => {
+        nodesRef.current = nodes;
+    }, [nodes]);
+
     const canvasLevelRef = useRef(canvasLevel);
     const levelFollowsZoomRef = useRef(levelFollowsZoom);
     useEffect(() => {
@@ -2138,18 +2173,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         () => (queryMatchedNodeIds ? new Set(queryMatchedNodeIds) : null),
         [queryMatchedNodeIds],
     );
-    const highlightedKnowledgeNodeIdSet = useMemo(
-        () => new Set(highlightedKnowledgeNodeIds),
-        [highlightedKnowledgeNodeIds],
-    );
-
     const labelFilteredNodes = useMemo(() => {
-        return timelineContextNodes.filter((node) => {
+        return keepAll(timelineContextNodes, timelineContextNodes.filter((node) => {
             const rawLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
             if (BLUEPRINT_NODE_LABELS.has(rawLabel)) return blueprintComponentsVisible;
             if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
             return selectedLabelSet.has(rawLabel as cardLabel);
-        });
+        }));
     }, [blueprintComponentsVisible, selectedLabelSet, timelineContextNodes]);
 
     const emphasizedBlueprintComponentIds = useMemo(() => {
@@ -2233,99 +2263,27 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         return connections;
     }, [blueprintEvents, edges, nodes]);
-    const normalizedHoveredCodebasePath = useMemo(
-        () => (hoveredCodebaseFilePath ? normalizePath(hoveredCodebaseFilePath) : ""),
-        [hoveredCodebaseFilePath]
-    );
+    // Highlight used to be injected here as `node.style`, which cloned node objects and so invalidated
+    // salience, clustering, abstraction and the layout on every hover. It now reaches the nodes
+    // through `canvasHighlightStore`, leaving this memo to do only what its name says.
+    const filteredNodes = useMemo(() => (
+        queryMatchedNodeSet
+            ? keepAll(labelFilteredNodes, labelFilteredNodes.filter((node) => queryMatchedNodeSet.has(node.id)))
+            : labelFilteredNodes
+    ), [labelFilteredNodes, queryMatchedNodeSet]);
 
-    const filteredNodes = useMemo(() => {
-        const baseNodes = queryMatchedNodeSet
-            ? labelFilteredNodes.filter((node) => queryMatchedNodeSet.has(node.id))
-            : labelFilteredNodes;
-
-        return baseNodes.map((node) => {
-            const nodeLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
-            const nodeData = node.data as Record<string, unknown>;
-            const isCardNode = CARD_LABELS.includes(nodeLabel as cardLabel);
-            const isKnowledgeHighlighted = isCardNode && highlightedKnowledgeNodeIdSet.has(node.id);
-            const knowledgeHighlightStyle = isKnowledgeHighlighted
-                ? {
-                    outline: "3px solid #5bbad6", 
-                    outlineOffset: "2px",
-                    borderRadius: "10px"
-                }
-                : null;
-            if (nodeLabel === "blueprint_component") {
-                const attachedCodebasePaths = Array.isArray(nodeData.codebaseFilePaths)
-                    ? nodeData.codebaseFilePaths
-                        .filter((path): path is string => typeof path === "string")
-                        .map((path) => normalizePath(path))
-                    : [];
-                const isHoveredByFile = normalizedHoveredCodebasePath !== "" &&
-                    attachedCodebasePaths.includes(normalizedHoveredCodebasePath);
-                const isEmphasized = emphasizedBlueprintComponentIds.has(node.id) || isHoveredByFile;
-                const desiredOpacity = isEmphasized ? 1 : 0.5;
-                const currentOpacity = readNodeOpacity(node.style);
-                if (currentOpacity === desiredOpacity) {
-                    return node;
-                }
-                return {
-                    ...node,
-                    style: {
-                        ...(node.style ?? {}),
-                        opacity: desiredOpacity,
-                    },
-                };
-            }
-
-            if (isCardNode && hoveredAssetFileId) {
-                const attachmentIds = Array.isArray(nodeData.attachmentIds)
-                    ? nodeData.attachmentIds.filter((id): id is string => typeof id === "string")
-                    : [];
-                if (attachmentIds.includes(hoveredAssetFileId)) {
-                    const assetShadow = "0 0 0 3px rgba(0, 168, 219, 0.85)";
-                    const combinedShadow = isKnowledgeHighlighted
-                        ? `${assetShadow}, 0 0 0 6px rgba(231, 127, 35, 0.65)`
-                        : assetShadow;
-                    return {
-                        ...node,
-                        style: {
-                            ...(node.style ?? {}),
-                            ...(knowledgeHighlightStyle ?? {}),
-                            boxShadow: combinedShadow,
-                            borderRadius: 18,
-                        },
-                    };
-                }
-            }
-
-            if (knowledgeHighlightStyle) {
-                return {
-                    ...node,
-                    style: {
-                        ...(node.style ?? {}),
-                        ...knowledgeHighlightStyle,
-                    },
-                };
-            }
-
-            return node;
-        });
-    }, [
-        labelFilteredNodes,
-        queryMatchedNodeSet,
-        emphasizedBlueprintComponentIds,
-        normalizedHoveredCodebasePath,
-        hoveredAssetFileId,
-        highlightedKnowledgeNodeIdSet,
-    ]);
+    // Structural, not hover-driven, so it belongs to the graph — but it reaches the blueprint nodes as
+    // a class rather than an injected `opacity`, for the same reason as above.
+    useEffect(() => {
+        setEmphasizedBlueprintComponentIds(emphasizedBlueprintComponentIds);
+    }, [emphasizedBlueprintComponentIds]);
 
 
     const filteredEdges = useMemo(() => {
         const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
-        return timelineContextEdges.filter((edge) => (
+        return keepAll(timelineContextEdges, timelineContextEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
-        ));
+        )));
     }, [timelineContextEdges, filteredNodes]);
 
 
@@ -3080,8 +3038,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         setChatOpen(true);
     }, []);
 
-    const handleSendChatMessage = useCallback(() => {
-        const trimmed = chatInput.trim();
+    // Takes the text rather than reading it from state: the draft belongs to `CanvasChatOverlay`, so
+    // a keystroke neither re-renders this component nor gives this callback a new identity.
+    const handleSendChatMessage = useCallback((text: string) => {
+        const trimmed = text.trim();
         if (!trimmed || chatLoading) return;
 
         const requestId = ++chatRequestIdRef.current;
@@ -3096,7 +3056,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         ].slice(-20);
 
         setChatMessages((prev) => [...prev, userEntry]);
-        setChatInput("");
         setChatError(null);
         setChatLoading(true);
 
@@ -3135,7 +3094,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 }
             }
         })();
-    }, [chatInput, chatLoading, chatMessages, labelFilteredNodes, playbackAt, projectId]);
+    }, [chatLoading, chatMessages, labelFilteredNodes, playbackAt, projectId]);
 
     const handleSystemPapersRefresh = useCallback(() => {
         const cards = nodes
@@ -3693,7 +3652,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             await deleteFile(projectId, file.id);
             dispatch(detachFileIdFromAllNodes(file.id));
             dispatch(removeFile(file.id));
-            if (hoveredAssetFileId === file.id) {
+            if (getHoveredAssetFileId() === file.id) {
                 setHoveredAssetFileId(null);
             }
         } catch (error) {
@@ -3702,7 +3661,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         } finally {
             setDeletingAssetId((current) => (current === file.id ? null : current));
         }
-    }, [dispatch, hoveredAssetFileId, interactionLocked, projectId]);
+    }, [dispatch, interactionLocked, projectId]);
 
     const clearKnowledgeEditsAroundPlayback = useCallback((
         direction: "before" | "after",
@@ -4092,6 +4051,34 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         setPlaybackAt(parsed.toISOString());
     }, []);
 
+    // `FlowCanvas` is memoised, and a fresh element here defeated it: every one of this component's
+    // state setters — a keystroke in the chat box, an asset hover, a knowledge pill arriving from the
+    // network — re-rendered the whole `<ReactFlow>` subtree with it. Every dependency below is either
+    // a `useCallback` or changes only on a deliberate user action.
+    const levelControlElement = useMemo(() => (
+        <CanvasLevelControl
+            level={canvasLevel}
+            followZoom={levelFollowsZoom}
+            onLevelChange={handleCanvasLevelChange}
+            onFollowZoomChange={handleLevelFollowsZoomChange}
+            focusLabel={canvasFocusLabel}
+            onClearFocus={handleClearCanvasFocus}
+            shifted={timelineOpen}
+            chatOpen={chatOpen}
+            onOpenChat={handleOpenChat}
+        />
+    ), [
+        canvasLevel,
+        levelFollowsZoom,
+        handleCanvasLevelChange,
+        handleLevelFollowsZoomChange,
+        canvasFocusLabel,
+        handleClearCanvasFocus,
+        timelineOpen,
+        chatOpen,
+        handleOpenChat,
+    ]);
+
     if (status === "loading") return <div>Loading...</div>;
     if (status === "error") return <div>Error: {error}</div>;
 
@@ -4101,6 +4088,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     return (
         <>
+            <CanvasHighlightBridge />
+
             <FlowCanvas
                 projectId={projectId}
                 nodes={displayedNodes}
@@ -4124,19 +4113,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 miniMapRightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX}
                 onMove={handleViewportMove}
                 levelControlRightOffsetPx={RIGHT_SIDEBAR_WIDTH_PX}
-                levelControl={(
-                    <CanvasLevelControl
-                        level={canvasLevel}
-                        followZoom={levelFollowsZoom}
-                        onLevelChange={handleCanvasLevelChange}
-                        onFollowZoomChange={handleLevelFollowsZoomChange}
-                        focusLabel={canvasFocusLabel}
-                        onClearFocus={handleClearCanvasFocus}
-                        shifted={timelineOpen}
-                        chatOpen={chatOpen}
-                        onOpenChat={handleOpenChat}
-                    />
-                )}
+                levelControl={levelControlElement}
             />
 
             <EdgeConnectMenu
@@ -4274,10 +4251,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 open={chatOpen}
                 loading={chatLoading}
                 error={chatError}
-                inputValue={chatInput}
                 filterActive={activeQuery.trim().length > 0}
                 messages={chatMessages}
-                onInputValueChange={setChatInput}
                 onSend={handleSendChatMessage}
                 onClose={() => setChatOpen(false)}
                 onClearFilter={clearCanvasFilter}

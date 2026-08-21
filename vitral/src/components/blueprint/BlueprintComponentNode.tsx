@@ -1,19 +1,24 @@
-import { memo, useEffect, useState, type DragEvent } from "react";
+import { memo, useEffect, useState, useSyncExternalStore, type DragEvent } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useDispatch, useSelector } from "react-redux";
 
 import type { nodeType } from "@/config/types";
+import type { RootState } from "@/store";
 import {
     attachCodebaseFilePathToNode,
     detachCodebaseFilePathFromNode,
     renameNodeTitle,
 } from "@/store/flowSlice";
 import {
-    selectAllBlueprintEvents,
+    selectBlueprintEventComponentNodeIds,
     selectHoveredCodebaseFilePath,
     selectHoveredBlueprintComponentNodeId,
     setHoveredBlueprintComponentNodeId,
 } from "@/store/timelineSlice";
+import {
+    isBlueprintComponentEmphasized,
+    subscribe as subscribeHighlight,
+} from "@/store/canvasHighlightStore";
 import classes from "./BlueprintComponentNode.module.css";
 
 type BlueprintComponentNodeProps = NodeProps<nodeType> & {
@@ -40,9 +45,22 @@ function basename(path: string): string {
 
 function BlueprintComponentNodeImpl(props: BlueprintComponentNodeProps) {
     const dispatch = useDispatch();
-    const blueprintEvents = useSelector(selectAllBlueprintEvents);
+    const hasBlueprintEvent = useSelector(
+        (state: RootState) => selectBlueprintEventComponentNodeIds(state).has(props.id),
+    );
     const hoveredCodebaseFilePath = useSelector(selectHoveredCodebaseFilePath);
-    const hoveredBlueprintComponentNodeId = useSelector(selectHoveredBlueprintComponentNodeId);
+    // A boolean, not the hovered id: selecting the id itself re-rendered every blueprint component
+    // node whenever the hover moved, rather than only the two whose answer changed.
+    const isHoveredSelf = useSelector(
+        (state: RootState) => selectHoveredBlueprintComponentNodeId(state) === props.id,
+    );
+    // Whether this component is wired to a requirement. Read from an external store as a boolean
+    // rather than as an `opacity` the page injected into `node.style`, which cost a full re-derivation
+    // of the canvas — and put presentation on the same channel the layout reads sizes from.
+    const isEmphasized = useSyncExternalStore(
+        subscribeHighlight,
+        () => isBlueprintComponentEmphasized(props.id),
+    );
     const [isDragTarget, setIsDragTarget] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const rawData = props.data as Record<string, unknown>;
@@ -120,12 +138,12 @@ function BlueprintComponentNodeImpl(props: BlueprintComponentNodeProps) {
         : "";
     const isHoveredByFile = normalizedHoveredCodebaseFilePath !== "" &&
         codebaseFilePaths.includes(normalizedHoveredCodebaseFilePath);
-    const hasBlueprintEvent = blueprintEvents.some((eventData) => eventData.componentNodeId === props.id);
-    const isHovered = hoveredBlueprintComponentNodeId === props.id || isHoveredByFile;
+    const isHovered = isHoveredSelf || isHoveredByFile;
+    const isDimmed = !isEmphasized && !isHoveredByFile;
 
     return (
         <div
-            className={`${classes.root} ${isDragTarget ? classes.rootDropActive : ""} ${isHovered ? classes.rootHovered : ""}`}
+            className={`${classes.root} ${isDragTarget ? classes.rootDropActive : ""} ${isHovered ? classes.rootHovered : ""} ${isDimmed ? classes.rootDimmed : ""}`}
             title={titleWithAttachments}
             onMouseEnter={() => {
                 if (!hasBlueprintEvent) return;

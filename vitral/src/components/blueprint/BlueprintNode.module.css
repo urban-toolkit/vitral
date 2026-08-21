@@ -2,10 +2,10 @@
     position: relative;
     color: #1f2430;
     border-radius: 16px;
+    /* No `backdrop-filter` here — see `Card.module.css`. */
     background: rgba(80, 124, 214, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.45);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-    backdrop-filter: blur(4px);
     overflow: hidden;
 }
 
@@ -134,3 +134,8 @@
     background: rgba(255, 255, 255, 0.92);
 }
 
+
+/* See `CANVAS_MOVING_CLASS` in `FlowCanvas.tsx`. */
+:global(.canvas-moving) .blueprintNode {
+    box-shadow: none;
+}

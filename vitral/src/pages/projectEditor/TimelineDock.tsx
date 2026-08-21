@@ -16,6 +16,38 @@ import type { DesignStudyEvent, GitHubEvent, Stage } from "@/config/types";
 export const TIMELINE_DOCK_HEIGHT = 380;
 export const TIMELINE_DOCK_TOGGLE_HEIGHT = 15;
 
+/**
+ * Hoisted out of the render body so the panel's style object is not reallocated on every render.
+ *
+ * No `backdrop-filter`: this panel is fixed over the transforming canvas, so its blur forced a
+ * 100vw x 380px backdrop readback on every pan and zoom frame. The 0.7 alpha stays — seeing the
+ * canvas under the dock is the point; blurring it was not.
+ */
+const TIMELINE_PANEL_STYLE: React.CSSProperties = {
+    position: "fixed",
+    backgroundColor: "rgba(255, 255, 255, 0.7)",
+    height: `${TIMELINE_DOCK_HEIGHT}px`,
+    overflowY: "auto",
+    overflowX: "hidden",
+    width: "100vw",
+    boxShadow: "0 4px 30px rgba(0, 0, 0, 0.1)",
+    border: "1px solid rgba(255, 255, 255, 0.39)",
+};
+
+const TIMELINE_PANEL_OPEN_STYLE: React.CSSProperties = { ...TIMELINE_PANEL_STYLE, bottom: 0 };
+
+/**
+ * Closed, the dock is translated off-screen rather than unmounted, so `Timeline`'s local state
+ * survives a close/open cycle. `content-visibility` makes that cheap: the whole d3 subtree is
+ * skipped for layout, style and paint while it is out of view. There is no `bottom` transition, so
+ * nothing animates and nothing is cut short.
+ */
+const TIMELINE_PANEL_CLOSED_STYLE: React.CSSProperties = {
+    ...TIMELINE_PANEL_STYLE,
+    bottom: `-${TIMELINE_DOCK_HEIGHT}px`,
+    contentVisibility: "hidden",
+};
+
 type TimelineDockProps = {
     projectId: string;
     open: boolean;
@@ -116,20 +148,7 @@ export const TimelineDock = memo(function TimelineDock({
                 />
             </div>
 
-            <div
-                style={{
-                    ...(open ? { bottom: 0 } : { bottom: `-${TIMELINE_DOCK_HEIGHT}px` }),
-                    position: "fixed",
-                    backgroundColor: "rgba(255, 255, 255, 0.7)",
-                    height: `${TIMELINE_DOCK_HEIGHT}px`,
-                    overflowY: "auto",
-                    overflowX: "hidden",
-                    width: "100vw",
-                    boxShadow: "0 4px 30px rgba(0, 0, 0, 0.1)",
-                    border: "1px solid rgba(255, 255, 255, 0.39)",
-                    backdropFilter: "blur(4px)",
-                }}
-            >
+            <div style={open ? TIMELINE_PANEL_OPEN_STYLE : TIMELINE_PANEL_CLOSED_STYLE}>
                 <Timeline
                     projectId={projectId}
                     readOnly={readOnly}

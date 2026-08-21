@@ -1,16 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { fileRecord } from "@/config/types";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-
-import { Document, Page, pdfjs } from "react-pdf";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
-import { NotebookRenderer } from "@/components/cards/NotebookRenderer";
+/*
+ * Every card that holds a file mounts one of these, but only an opened file needs a renderer.
+ * Importing `react-pdf`, `pdfjs-dist`, Prism and `react-markdown` statically put all four in the
+ * canvas chunk — and `react-pdf` sets a global worker URL at import time — so each renderer is now
+ * fetched on first use instead.
+ */
+const MarkdownView = lazy(() => import("@/components/files/preview/MarkdownView"));
+const CodeView = lazy(() => import("@/components/files/preview/CodeView"));
+const PdfView = lazy(() => import("@/components/files/preview/PdfView"));
+const NotebookView = lazy(() => import("@/components/files/preview/NotebookView"));
 
 import classes from "./FilePreview.module.css";
 import FileModal from "@/components/files/FileModal";
@@ -21,30 +21,16 @@ import { resolveApiBaseUrl } from "@/api/baseUrl";
 
 const API_BASE = resolveApiBaseUrl();
 
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-
 type FilePreviewProps = {
     file: fileRecord;
 };
 
 const EMPTY_STR = "";
-const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const RAW_TEXT_FALLBACK_EXTENSIONS = new Set(["tsx", "jsx"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "ogg", "ogv", "avi"]);
 const TABULAR_EXTENSIONS = new Set(["csv", "tsv"]);
 const TABULAR_MIME_TYPES = new Set(["text/csv", "text/tab-separated-values"]);
 const TABULAR_PREVIEW_ROWS = 10;
-const PDF_ZOOM_MIN = 0.6;
-const PDF_ZOOM_MAX = 2.4;
-const PDF_ZOOM_STEP = 0.2;
-
-const customCodeBlockStyle: React.CSSProperties = {
-    margin: 0,
-    width: "100%",
-    minHeight: "100%",
-    minWidth: 0,
-    boxSizing: "border-box",
-};
 
 function normalizeExt(ext: string) {
     return (ext || "").toLowerCase().replace(/^\./, "");
@@ -79,52 +65,6 @@ function normalizeLang(ext: string) {
  * Splits delimited text into rows, keeping quoted fields (which may span newlines) intact.
  * Stops as soon as `limit` rows are collected so large datasets are never walked in full.
  */
-function splitDelimitedRows(content: string, limit: number): { rows: string[]; truncated: boolean } {
-    const rows: string[] = [];
-    let inQuotes = false;
-    let start = 0;
-
-    for (let i = 0; i < content.length; i++) {
-        const char = content[i];
-
-        if (char === '"') {
-            // A doubled quote is an escaped quote: toggling twice leaves the state unchanged.
-            inQuotes = !inQuotes;
-            continue;
-        }
-
-        if (inQuotes || (char !== "\n" && char !== "\r")) continue;
-
-        rows.push(content.slice(start, i));
-        if (char === "\r" && content[i + 1] === "\n") i++;
-        start = i + 1;
-
-        if (rows.length >= limit) {
-            return { rows, truncated: content.slice(start).trim().length > 0 };
-        }
-    }
-
-    const lastRow = content.slice(start);
-    if (lastRow.length > 0) rows.push(lastRow);
-
-    return { rows, truncated: false };
-}
-
-function normalizeNotebook(notebook: unknown) {
-    if (!notebook || typeof notebook !== "object") return null;
-
-    const parsed = notebook as Record<string, unknown>;
-    if (Array.isArray(parsed.cells)) return parsed;
-
-    const worksheets = Array.isArray(parsed.worksheets)
-        ? (parsed.worksheets as Array<Record<string, unknown>>)
-        : [];
-    const cells = worksheets.flatMap((worksheet) => (
-        Array.isArray(worksheet.cells) ? worksheet.cells : []
-    ));
-
-    return { ...parsed, cells };
-}
 
 async function fetchFileContent(docId: string, fileId: string): Promise<string> {
     const data = await getFileContent(docId, fileId);
@@ -170,7 +110,7 @@ async function convertDocxToMarkdown(blob: Blob, filename: string): Promise<stri
     return typeof payload.content === "string" ? payload.content : "";
 }
 
-export function FilePreview({ file }: FilePreviewProps) {
+function FilePreviewImpl({ file }: FilePreviewProps) {
     const ext = normalizeExt(file.ext || "");
     const lang = normalizeLang(ext);
     const resolvedDocId = typeof file.docId === "string" ? file.docId.trim() : "";
@@ -295,16 +235,6 @@ export function FilePreview({ file }: FilePreviewProps) {
         };
     }, [open, ext, resolvedDocId, hasValidDocId, file.id, file.name, isDocx, isImage, isIpynb, isPdf, isVideo]);
 
-    const notebookJson = useMemo(() => {
-        if (!isIpynb || !loadedContent) return null;
-        try {
-            const parsed = JSON.parse(loadedContent);
-            return normalizeNotebook(parsed);
-        } catch {
-            return null;
-        }
-    }, [isIpynb, loadedContent]);
-
     const previewInner = useMemo(() => {
         return (
             <FilePreviewCard
@@ -363,104 +293,31 @@ export function FilePreview({ file }: FilePreviewProps) {
 
         if (isPdf) {
             if (!pdfBlobUrl) return null;
-            const basePageWidth = clamp(Math.floor(window.innerWidth * 0.8), 520, 1000);
-            const pageWidth = Math.max(180, Math.floor(basePageWidth * pdfZoom));
-            const zoomPercent = Math.round(pdfZoom * 100);
-
             return (
-                <div className={classes.modalPdfWrap}>
-                    <div className={classes.modalPdfScroll}>
-                        <Document
-                            file={pdfBlobUrl}
-                            onLoadSuccess={(info) => setPdfNumPages(info.numPages)}
-                            loading={<LoadSpinner loading={true} />}
-                            error={<div className={classes.loadError}>Could not load PDF.</div>}
-                        >
-                            {Array.from({ length: pdfNumPages || 0 }, (_, i) => (
-                                <div key={i} className={classes.modalPdfPage}>
-                                    <Page
-                                        pageNumber={i + 1}
-                                        width={pageWidth}
-                                        renderTextLayer={false}
-                                        renderAnnotationLayer={false}
-                                    />
-                                </div>
-                            ))}
-                        </Document>
-                    </div>
-                    <div className={classes.pdfZoomControls}>
-                        <button
-                            type="button"
-                            className={classes.pdfZoomButton}
-                            onClick={() => setPdfZoom((current) => clamp(current - PDF_ZOOM_STEP, PDF_ZOOM_MIN, PDF_ZOOM_MAX))}
-                            disabled={pdfZoom <= PDF_ZOOM_MIN}
-                            aria-label="Zoom out PDF"
-                            title="Zoom out"
-                        >
-                            -
-                        </button>
-                        <span className={classes.pdfZoomValue}>{zoomPercent}%</span>
-                        <button
-                            type="button"
-                            className={classes.pdfZoomButton}
-                            onClick={() => setPdfZoom((current) => clamp(current + PDF_ZOOM_STEP, PDF_ZOOM_MIN, PDF_ZOOM_MAX))}
-                            disabled={pdfZoom >= PDF_ZOOM_MAX}
-                            aria-label="Zoom in PDF"
-                            title="Zoom in"
-                        >
-                            +
-                        </button>
-                    </div>
-                </div>
+                <PdfView
+                    blobUrl={pdfBlobUrl}
+                    numPages={pdfNumPages}
+                    zoom={pdfZoom}
+                    onNumPages={setPdfNumPages}
+                    onZoomChange={setPdfZoom}
+                />
             );
         }
 
         if (isMarkdown || isDocx) {
-            return (
-                <div className={classes.modalMarkdown}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {loadedContent ?? EMPTY_STR}
-                    </ReactMarkdown>
-                </div>
-            );
+            return <MarkdownView content={loadedContent ?? EMPTY_STR} />;
         }
 
         if (isIpynb) {
-            return notebookJson ? (
-                <div className={classes.modalNotebook}>
-                    <NotebookRenderer ipynb={notebookJson} compact={false} />
-                </div>
-            ) : (
-                <div className={classes.loadError}>Could not parse notebook JSON.</div>
-            );
+            return <NotebookView content={loadedContent} />;
         }
 
-        const content = loadedContent ?? EMPTY_STR;
-        // Datasets can be huge, so only the header plus the first rows are rendered.
-        const tabular = isTabular ? splitDelimitedRows(content, TABULAR_PREVIEW_ROWS + 1) : null;
-
-        const highlighter = (
-            <div className={classes.outerSyntaxHighlighter}>
-                <SyntaxHighlighter
-                    style={oneDark}
-                    language={lang}
-                    wrapLongLines={true}
-                    customStyle={customCodeBlockStyle}
-                >
-                    {tabular ? tabular.rows.join("\n") : content}
-                </SyntaxHighlighter>
-            </div>
-        );
-
-        if (!tabular?.truncated) return highlighter;
-
         return (
-            <div className={classes.modalTabular}>
-                <div className={classes.tabularNotice}>
-                    Showing the first {TABULAR_PREVIEW_ROWS} rows of this file.
-                </div>
-                {highlighter}
-            </div>
+            <CodeView
+                content={loadedContent ?? EMPTY_STR}
+                language={lang}
+                tabularRowLimit={isTabular ? TABULAR_PREVIEW_ROWS : null}
+            />
         );
     }, [
         file.name,
@@ -475,7 +332,6 @@ export function FilePreview({ file }: FilePreviewProps) {
         loadError,
         loadedContent,
         loading,
-        notebookJson,
         pdfBlobUrl,
         pdfNumPages,
         pdfZoom,
@@ -494,8 +350,18 @@ export function FilePreview({ file }: FilePreviewProps) {
             </div>
 
             <FileModal open={open} onClose={close} title={file.name}>
-                {modalInner}
+                {/* One boundary for all four renderers: only one is ever mounted at a time. */}
+                <Suspense fallback={<LoadSpinner loading={true} />}>
+                    {modalInner}
+                </Suspense>
             </FileModal>
         </>
     );
 }
+
+/**
+ * Memoised: one of these lives inside every card that holds a file, and its own body carries seven
+ * pieces of state and four memos. It has no reason to re-run when the card around it re-renders for
+ * an unrelated reason.
+ */
+export const FilePreview = memo(FilePreviewImpl);

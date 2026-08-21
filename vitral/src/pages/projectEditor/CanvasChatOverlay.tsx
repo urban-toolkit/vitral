@@ -1,4 +1,4 @@
-import type { FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
 import classes from "./CanvasChatOverlay.module.css";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faPaperPlane } from '@fortawesome/free-solid-svg-icons';
@@ -13,11 +13,14 @@ type CanvasChatOverlayProps = {
     open: boolean;
     loading: boolean;
     error: string | null;
-    inputValue: string;
     filterActive: boolean;
     messages: CanvasChatEntry[];
-    onInputValueChange: (value: string) => void;
-    onSend: () => void;
+    /**
+     * Called with the draft text. The draft itself lives in here rather than in the editor page: a
+     * keystroke there re-ran that component's 39 memo dependency lists and 16 store selectors, and
+     * put a new `onSend` identity on every render.
+     */
+    onSend: (text: string) => void;
     onClose: () => void;
     onClearFilter: () => void;
 };
@@ -26,20 +29,27 @@ export function CanvasChatOverlay({
     open,
     loading,
     error,
-    inputValue,
     filterActive,
     messages,
-    onInputValueChange,
     onSend,
     onClose,
     onClearFilter,
 }: CanvasChatOverlayProps) {
-    if (!open) return null;
+    const [inputValue, setInputValue] = useState("");
 
-    const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    const send = useCallback(() => {
+        const trimmed = inputValue.trim();
+        if (!trimmed) return;
+        setInputValue("");
+        onSend(trimmed);
+    }, [inputValue, onSend]);
+
+    const onSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        onSend();
-    };
+        send();
+    }, [send]);
+
+    if (!open) return null;
 
     return (
         <div className={classes.backdrop} onMouseDown={onClose}>
@@ -99,14 +109,14 @@ export function CanvasChatOverlay({
                     <textarea
                         className={classes.input}
                         value={inputValue}
-                        onChange={(event) => onInputValueChange(event.target.value)}
+                        onChange={(event) => setInputValue(event.target.value)}
                         placeholder="Ask about your design process..."
                         disabled={loading}
                         rows={3}
                         onKeyDown={(event) => {
                             if (event.key === "Enter" && !event.shiftKey) {
                                 event.preventDefault();
-                                onSend();
+                                send();
                             }
                         }}
                         autoFocus

@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:similarity": "esbuild src/pages/projectEditor/similarityDecision.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/similarityDecision.test.mjs --log-level=warning && node node_modules/.cache/similarityDecision.test.mjs"
+    "test:similarity": "esbuild src/pages/projectEditor/similarityDecision.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/similarityDecision.test.mjs --log-level=warning && node node_modules/.cache/similarityDecision.test.mjs",
+    "test:flow-identity": "esbuild src/store/flowSlice.identity.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/flowSlice.identity.test.mjs --log-level=warning && node node_modules/.cache/flowSlice.identity.test.mjs",
+    "test:placement": "esbuild src/pages/projectEditor/activityOrbitLayout.placement.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/placement.test.mjs --log-level=warning && node node_modules/.cache/placement.test.mjs"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^7.1.0",

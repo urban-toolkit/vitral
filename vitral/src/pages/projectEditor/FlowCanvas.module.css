@@ -1,6 +1,8 @@
 .flowCanvas {
     width: 100%;
     height: 100%;
+    /* Was an inline style object on `<ReactFlow>`, reallocated on every render. */
+    background-color: #ffffff;
 }
 
 /* Changing abstraction level re-derives every position at once. React Flow moves nodes with a
@@ -65,6 +67,26 @@
     background: #9a9a9a;
     border-color: #ffffff;
     transition: opacity 120ms ease;
+}
+
+/* Cheap-paint mode. `FlowCanvas` puts `.canvas-moving` on the React Flow root for the duration of a
+   pan or zoom and takes it off ~140ms after the gesture stops (see `CANVAS_MOVING_CLASS`). Rules
+   keyed off it may only drop cost, never move anything: geometry changing mid-gesture reads as a
+   glitch, whereas a shadow returning a sixth of a second after the canvas settles does not. */
+.flowCanvas:global(.canvas-moving) :global(.react-flow__handle) {
+    transition: none;
+}
+
+/* The minimap rewrites its `viewBox` on every frame to track the viewport, which invalidates its
+   whole raster including every node rect. Skipping its layout and paint outright is the only way to
+   stop that; it snaps back the moment the gesture ends. */
+.flowCanvas:global(.canvas-moving) :global(.react-flow__minimap) {
+    content-visibility: hidden;
+}
+
+/* A 30px hover shadow on a 30px-wide card is not information. */
+.flowCanvas[data-lod="far"] :global(.react-flow__node):hover :global(.react-flow__handle) {
+    opacity: 0;
 }
 
 .flowCanvas :global(.react-flow__node):hover :global(.react-flow__handle),

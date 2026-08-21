@@ -890,6 +890,26 @@ export const selectAllBlueprintEvents = createSelector(
     s => s.blueprintEvents.allIds.map(id => s.blueprintEvents.byId[id]).filter(Boolean)
 );
 
+/**
+ * The set of component node ids that have a blueprint event, so a node can ask about itself with a
+ * boolean instead of scanning `selectAllBlueprintEvents`.
+ *
+ * That selector's only input is the whole timeline slice, so it produced a new array on any timeline
+ * change — a hover included — which re-rendered every blueprint component node on the canvas and made
+ * each of them re-scan the full event list. This is keyed on `blueprintEvents` alone.
+ */
+export const selectBlueprintEventComponentNodeIds = createSelector(
+    (state: RootState) => state.timeline.blueprintEvents,
+    (blueprintEvents) => {
+        const ids = new Set<string>();
+        for (const id of blueprintEvents.allIds) {
+            const componentNodeId = blueprintEvents.byId[id]?.componentNodeId;
+            if (typeof componentNodeId === "string" && componentNodeId !== "") ids.add(componentNodeId);
+        }
+        return ids;
+    }
+);
+
 export const selectCodebaseSubtracks = createSelector(
     selectTimelineState,
     s => s.codebaseSubtracks

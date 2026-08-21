@@ -250,6 +250,11 @@ function glyphNode(
         position: base?.position ?? { x: 0, y: 0 },
         width: size.width,
         height: size.height,
+        // And `measured`, so React Flow's internals carry the size from the first frame. A glyph is a
+        // fresh object every time the lens rebuilds, and an internal node's `measured` is taken from
+        // its user node alone — so without this the glyph spends a frame unmeasured and the edges
+        // that reach it fall back to handle geometry.
+        measured: { ...size },
         style: { ...(base?.style ?? {}), ...size },
         data: {
             ...baseData,
@@ -300,7 +305,6 @@ export function buildAbstractedGraph(params: {
         }
     }
 
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const satellitesByActivity = new Map<string, nodeType[]>();
     const activityById = new Map<string, nodeType>();
     const unassigned: nodeType[] = [];
@@ -492,11 +496,10 @@ export function buildAbstractedGraph(params: {
         return !collapsedPairs.has(key);
     });
 
-    // `nodeById` is only needed to keep the emitted order stable against the input order.
+    // Keeps the emitted order stable against the input order.
     const order = new Map(nodes.map((node, index) => [node.id, index]));
     emitted.sort((a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER)
         || a.id.localeCompare(b.id));
-    void nodeById;
 
     return { nodes: emitted, edges: [...collapsed, ...survivingExtras] };
 }
@@ -506,9 +509,31 @@ export function buildAbstractedGraph(params: {
  * forth. The dead band is **multiplicative** because zoom is geometric: a wheel notch is a fixed
  * ratio, so a ratio band is the same number of notches at every scale, where an additive one would
  * be impassable when zoomed far out and invisible when zoomed in.
+ *
+ * These sit high on purpose: reaching Threads and then Overview should take a short zoom-out from a
+ * fitted view, not a long one. Together with the card level of detail in `canvasLod.ts` the full
+ * ladder, zoom descending, is:
+ *
+ *   1.250  cards regain full chrome (zooming in)
+ *   1.013  Threads -> Detail, cards reappear at title-only detail (zooming in)
+ *   0.800  cards drop to title only
+ *   0.556  Detail -> Threads
+ *   0.475  cards regain their title (zooming in)
+ *   0.432  Overview -> Threads (zooming in)
+ *   0.304  cards become plain boxes
+ *   0.237  Threads -> Overview
+ *
+ * The two ladders interleave rather than being kept a fixed ratio apart, because only Detail draws
+ * cards at all: every detail boundary below 0.556 is crossed while the canvas is showing glyphs,
+ * which have no level-of-detail rules, so it changes nothing visible. The ones that do land inside
+ * Detail — 1.250 and 0.800 — sit 1.23x and 1.27x from the level change at 1.013, and all three are
+ * steps in the same direction (zooming in reveals more), so they read as a ramp rather than as one
+ * wheel notch redrawing the canvas twice. Re-check that if you retune either set.
+ *
+ * `minZoom` in `FlowCanvas.tsx` has to stay below 0.237 or Overview is unreachable.
  */
-export const ZOOM_OVERVIEW_MAX = 0.14;
-export const ZOOM_THREADS_MAX = 0.42;
+export const ZOOM_OVERVIEW_MAX = 0.32;
+export const ZOOM_THREADS_MAX = 0.75;
 const ZOOM_HYSTERESIS = 1.35;
 
 export function levelForZoom(zoom: number, current: CanvasLevel): CanvasLevel {

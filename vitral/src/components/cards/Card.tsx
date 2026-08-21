@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import classes from './Card.module.css';
 
@@ -13,6 +13,14 @@ import type { RootState } from '@/store';
 import { FileSlot } from '@/components/files/FileSlot';
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS, normalizeCardLabel } from '@/components/cards/cardVisuals';
 import { toLocalDateTimeInputValue } from '@/utils/dateTime';
+import {
+    isAssetHighlighted,
+    isKnowledgeHighlighted,
+    subscribe as subscribeHighlight,
+} from '@/store/canvasHighlightStore';
+
+/** Must match `transition: transform 0.8s` on `.flipCardInner`. */
+const FLIP_MS = 800;
 
 function LabelIcon({ label }: { label: string }) {
     const icon = CARD_LABEL_ICONS[normalizeCardLabel(label)];
@@ -48,21 +56,71 @@ export type CardProps = {
 };
 
 function CardImpl(props: CardProps) {
-    const [flipped, setFlipped] = useState(false);
+    // Which face is showing at rest, and whether a flip is in flight. Splitting the two is what lets
+    // a resting card drop its 3D context and its hidden face: `face` decides what is mounted,
+    // `flipping` alone pays for the animation. See the flip block in `Card.module.css`.
+    const [face, setFace] = useState<"front" | "back">("front");
+    const [flipping, setFlipping] = useState(false);
 
-    const filesById = useSelector((state: RootState) => state.files.byId);
+    const flipTo = useCallback((next: "front" | "back") => {
+        setFace(next);
+        setFlipping(true);
+    }, []);
+
+    const handleFlipTransitionEnd = useCallback((event: React.TransitionEvent<HTMLDivElement>) => {
+        // The inner wrapper's own transform, not a transition bubbling up from a descendant.
+        if (event.target !== event.currentTarget) return;
+        if (event.propertyName !== "transform") return;
+        setFlipping(false);
+    }, []);
+
+    // `transitionend` is not guaranteed — a backgrounded tab or a reduced-motion override can swallow
+    // it — and a stuck `flipping` would keep both faces and the 3D context alive for the life of the
+    // card, which is the cost this split exists to avoid.
+    useEffect(() => {
+        if (!flipping) return;
+        const timer = window.setTimeout(() => setFlipping(false), FLIP_MS + 150);
+        return () => window.clearTimeout(timer);
+    }, [flipping]);
+
+    const showFront = face === "front" || flipping;
+    const showBack = face === "back" || flipping;
+
+    // Highlight arrives as a boolean from an external store rather than as an injected `node.style`,
+    // so hovering a timeline pill or an asset re-renders the two cards whose boolean flipped instead of
+    // rebuilding every node object and re-running the whole derivation chain. See
+    // `store/canvasHighlightStore.ts`.
+    const knowledgeHighlighted = useSyncExternalStore(
+        subscribeHighlight,
+        () => isKnowledgeHighlighted(props.id),
+    );
+    const assetHighlighted = useSyncExternalStore(
+        subscribeHighlight,
+        () => isAssetHighlighted(props.data?.attachmentIds),
+    );
+
     const attachmentIds = props.data?.attachmentIds;
     // A card holds at most one file. Projects saved before that rule can still carry several, so
     // the first one is shown rather than dropped: detaching it reveals the next, and the card
     // converges on a single attachment without losing anything behind the user's back.
-    const attachedFile = useMemo<fileRecord | null>(() => {
+    //
+    // Selects the file itself rather than the whole `files.byId` map: subscribing to the map made
+    // every card on the canvas re-render whenever any file anywhere changed. The record is a stable
+    // reference until it is actually replaced, so the default identity comparison holds.
+    const attachedFile = useSelector<RootState, fileRecord | null>((state) => {
         if (!Array.isArray(attachmentIds)) return null;
         for (const fileId of attachmentIds) {
-            const file = filesById[fileId];
+            const file = state.files.byId[fileId];
             if (file) return file;
         }
         return null;
-    }, [attachmentIds, filesById]);
+    });
+
+    const originFile = useSelector<RootState, fileRecord | null>((state) => {
+        const origin = props.data?.origin;
+        if (typeof origin !== "string" || origin.trim() === "") return null;
+        return state.files.byId[origin] ?? null;
+    });
 
     const dropZoneCSS = useMemo<React.CSSProperties>(() => ({
         borderRadius: "8",
@@ -71,10 +129,13 @@ function CardImpl(props: CardProps) {
         transition: "background 0.2s ease",
     }), []);
 
-    const handleFileSelected = (file: File) => {
-        if (!props.id) return;
-        props.onAttachFile?.(props.id, file);
-    };
+    // Stable, or `AttachFileZone`'s memo could never hold.
+    const nodeId = props.id;
+    const onAttachFile = props.onAttachFile;
+    const handleFileSelected = useCallback((file: File) => {
+        if (!nodeId) return;
+        onAttachFile?.(nodeId, file);
+    }, [nodeId, onAttachFile]);
 
     const getCleanNodeProps = () => {
         const cleanProps = { ...props };
@@ -99,13 +160,7 @@ function CardImpl(props: CardProps) {
     const participantOptions = Array.isArray(props.participantOptions) ? props.participantOptions : [];
     const assignedTo = typeof props.data.assignedTo === "string" ? props.data.assignedTo : "";
     const reference = typeof props.data.reference === "string" ? props.data.reference.trim() : "";
-    const originFileName = (
-        typeof props.data.origin === "string" &&
-        props.data.origin.trim() !== "" &&
-        filesById[props.data.origin]
-    )
-        ? filesById[props.data.origin].name
-        : "";
+    const originFileName = originFile?.name ?? "";
     const isAutoGenerated = Boolean(props.data.autoGenerated || props.data.origin || reference);
     const isRelevant = props.data.relevant !== false;
     const createdAtText = (() => {
@@ -136,11 +191,27 @@ function CardImpl(props: CardProps) {
     };
 
     return (
-        <div className={`${classes.card} ${classes.flipCard} ${!isRelevant ? classes.cardNotRelevant : ""}`}>
+        <div
+            className={[
+                classes.card,
+                flipping ? classes.flipCard3d : "",
+                !isRelevant ? classes.cardNotRelevant : "",
+                knowledgeHighlighted ? classes.knowledgeHighlight : "",
+                assetHighlighted ? classes.assetHighlight : "",
+            ].filter(Boolean).join(" ")}
+        >
 
-            <div className={`${classes.flipCardInner} ${flipped ? classes.flipAnimation : ""}`}>
+            <div
+                className={[
+                    classes.flipCardInner,
+                    flipping ? classes.flipCardInner3d : "",
+                    face === "back" ? classes.flipAnimation : "",
+                ].filter(Boolean).join(" ")}
+                onTransitionEnd={handleFlipTransitionEnd}
+            >
 
-                <div className={`${classes.flipCardFront} ${props.data.type == "social" ? classes.socialCard : classes.techCard}`}>
+                {showFront ? (
+                <div className={`${classes.flipCardFront} ${flipping ? classes.flipCardHideBackface : ""} ${props.data.type == "social" ? classes.socialCard : classes.techCard}`}>
                     <div className={classes.header}>
                         <div className={classes.headerLeft}>
                             {isEditingLabel ? (
@@ -181,7 +252,7 @@ function CardImpl(props: CardProps) {
                             >
                                 {isRelevant ? "Relevant" : "Not Relevant"}
                             </button>
-                            <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => { setFlipped(true) }} />
+                            <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => flipTo("back")} />
                             {props.id ? (
                                 <button
                                     type="button"
@@ -268,11 +339,13 @@ function CardImpl(props: CardProps) {
                     ) : null}
 
                 </div>
+                ) : null}
 
-                <div className={`${classes.flipCardBack} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>
+                {showBack ? (
+                <div className={`${classes.flipCardBack} ${flipping ? classes.flipCardHideBackface : ""} ${props.data.type == "social" ? classes.socialCardBack : classes.techCardBack}`}>
                     <div className={classes.header}>
                         <p>{`${normalizedLabel[0].toUpperCase()}${normalizedLabel.slice(1)}`}</p>
-                        <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => { setFlipped(false) }} />
+                        <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => flipTo("front")} />
                     </div>
                     <div className={classes.backBody}>
                         <div
@@ -403,6 +476,7 @@ function CardImpl(props: CardProps) {
                         ) : null}
                     </div>
                 </div>
+                ) : null}
 
             </div>
 

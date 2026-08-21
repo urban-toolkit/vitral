@@ -73,27 +73,6 @@ export function useDocumentSync(projectId: string) {
     const hasLoadedRef = useRef(false); // Blocks autosave until loading is done
     const activeProjectIdRef = useRef<string>(projectId);
 
-    // Hash to avoid saving identical state repeatedly
-    const currentHash = useMemo(() => {
-        return JSON.stringify({
-            nodes: flow.nodes,
-            edges: flow.edges,
-            title: flow.title,
-            stages: stages,
-            subStages: subStages,
-            designStudyEvents: designStudyEvents,
-            blueprintEvents: blueprintEvents,
-            blueprintCodebaseLinks: blueprintCodebaseLinks,
-            systemScreenshotMarkers: systemScreenshotMarkers,
-            codebaseSubtracks: codebaseSubtracks,
-            knowledgeSubtracks: knowledgeSubtracks,
-            knowledgePillTrackAssignments: knowledgePillTrackAssignments,
-            participants: participants,
-            defaultStages: defaultStages,
-            llmModel: llmModel,
-            timelineStartEnd: timelineStartEnd
-        });
-    }, [flow.nodes, flow.edges, flow.title, stages, subStages, defaultStages, llmModel, timelineStartEnd, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants]);
 
     // Debounced autosave whenever flow changes
     const debouncedSave = useMemo(
@@ -313,6 +292,28 @@ export function useDocumentSync(projectId: string) {
         if (status === "loading" || status === "error") return;
         if (reviewOnly) return;
 
+        // Hash to avoid saving identical state repeatedly. Computed here rather than in a `useMemo`
+        // during render: it is a `JSON.stringify` of the whole document, it is only ever read by this
+        // effect, and the guards above mean a review-only session no longer pays for it at all.
+        const currentHash = JSON.stringify({
+            nodes: flow.nodes,
+            edges: flow.edges,
+            title: flow.title,
+            stages: stages,
+            subStages: subStages,
+            designStudyEvents: designStudyEvents,
+            blueprintEvents: blueprintEvents,
+            blueprintCodebaseLinks: blueprintCodebaseLinks,
+            systemScreenshotMarkers: systemScreenshotMarkers,
+            codebaseSubtracks: codebaseSubtracks,
+            knowledgeSubtracks: knowledgeSubtracks,
+            knowledgePillTrackAssignments: knowledgePillTrackAssignments,
+            participants: participants,
+            defaultStages: defaultStages,
+            llmModel: llmModel,
+            timelineStartEnd: timelineStartEnd
+        });
+
         if (currentHash === lastSavedHashRef.current) return;
 
         if (currentHash !== lastRevisionHashRef.current) {
@@ -338,7 +339,7 @@ export function useDocumentSync(projectId: string) {
         }
 
         debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants, defaultStages, llmModel, timelineStartEnd, flow.title);
-    }, [projectId, currentHash, flow.nodes, flow.edges, flow.title, status, reviewOnly, debouncedSave, debouncedRevision, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, defaultStages, llmModel, timelineStartEnd, participants]);
+    }, [projectId, flow.nodes, flow.edges, flow.title, status, reviewOnly, debouncedSave, debouncedRevision, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, defaultStages, llmModel, timelineStartEnd, participants]);
 
     return { status, error, reviewOnly };
 }
