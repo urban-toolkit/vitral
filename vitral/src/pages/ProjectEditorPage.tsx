@@ -148,7 +148,10 @@ import {
 } from "@/pages/projectEditor/TimelineDock";
 import type { KnowledgeBaseEvent } from "@/components/timeline/timelineTypes";
 import type { BlueprintEventConnection } from "@/components/timeline/timelineTypes";
-import { useFileAttachmentProcessing } from "@/pages/projectEditor/useFileAttachmentProcessing";
+import {
+    useFileAttachmentProcessing,
+    type CanvasDropConnection,
+} from "@/pages/projectEditor/useFileAttachmentProcessing";
 import { SystemScreenshotPanel } from "@/pages/projectEditor/SystemScreenshotPanel";
 
 const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["requirement"]);
@@ -219,6 +222,25 @@ type PendingConnectionMenu = {
     targetId: string;
     sourceLabel: string;
     targetLabel: string;
+    defaultLabel: string;
+    x: number;
+    y: number;
+};
+
+/**
+ * Files dropped inside an activity's ring, waiting on the one question the drop cannot answer:
+ * which relation the cards should carry.
+ *
+ * The whole batch is held rather than created and rewired afterwards, so a cancelled answer leaves
+ * nothing behind and every file in the drop ends up with the same relation. `File` handles survive
+ * the drag ending — the `DataTransfer` does not, which is why the list is copied out of it in the
+ * drop handler rather than read here.
+ */
+type PendingFileDropMenu = {
+    files: File[];
+    basePosition: { x: number; y: number };
+    activityNodeId: string;
+    activityTitle: string;
     defaultLabel: string;
     x: number;
     y: number;
@@ -957,6 +979,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [playbackAt, setPlaybackAt] = useState<string | null>(null);
     const [projectGoal, setProjectGoal] = useState("");
     const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
+    const [pendingFileDropMenu, setPendingFileDropMenu] = useState<PendingFileDropMenu | null>(null);
     const queuedPositionChangesRef = useRef<Array<NodeChange<nodeType> & { __editAt?: string }>>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
     const previousNodesRef = useRef<nodeType[]>([]);
@@ -1508,9 +1531,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         file: File,
         dropPosition: { x: number; y: number },
         targetActivityNodeId?: string | null,
+        connection?: CanvasDropConnection | null,
     ): Promise<string | null> => {
         if (interactionLocked) return null;
-        return await onAttachFileToCanvas(file, dropPosition, targetActivityNodeId);
+        return await onAttachFileToCanvas(file, dropPosition, targetActivityNodeId, connection);
     }, [interactionLocked, onAttachFileToCanvas]);
 
     const flushQueuedPositionChanges = useCallback(() => {
@@ -2556,6 +2580,57 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         e.dataTransfer.dropEffect = "copy";
     }, [interactionLocked]);
 
+    /**
+     * Uploads a batch of dropped files and turns each into a card, one at a time.
+     *
+     * Sequential on purpose: the cards are `object` cards named after the file and the uploads are
+     * the slow part, so racing them only reorders the canvas. `connection` is the relation chosen
+     * once for the whole batch (drop-ring flow) and is ignored when there is no activity to
+     * connect to.
+     */
+    const runCanvasFileDrop = useCallback(async (
+        files: File[],
+        basePosition: { x: number; y: number },
+        activityNodeId: string | null,
+        connection: CanvasDropConnection | null,
+    ) => {
+        for (let index = 0; index < files.length; index++) {
+            const dropPosition = activityNodeId
+                ? basePosition
+                : {
+                    x: basePosition.x - (CARD_WIDTH_PX / 2) + (index * (CARD_WIDTH_PX + 100)),
+                    y: basePosition.y - (CARD_HEIGHT_PX / 2),
+                };
+            const createdNodeId = await onAttachFileForCanvas(files[index], dropPosition, activityNodeId, connection);
+
+            // Only the first card pulls the camera; panning once per file in a multi-file drop
+            // would yank the canvas around while the uploads finish.
+            if (index === 0 && createdNodeId) setPendingFocusNodeId(createdNodeId);
+
+            // Un-hide the card's label only once the card exists. Clearing a filter re-runs the
+            // explore-mode fitView, and doing that up front — before the upload resolves — would
+            // frame the graph *without* the new card, so a card dropped outside those bounds
+            // ended up off-screen with only an unexplained camera move to show for it.
+            if (index === 0) resetFiltersForCanvasCreation("object");
+        }
+    }, [onAttachFileForCanvas, resetFiltersForCanvasCreation]);
+
+    /** Answer to the drop-ring relation question: create the whole batch with the chosen edge. */
+    const handleFileDropConnectSelection = useCallback((option: EdgeConnectOption) => {
+        const pending = pendingFileDropMenu;
+        setPendingFileDropMenu(null);
+        if (!pending) return;
+        if (interactionLocked) return;
+
+        const connection: CanvasDropConnection = option === "default"
+            ? { label: pending.defaultLabel }
+            : option === "referenced_by"
+                ? { label: REFERENCED_BY_EDGE_LABEL, kind: "referenced_by" }
+                : { label: ITERATION_OF_EDGE_LABEL, kind: "iteration_of" };
+
+        void runCanvasFileDrop(pending.files, pending.basePosition, pending.activityNodeId, connection);
+    }, [interactionLocked, pendingFileDropMenu, runCanvasFileDrop]);
+
     const handleCanvasDrop = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
         if (!canvasIsEditable) return;
@@ -2593,28 +2668,27 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         // the placement of each card is then resolved next to the activity, not at the cursor.
         const activityTarget = findActivityDropTarget(getActivityDropTargets(displayedNodes), basePosition);
 
-        void (async () => {
-            for (let index = 0; index < droppedFiles.length; index++) {
-                const dropPosition = activityTarget
-                    ? basePosition
-                    : {
-                        x: basePosition.x - (CARD_WIDTH_PX / 2) + (index * (CARD_WIDTH_PX + 100)),
-                        y: basePosition.y - (CARD_HEIGHT_PX / 2),
-                    };
-                const createdNodeId = await onAttachFileForCanvas(droppedFiles[index], dropPosition, activityTarget?.nodeId ?? null);
+        if (activityTarget) {
+            // An edge is about to be created, so the same question the manual connect gesture asks
+            // gets asked here — once, for the whole batch. Nothing is uploaded until it is
+            // answered, so dismissing the menu leaves the canvas exactly as it was.
+            const defaultLabel = relationLabelFor("activity", "object") ?? "related to";
+            const menuWidth = 420;
+            const menuHeight = 76;
+            setPendingFileDropMenu({
+                files: droppedFiles,
+                basePosition,
+                activityNodeId: activityTarget.nodeId,
+                activityTitle: activityTarget.title,
+                defaultLabel,
+                x: Math.max(12, Math.min(window.innerWidth - menuWidth - 12, e.clientX - (menuWidth / 2))),
+                y: Math.max(12, Math.min(window.innerHeight - menuHeight - 12, e.clientY - menuHeight - 8)),
+            });
+            return;
+        }
 
-                // Only the first card pulls the camera; panning once per file in a multi-file drop
-                // would yank the canvas around while the uploads finish.
-                if (index === 0 && createdNodeId) setPendingFocusNodeId(createdNodeId);
-
-                // Un-hide the card's label only once the card exists. Clearing a filter re-runs the
-                // explore-mode fitView, and doing that up front — before the upload resolves — would
-                // frame the graph *without* the new card, so a card dropped outside those bounds
-                // ended up off-screen with only an unexplained camera move to show for it.
-                if (index === 0) resetFiltersForCanvasCreation("object");
-            }
-        })();
-    }, [canvasIsEditable, displayedNodes, dispatch, interactionLocked, onAttachFileForCanvas, resetFiltersForCanvasCreation, resolveActionTimestamp, screenToFlowPosition]);
+        void runCanvasFileDrop(droppedFiles, basePosition, null, null);
+    }, [canvasIsEditable, displayedNodes, dispatch, interactionLocked, runCanvasFileDrop, resolveActionTimestamp, screenToFlowPosition]);
 
     const onFreeInputSubmit = useCallback(async (x: number, y: number, userText: string) => {
         if (interactionLocked) return;
@@ -2877,6 +2951,31 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             window.removeEventListener("keydown", handleWindowKeyDown);
         };
     }, [pendingConnectionMenu]);
+
+    // Same dismissal contract as the connect menu: clicking away or pressing Escape cancels. The
+    // files are only held in state, so cancelling uploads nothing and leaves no card behind.
+    useEffect(() => {
+        if (!pendingFileDropMenu) return;
+
+        const handleWindowPointerDown = () => setPendingFileDropMenu(null);
+        const handleWindowKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setPendingFileDropMenu(null);
+        };
+
+        window.addEventListener("pointerdown", handleWindowPointerDown);
+        window.addEventListener("keydown", handleWindowKeyDown);
+        return () => {
+            window.removeEventListener("pointerdown", handleWindowPointerDown);
+            window.removeEventListener("keydown", handleWindowKeyDown);
+        };
+    }, [pendingFileDropMenu]);
+
+    // A drop menu left open across a level change or a review-mode switch would create cards the
+    // canvas can no longer accept, so it is dropped with the affordance that raised it.
+    useEffect(() => {
+        if (canvasIsEditable && !interactionLocked) return;
+        setPendingFileDropMenu(null);
+    }, [canvasIsEditable, interactionLocked]);
 
     useEffect(() => {
         if (!interactionLocked) return;
@@ -4123,6 +4222,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 open={!interactionLocked && pendingConnectionMenu !== null}
                 onClose={() => setPendingConnectionMenu(null)}
                 onSelect={handleConnectSelection}
+            />
+
+            <EdgeConnectMenu
+                x={pendingFileDropMenu?.x ?? 0}
+                y={pendingFileDropMenu?.y ?? 0}
+                defaultLabel={pendingFileDropMenu?.defaultLabel ?? "generated by"}
+                heading={pendingFileDropMenu
+                    ? `Connect ${pendingFileDropMenu.files.length} ${pendingFileDropMenu.files.length === 1 ? "card" : "cards"} to “${pendingFileDropMenu.activityTitle}” with:`
+                    : undefined}
+                open={!interactionLocked && pendingFileDropMenu !== null}
+                onCancel={() => setPendingFileDropMenu(null)}
+                onClose={() => setPendingFileDropMenu(null)}
+                onSelect={handleFileDropConnectSelection}
             />
 
             <CanvasSidebar

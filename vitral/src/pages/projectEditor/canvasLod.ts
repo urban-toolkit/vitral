@@ -9,32 +9,33 @@
  *
  * The tiers are drawn by usability, not by legibility. A card is 200x260 (`canvasGeometry.ts`), its
  * title is 16px and its chrome 9-12px (`typography.css`):
- *   - `near` (>= 1.00): the card is full size or larger, so all of its chrome is comfortably usable.
- *   - `mid` (0.38-1.00): 76-200px. The chrome renders at 3-12px, below the point where it is worth
- *     reading or worth hitting, so only the title is drawn.
- *   - `far` (< 0.38): under 76px, which puts the title itself under 6px. Nothing inside carries
+ *   - `near` (>= 0.55): 110px and up. The chrome renders at 5-7px, which is small but still tells
+ *     you what kind of card this is and whether it carries a file. A card keeps it until that
+ *     stops being true — not as soon as it stops being comfortable to read.
+ *   - `mid` (0.18-0.55): 36-110px. Only the title is drawn.
+ *   - `far` (< 0.18): under 36px, which puts the 16px title under 3px. Nothing inside carries
  *     information any more — the card is a coloured box.
  *
- * Hysteresis is multiplicative for the same reason as in `levelForZoom`: zoom is geometric, so a
- * ratio band is a constant number of wheel notches at every scale.
+ * **The boundaries are symmetric: there is no hysteresis.** A tier flips at exactly the same zoom
+ * whichever direction the gesture is going, because a Schmitt trigger here is invisible in the UI
+ * and reads as the threshold moving on its own — zoom out past the point where the card simplifies,
+ * zoom back the same amount, and nothing comes back. Flicker is not a real risk: the tier is one
+ * DOM attribute write, and either crossing costs a single style recalculation.
  *
- * The live boundaries are 1.250 / 0.800 (near<->mid) and 0.475 / 0.304 (mid<->far). With follow-zoom
- * on they interleave with `levelForZoom`'s (1.013 / 0.556 and 0.432 / 0.237); only the two above 0.556
- * are ever visible, because below that the canvas is showing glyphs, which carry no level-of-detail
- * rules. The combined ladder is written out in the `levelForZoom` docblock in `canvasAbstraction.ts`
- * — read it before retuning either set.
+ * The live boundaries are 0.550 (near<->mid) and 0.180 (mid<->far). With follow-zoom on, both sit
+ * *below* `levelForZoom`'s Detail boundary (0.850), so on that path a card is never simplified in
+ * place — the abstraction takes over first and the cards become glyphs. That is the deliberate
+ * order, and it is written out in full in the `levelForZoom` docblock in `canvasAbstraction.ts` —
+ * read it before retuning either set.
  */
 export type CanvasLod = "near" | "mid" | "far";
 
-export const ZOOM_LOD_NEAR_MIN = 1.0;
-export const ZOOM_LOD_FAR_MAX = 0.38;
-const ZOOM_LOD_HYSTERESIS = 1.25;
+export const ZOOM_LOD_NEAR_MIN = 0.55;
+export const ZOOM_LOD_FAR_MAX = 0.18;
 
 export function lodForZoom(zoom: number, current: CanvasLod): CanvasLod {
     if (!Number.isFinite(zoom) || zoom <= 0) return current;
-    if (current === "far") return zoom > ZOOM_LOD_FAR_MAX * ZOOM_LOD_HYSTERESIS ? "mid" : "far";
-    if (current === "near") return zoom < ZOOM_LOD_NEAR_MIN / ZOOM_LOD_HYSTERESIS ? "mid" : "near";
-    if (zoom < ZOOM_LOD_FAR_MAX / ZOOM_LOD_HYSTERESIS) return "far";
-    if (zoom > ZOOM_LOD_NEAR_MIN * ZOOM_LOD_HYSTERESIS) return "near";
-    return "mid";
+    if (zoom <= ZOOM_LOD_FAR_MAX) return "far";
+    if (zoom < ZOOM_LOD_NEAR_MIN) return "mid";
+    return "near";
 }

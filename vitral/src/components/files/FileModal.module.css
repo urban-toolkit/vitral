@@ -1,17 +1,56 @@
-.outerModal {
+/* The docked panel: an ordinary card descendant, laid out in canvas coordinates. Everything here is
+   in the same units as the card's 200x260, so the viewport transform scales the panel with it and
+   moves it with it — no measuring, no synchronising against pan or zoom. See `FileModal.tsx`.
+
+   `left` is measured from the zero-width dock host already pinned to the card's right edge, so it
+   is just the gap. Vertically centred on the card: the panel is taller than the card either way,
+   and splitting the overhang reads better than hanging it all below. */
+.dockedPanel {
+    position: absolute;
+    left: 18px;
+    top: 130px;
+    transform: translateY(-50%);
+    width: 560px;
+    height: 420px;
+    display: flex;
+    /* Above the card's own chrome (`.labelIcon` sits at 2) and React Flow's handles. The node
+       wrapper is lifted over its neighbours separately — see `Card.module.css`. */
+    z-index: 10;
+}
+
+/* The 14px leader that ties the panel back to the card it belongs to; without it a panel that has
+   drifted behind a neighbouring card reads as unattached. */
+.dockedPanel::before {
+    content: "";
+    position: absolute;
+    right: 100%;
+    top: 50%;
+    width: 18px;
+    height: 2px;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+/* Fallback for a `FilePreview` mounted outside a card, where there is no dock to portal into and
+   `position: fixed` resolves against the real viewport. 336px clears the expanded canvas sidebar
+   (320px, `CanvasSidebar.module.css .panel`) and so also the collapsed one. */
+.floatingPanel {
     position: fixed;
     z-index: 100000;
-    left: 220px;
-    top: 0;
-    border: 1px solid rgba(255, 255, 255, 0.39);
+    left: 336px;
+    top: 16px;
+    width: min(850px, calc(100vw - 352px));
+    height: min(800px, calc(100vh - 32px));
+    display: flex;
 }
 
 .innerModal {
     background: white;
     border-radius: 14px;
-    width: 850px;
-    height: 800px;
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.18);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -50,4 +89,10 @@
     overflow: auto;
     padding: 5px;
     display: block;
+}
+
+/* Cheap-paint mode — see `CANVAS_MOVING_CLASS` in `FlowCanvas.tsx`. Same bargain the cards strike:
+   a 26px shadow re-rasterised at every scale during a zoom is not what is being looked at. */
+:global(.canvas-moving) .innerModal {
+    box-shadow: none;
 }

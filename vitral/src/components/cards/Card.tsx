@@ -11,6 +11,7 @@ import { useSelector } from 'react-redux';
 import type { fileRecord, nodeType } from '@/config/types';
 import type { RootState } from '@/store';
 import { FileSlot } from '@/components/files/FileSlot';
+import { CardPreviewDockContext } from '@/components/cards/cardPreviewDock';
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS, normalizeCardLabel } from '@/components/cards/cardVisuals';
 import { toLocalDateTimeInputValue } from '@/utils/dateTime';
 import {
@@ -60,6 +61,10 @@ function CardImpl(props: CardProps) {
     // a resting card drop its 3D context and its hidden face: `face` decides what is mounted,
     // `flipping` alone pays for the animation. See the flip block in `Card.module.css`.
     const [face, setFace] = useState<"front" | "back">("front");
+    // The host the open file preview panel portals into — see `CardPreviewDock`. Held as state, not
+    // a ref, because the panel is a React subtree: it can only be created once the element exists,
+    // and a ref assignment would not re-render to say so.
+    const [previewDock, setPreviewDock] = useState<HTMLDivElement | null>(null);
     const [flipping, setFlipping] = useState(false);
 
     const flipTo = useCallback((next: "front" | "back") => {
@@ -201,6 +206,7 @@ function CardImpl(props: CardProps) {
             ].filter(Boolean).join(" ")}
         >
 
+            <CardPreviewDockContext value={previewDock}>
             <div
                 className={[
                     classes.flipCardInner,
@@ -479,6 +485,12 @@ function CardImpl(props: CardProps) {
                 ) : null}
 
             </div>
+            </CardPreviewDockContext>
+
+            {/* Zero-sized anchor pinned to the card's right edge. Empty until a file preview is
+                opened, at which point the panel portals in and overflows it — `.card` contains
+                layout and style but deliberately not paint, so the overflow draws. */}
+            <div ref={setPreviewDock} className={classes.previewDock} />
 
             {
                 props.id != undefined

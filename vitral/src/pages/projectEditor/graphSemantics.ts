@@ -51,6 +51,22 @@ export function connectionKindFromEdge(edge: edgeType): ConnectionKind {
     return "regular";
 }
 
+/**
+ * Card labels that never take an automatic `referenced by` / `iteration of` edge, at either end.
+ *
+ * A `person` card is a name, and a name embeds into whatever the surrounding text is about — so two
+ * people who took part in the same kind of session look "similar" for reasons that have nothing to
+ * do with either of them, and one participant who appears in every study becomes a hub that
+ * hijacks salience (contract 21: an automatic edge is not clutter, it changes which cards get
+ * promoted and what a phase is called). People are context, not content: the only edge a person
+ * gets is the one to the activity they took part in, which is created explicitly, not inferred.
+ */
+export const AUTO_LINK_EXCLUDED_LABELS: ReadonlySet<string> = new Set(["person"]);
+
+export function canAutoLink(label: string): boolean {
+    return !AUTO_LINK_EXCLUDED_LABELS.has(normalizeNodeLabel(label));
+}
+
 /** Soft-deleted edges stay in the store to preserve history, but are not part of the live graph. */
 export function isEdgeActive(edge: edgeType): boolean {
     const deletedAt = (edge.data as Record<string, unknown> | undefined)?.deletedAt;

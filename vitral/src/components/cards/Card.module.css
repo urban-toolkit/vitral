@@ -289,6 +289,30 @@
 	cursor: pointer;
 }
 
+/* ============================= */
+
+/* The open file preview, docked to the card's right edge. It is an ordinary card descendant, so the
+   viewport transform carries it: drag the card and the panel comes along, zoom and both scale
+   together. That is the whole reason it stopped being a `position: fixed` overlay.
+
+   Zero-sized on purpose — the panel inside is absolutely positioned and overflows freely. `.card`
+   contains layout and style but not paint, so nothing clips it; the faces do contain paint, which
+   is why the panel portals up here instead of rendering where `FilePreview` sits. */
+.previewDock {
+	position: absolute;
+	top: 0;
+	left: 100%;
+	width: 0;
+	height: 0;
+}
+
+/* A panel is several times the size of a card and would otherwise be painted under every node that
+   sorts above this one. React Flow writes `z-index` inline on the node wrapper, hence `!important`;
+   `:has()` keeps it to the cards that actually have a preview open (the dock is empty otherwise). */
+:global(.react-flow__node):has(.previewDock > *) {
+	z-index: 60 !important;
+}
+
 .flipCard3d {
 	perspective: 1000px;
 }
@@ -391,6 +415,13 @@
 :global([data-lod="far"]) .card:not(:focus-within) {
 	background: var(--technical-color);
 	border-radius: 16px;
+}
+
+/* At the far tier a card is one rounded rectangle a few pixels across; a full-detail panel beside it
+   would be unreadable and would cost a paint per frame of the zoom. `display: none` keeps the
+   panel's React state — reopening is not required after zooming back in. */
+:global([data-lod="far"]) .card:not(:focus-within) .previewDock {
+	display: none;
 }
 
 /* Highlight, driven by `store/canvasHighlightStore.ts` rather than by an injected `node.style` — see

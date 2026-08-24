@@ -61,6 +61,34 @@ const UNASSIGNED_GLYPH_MIN = 3;
 
 const BLUEPRINT_LABELS = new Set(["blueprint", "blueprint_group", "blueprint_component"]);
 
+/**
+ * People are context, not content.
+ *
+ * A `person` card says *who was there*, which is true of the whole phase or activity rather than of
+ * any one thing inside it. Treated as an ordinary card it distorts every summary at once: it wins
+ * promotions on degree (everyone is attached to their activity), it lends the glyph its accent
+ * colour and icon when it happens to be the commonest label, and it fills the body list with names
+ * where the reader is looking for what the work was about. So it is stripped out of the label
+ * counts, out of the promotion pool and out of the body, and collected into one `participants`
+ * footnote instead — which is what a name actually answers.
+ */
+const PERSON_LABEL = "person";
+
+function isPerson(node: nodeType): boolean {
+    return nodeLabelOf(node) === PERSON_LABEL;
+}
+
+/** Distinct participant names among the cards a glyph swallowed, in a stable order. */
+function collectParticipants(nodes: nodeType[]): string[] {
+    const names = new Set<string>();
+    for (const node of nodes) {
+        if (!isPerson(node)) continue;
+        const name = titleOf(node);
+        if (name !== "") names.add(name);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
 const KIND_PRIORITY: Record<ConnectionKind, number> = {
     iteration_of: 3,
     referenced_by: 2,
@@ -88,6 +116,8 @@ export type CanvasGlyphData = {
     labelCounts: Array<{ label: string; count: number }>;
     /** Verbatim titles of the strongest members, for the glyph body and its tooltip. */
     topTitles: string[];
+    /** Names of the `person` cards this glyph stands for. Drawn as the footnote, never in the body. */
+    participants: string[];
     startAt: string | null;
     endAt: string | null;
 };
@@ -125,7 +155,7 @@ function countLabels(nodes: nodeType[]): Array<{ label: string; count: number }>
     const counts = new Map<string, number>();
     for (const node of nodes) {
         const label = nodeLabelOf(node);
-        if (label === "") continue;
+        if (label === "" || label === PERSON_LABEL) continue;
         counts.set(label, (counts.get(label) ?? 0) + 1);
     }
     return Array.from(counts.entries())
@@ -134,7 +164,7 @@ function countLabels(nodes: nodeType[]): Array<{ label: string; count: number }>
         .sort((a, b) => (b.count !== a.count ? b.count - a.count : a.label.localeCompare(b.label)));
 }
 
-/** The strongest cards of the given labels, best first. */
+/** The strongest cards of the given labels, best first. People are never candidates. */
 function pickTop(
     candidates: nodeType[],
     score: Map<string, number>,
@@ -142,7 +172,11 @@ function pickTop(
     limit: number,
 ): nodeType[] {
     return candidates
-        .filter((node) => isPromotable(node) && (labels === null || labels.has(nodeLabelOf(node))))
+        .filter((node) => (
+            isPromotable(node)
+            && !isPerson(node)
+            && (labels === null || labels.has(nodeLabelOf(node)))
+        ))
         .sort((a, b) => compareBySalience(a, b, score))
         .slice(0, limit);
 }
@@ -367,6 +401,7 @@ export function buildAbstractedGraph(params: {
                 activityCount: 1,
                 labelCounts: countLabels(folded),
                 topTitles: pickTop(folded, score, null, 3).map(titleOf).filter((value) => value !== ""),
+                participants: collectParticipants(folded),
                 startAt: typeof dataOf(activity).createdAt === "string" ? String(dataOf(activity).createdAt) : null,
                 endAt: null,
             },
@@ -413,6 +448,7 @@ export function buildAbstractedGraph(params: {
                     activityCount: cluster.memberActivityIds.length,
                     labelCounts: countLabels(folded),
                     topTitles: pickTop(folded, score, null, 3).map(titleOf).filter((value) => value !== ""),
+                    participants: collectParticipants(folded),
                     startAt: cluster.startAt,
                     endAt: cluster.endAt,
                 },
@@ -464,6 +500,7 @@ export function buildAbstractedGraph(params: {
                 activityCount: 0,
                 labelCounts: countLabels(unassigned),
                 topTitles: pickTop(unassigned, score, null, 3).map(titleOf).filter((value) => value !== ""),
+                participants: collectParticipants(unassigned),
                 startAt: null,
                 endAt: null,
             },
@@ -505,44 +542,42 @@ export function buildAbstractedGraph(params: {
 }
 
 /**
- * Zoom to level, with a Schmitt trigger so hovering a threshold does not flip the canvas back and
- * forth. The dead band is **multiplicative** because zoom is geometric: a wheel notch is a fixed
- * ratio, so a ratio band is the same number of notches at every scale, where an additive one would
- * be impassable when zoomed far out and invisible when zoomed in.
+ * Zoom to level.
+ *
+ * **The boundaries are symmetric: there is no hysteresis.** There used to be a multiplicative dead
+ * band here, on the theory that hovering a threshold would flip the canvas back and forth. In use
+ * it does the opposite of reassure: the band is 1.35x wide either way, so the level changed at
+ * 0.556 zooming out and only came back at 1.013 zooming in, and the threshold read as if it moved
+ * on its own. A gesture that crosses a boundary and comes straight back now lands exactly where it
+ * started. Oscillation is not a real risk — `handleViewportMove` early-returns unless the band
+ * actually changed, and nothing in the level change writes the viewport (see the `fitView` note in
+ * contract 19), so a crossing cannot feed itself.
  *
  * These sit high on purpose: reaching Threads and then Overview should take a short zoom-out from a
  * fitted view, not a long one. Together with the card level of detail in `canvasLod.ts` the full
  * ladder, zoom descending, is:
  *
- *   1.250  cards regain full chrome (zooming in)
- *   1.013  Threads -> Detail, cards reappear at title-only detail (zooming in)
- *   0.800  cards drop to title only
- *   0.556  Detail -> Threads
- *   0.475  cards regain their title (zooming in)
- *   0.432  Overview -> Threads (zooming in)
- *   0.304  cards become plain boxes
- *   0.237  Threads -> Overview
+ *   0.850  Detail <-> Threads
+ *   0.550  cards drop to title only
+ *   0.420  Threads <-> Overview
+ *   0.180  cards become plain boxes
  *
- * The two ladders interleave rather than being kept a fixed ratio apart, because only Detail draws
- * cards at all: every detail boundary below 0.556 is crossed while the canvas is showing glyphs,
- * which have no level-of-detail rules, so it changes nothing visible. The ones that do land inside
- * Detail — 1.250 and 0.800 — sit 1.23x and 1.27x from the level change at 1.013, and all three are
- * steps in the same direction (zooming in reveals more), so they read as a ramp rather than as one
- * wheel notch redrawing the canvas twice. Re-check that if you retune either set.
+ * The two ladders no longer interleave: with follow-zoom on, **every** card detail boundary is
+ * below the Detail boundary, so a card is never simplified in place — zooming out replaces it with
+ * a glyph while it is still fully drawn, and the abstraction is the only simplification on that
+ * path. The card tiers still matter with follow-zoom off, which is the mode where the user pins
+ * Detail and zooms out over the bare graph; that is what they are tuned for. Retuning either set
+ * means re-checking this ordering.
  *
- * `minZoom` in `FlowCanvas.tsx` has to stay below 0.237 or Overview is unreachable.
+ * `minZoom` in `FlowCanvas.tsx` has to stay below 0.420 or Overview is unreachable.
  */
-export const ZOOM_OVERVIEW_MAX = 0.32;
-export const ZOOM_THREADS_MAX = 0.75;
-const ZOOM_HYSTERESIS = 1.35;
+export const ZOOM_OVERVIEW_MAX = 0.42;
+export const ZOOM_THREADS_MAX = 0.85;
 
 export function levelForZoom(zoom: number, current: CanvasLevel): CanvasLevel {
     if (!Number.isFinite(zoom) || zoom <= 0) return current;
 
-    if (current === 1) return zoom > ZOOM_OVERVIEW_MAX * ZOOM_HYSTERESIS ? 2 : 1;
-    if (current === 3) return zoom < ZOOM_THREADS_MAX / ZOOM_HYSTERESIS ? 2 : 3;
-
-    if (zoom < ZOOM_OVERVIEW_MAX / ZOOM_HYSTERESIS) return 1;
-    if (zoom > ZOOM_THREADS_MAX * ZOOM_HYSTERESIS) return 3;
-    return 2;
+    if (zoom <= ZOOM_OVERVIEW_MAX) return 1;
+    if (zoom <= ZOOM_THREADS_MAX) return 2;
+    return 3;
 }

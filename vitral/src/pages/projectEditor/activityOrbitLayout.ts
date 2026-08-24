@@ -6,11 +6,13 @@ import { CARD_HEIGHT_PX, CARD_WIDTH_PX, nodeSizeOf } from "@/pages/projectEditor
  *
  * Activities are the only cards where time matters: they are laid out left to right, one slot per
  * distinct `createdAt`, evenly spaced. Every other card orbits the activity it belongs to, on an
- * onion of fixed-radius layers ordered by its graph distance from that activity. Where two trees
- * would collide at that pitch they are offset vertically rather than pushed further apart in time,
- * so a project with big trees grows downward and upward instead of only sideways. Cards that reach
- * no activity go into an "unassigned" band underneath, and blueprint groups/components keep their
- * own nested structure and are translated in as one block.
+ * onion of fixed-radius layers ordered by its graph distance from that activity. The radii are
+ * fixed *per hub*, not globally: an ordinary activity card gets exactly the pitch it always did,
+ * while a summary glyph (Threads / Overview) holds its orbit further out — see `hubOrbitRadius`.
+ * Where two trees would collide at that pitch they are offset vertically rather than pushed further
+ * apart in time, so a project with big trees grows downward and upward instead of only sideways.
+ * Cards that reach no activity go into an "unassigned" band underneath, and blueprint
+ * groups/components keep their own nested structure and are translated in as one block.
  *
  * Positions are fully derived here, so stored node positions no longer affect what is rendered
  * (blueprint structure excepted, which is preserved relative to its own roots).
@@ -18,6 +20,19 @@ import { CARD_HEIGHT_PX, CARD_WIDTH_PX, nodeSizeOf } from "@/pages/projectEditor
 
 /** Radial clearance between an activity and its innermost layer: two card half-diagonals (~164 each). */
 const ORBIT_MIN_RADIUS_PX = 340;
+/** Half the diagonal of a standard card — the extent `ORBIT_MIN_RADIUS_PX` was sized against. */
+const CARD_RADIAL_EXTENT_PX = Math.hypot(CARD_WIDTH_PX, CARD_HEIGHT_PX) / 2;
+/**
+ * Extra clearance the innermost layer gets when the hub is a summary glyph (Threads / Overview).
+ *
+ * A glyph is not a card that happens to be bigger: it is a *container*, and the cards left orbiting
+ * it are the handful promoted out of it. At the card pitch they crowd its border and read as part
+ * of it — exactly the wrong grouping, since the whole point of promoting a card is that it did
+ * *not* fold in. Pushing the first layer out is what separates "inside the summary" from "beside
+ * it". The oversize term below already covers a phase glyph being physically larger; this is the
+ * deliberate breathing room on top, and it applies to both glyph sizes.
+ */
+const GLYPH_ORBIT_CLEARANCE_PX = 120;
 /**
  * Centre-to-centre distance two cards need to be guaranteed not to overlap, whatever direction
  * separates them. Two axis-aligned WxH cards overlap while `|dx| < W && |dy| < H`, and the tightest
@@ -84,9 +99,22 @@ function radialExtentOf(node: nodeType): number {
     return Math.hypot(size.width, size.height) / 2;
 }
 
+/**
+ * Radius of the innermost layer around one hub.
+ *
+ * Kept at exactly `ORBIT_MIN_RADIUS_PX` for an ordinary activity card, so the bare graph (Detail)
+ * is laid out identically to before. A hub larger than a card pushes its orbit out by however much
+ * it oversteps one, and a summary glyph gets `GLYPH_ORBIT_CLEARANCE_PX` on top of that.
+ */
+function hubOrbitRadius(hub: nodeType): number {
+    const oversize = Math.max(0, radialExtentOf(hub) - CARD_RADIAL_EXTENT_PX);
+    const glyphClearance = hub.type === "clusterGlyph" ? GLYPH_ORBIT_CLEARANCE_PX : 0;
+    return ORBIT_MIN_RADIUS_PX + oversize + glyphClearance;
+}
+
 /** Radius of the n-th onion layer. Fixed by index: a crowded layer never widens, it overflows. */
-function layerRadius(index: number): number {
-    return ORBIT_MIN_RADIUS_PX + (index * CARD_SEPARATION_PX);
+function layerRadius(index: number, hubRadius: number): number {
+    return hubRadius + (index * CARD_SEPARATION_PX);
 }
 
 /**
@@ -108,7 +136,7 @@ function layerCapacity(radius: number): number {
  * closer than its own distance, fills the layer it lands on, and opens a new layer around the
  * leaves when it runs out of room; the next hop always starts on a fresh layer.
  */
-function packOnionLayers(hopBuckets: nodeType[][]): nodeType[][] {
+function packOnionLayers(hopBuckets: nodeType[][], hubRadius: number): nodeType[][] {
     const layers: nodeType[][] = [];
     const layerAt = (index: number) => {
         while (layers.length <= index) layers.push([]);
@@ -121,7 +149,7 @@ function packOnionLayers(hopBuckets: nodeType[][]): nodeType[][] {
         layerIndex = Math.max(layerIndex, hopIndex);
 
         for (const node of bucket) {
-            while (layerAt(layerIndex).length >= layerCapacity(layerRadius(layerIndex))) {
+            while (layerAt(layerIndex).length >= layerCapacity(layerRadius(layerIndex, hubRadius))) {
                 layerIndex += 1;
             }
             layerAt(layerIndex).push(node);
@@ -399,19 +427,23 @@ export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): 
 
     // --- Onion layers: fixed radii, each hop spilling outward once its layer is full. ---
     const layersByActivityId = new Map<string, nodeType[][]>();
+    const hubRadiusByActivityId = new Map<string, number>();
     const treeRadiusByActivityId = new Map<string, number>();
     for (const activity of activities) {
         const buckets = hopBucketsByActivityId.get(activity.id) ?? [];
         for (const bucket of buckets) bucket.sort(compareByLabelTitleId);
 
-        const layers = packOnionLayers(buckets);
+        const hubRadius = hubOrbitRadius(activity);
+        hubRadiusByActivityId.set(activity.id, hubRadius);
+
+        const layers = packOnionLayers(buckets, hubRadius);
         layersByActivityId.set(activity.id, layers);
         treeRadiusByActivityId.set(
             activity.id,
             layers.length === 0
                 ? radialExtentOf(activity)
                 // Half a card diagonal past the outermost layer, so the disc contains its cards.
-                : layerRadius(layers.length - 1) + (Math.hypot(CARD_WIDTH_PX, CARD_HEIGHT_PX) / 2),
+                : layerRadius(layers.length - 1, hubRadius) + CARD_RADIAL_EXTENT_PX,
         );
     }
 
@@ -445,9 +477,10 @@ export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): 
                 y: Math.round(centerY - (activitySize.height / 2)),
             });
 
+            const hubRadius = hubRadiusByActivityId.get(activity.id) ?? ORBIT_MIN_RADIUS_PX;
             const layers = layersByActivityId.get(activity.id) ?? [];
             layers.forEach((layer, layerIndex) => {
-                const radius = layerRadius(layerIndex);
+                const radius = layerRadius(layerIndex, hubRadius);
                 // Alternate layers are rotated half a step so cards do not line up radially, which
                 // would stack every layer's edges along the same spokes.
                 const angleOffset = layerIndex % 2 === 0 ? 0 : Math.PI / layer.length;

@@ -59,12 +59,16 @@ function ClusterGlyphImpl(props: ClusterGlyphProps) {
         ? `${glyph.activityCount} ${glyph.activityCount === 1 ? "activity" : "activities"} · ${glyph.cardCount} cards`
         : `${glyph.cardCount} ${glyph.cardCount === 1 ? "card" : "cards"}`;
 
+    const participants = glyph.participants ?? [];
+    const participantsText = participants.join(", ");
+
     // The counts describe what is currently on the canvas, not the whole project — a glyph must
     // never promise more than expanding it would actually reveal.
     const tooltip = [
         glyph.label,
         summary,
         ...glyph.topTitles.map((title) => `• ${title}`),
+        ...(participantsText !== "" ? [`Participants: ${participantsText}`] : []),
     ].join("\n");
 
     const canOpen = glyph.kind !== "unassigned";
@@ -112,7 +116,19 @@ function ClusterGlyphImpl(props: ClusterGlyphProps) {
                 </ul>
             ) : null}
 
-            {canOpen ? <div className={classes.footer}>Click to open</div> : null}
+            {/* People are the one card kind a glyph never swallows silently: they are context for
+                everything inside it, so they are listed by name here instead of competing with the
+                work in the body above. */}
+            <div className={classes.footer}>
+                {participantsText !== "" ? (
+                    <p className={classes.participants} title={`Participants: ${participantsText}`}>
+                        <span className={classes.participantsLabel}>Participants:</span>
+                        {" "}
+                        {participantsText}
+                    </p>
+                ) : null}
+                {canOpen ? <span className={classes.openHint}>Click to open</span> : null}
+            </div>
 
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />

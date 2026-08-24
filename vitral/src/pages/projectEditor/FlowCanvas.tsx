@@ -177,7 +177,7 @@ export const FlowCanvas = memo(function FlowCanvas({
             onMove={handleMove}
             onMoveStart={handleMoveStart}
             onMoveEnd={handleMoveEnd}
-            /* Has to stay below the Threads -> Overview boundary (0.237, see `canvasAbstraction.ts`)
+            /* Has to stay below the Threads -> Overview boundary (0.420, see `canvasAbstraction.ts`)
                or that level can never be reached. Cheap to allow this far out now that the far tier
                draws a card as a single box. */
             minZoom={0.03}
