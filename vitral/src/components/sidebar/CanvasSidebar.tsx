@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDownload, faGear, faHouse } from "@fortawesome/free-solid-svg-icons";
+import { faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDownload, faGear, faHouse, faWandMagicSparkles } from "@fortawesome/free-solid-svg-icons";
 import type { cardLabel } from "@/config/types";
 import type { QuerySystemPapersResult, SystemPaper } from "@/api/stateApi";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
@@ -11,6 +11,8 @@ const CANVAS_ARRANGEMENT_TEXT = "Activities are placed left to right by date and
 
 /** Matches the border of a blueprint component node, so the filter reads as the thing it hides. */
 const BLUEPRINT_COMPONENT_FILTER_COLOR = "rgba(91, 186, 214, 0.70)";
+/** Matches `.modelDerivedBadge` on the card, so the chip and the badge read as one marker. */
+const MODEL_DERIVED_FILTER_COLOR = "rgba(146, 118, 200, 0.70)";
 
 function truncateLabel(text: string, maxChars: number): string {
     if (!text) return "";
@@ -141,6 +143,8 @@ type CanvasSidebarProps = {
     onToggleCollapsed: () => void;
     blueprintComponentsVisible: boolean;
     onToggleBlueprintComponents: () => void;
+    modelDerivedVisible: boolean;
+    onToggleModelDerived: () => void;
     selectedLabels: cardLabel[];
     onToggleLabel: (label: cardLabel) => void;
     systemPaperResults: QuerySystemPapersResult[];
@@ -292,6 +296,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     onToggleCollapsed,
     blueprintComponentsVisible,
     onToggleBlueprintComponents,
+    modelDerivedVisible,
+    onToggleModelDerived,
     selectedLabels,
     onToggleLabel,
     systemPaperResults,
@@ -470,6 +476,29 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                     <FontAwesomeIcon icon={faDesktop} />
                                 </span>
                                 <span className={styles.labelText}>components</span>
+                            </button>
+
+                            {/* Not a kind of card but a question about where cards came from, which
+                                is why it sits with the filters rather than in a menu: turning it off
+                                leaves only what the team wrote and collected by hand. */}
+                            <button
+                                type="button"
+                                className={`${styles.labelOption} ${modelDerivedVisible ? styles.labelOptionActive : ""}`}
+                                onClick={onToggleModelDerived}
+                                title="cards proposed by the model from a source document"
+                            >
+                                <span
+                                    className={styles.labelCircle}
+                                    style={{
+                                        backgroundColor: modelDerivedVisible
+                                            ? MODEL_DERIVED_FILTER_COLOR
+                                            : "transparent",
+                                        borderColor: MODEL_DERIVED_FILTER_COLOR,
+                                    }}
+                                >
+                                    <FontAwesomeIcon icon={faWandMagicSparkles} />
+                                </span>
+                                <span className={styles.labelText}>AI cards</span>
                             </button>
                         </div>
 

@@ -6,11 +6,12 @@
    is just the gap. Vertically centred on the card: the panel is taller than the card either way,
    and splitting the overhang reads better than hanging it all below. */
 .dockedPanel {
-    position: absolute;
-    left: 18px;
-    top: 130px;
-    transform: translateY(-50%);
-    width: 560px;
+    /* An item in the dock's column, not a free-floating box: the dock owns the offset from the card
+       and the stacking of a second panel. `relative` is only so the leader below anchors to this
+       panel rather than to the card. */
+    position: relative;
+    flex: 0 0 auto;
+    width: 100%;
     height: 420px;
     display: flex;
     /* Above the card's own chrome (`.labelIcon` sits at 2) and React Flow's handles. The node
@@ -18,8 +19,8 @@
     z-index: 10;
 }
 
-/* The 14px leader that ties the panel back to the card it belongs to; without it a panel that has
-   drifted behind a neighbouring card reads as unattached. */
+/* The leader that ties a panel back to the card it belongs to; without it a panel that has drifted
+   behind a neighbouring card reads as unattached. It spans exactly the dock's `margin-left`. */
 .dockedPanel::before {
     content: "";
     position: absolute;

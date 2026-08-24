@@ -162,6 +162,37 @@
 	border-color: rgba(107, 36, 16, 0.45);
 }
 
+/* Provenance, stated on the card itself. Same visual family as `.relevantToggle` — a 9px pill in
+   the header — because it answers a neighbouring question: that one is the user's verdict on the
+   card, this one is where the card came from. A span, not a button: it reports, it does not act. */
+.modelDerivedBadge {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	flex: 0 0 auto;
+	border: 1px solid rgba(72, 44, 122, 0.45);
+	border-radius: 999px;
+	padding: 2px 6px;
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	line-height: 1;
+	color: rgba(72, 44, 122, 0.95);
+	background: rgba(238, 231, 255, 0.75);
+	white-space: nowrap;
+	cursor: help;
+}
+
+/* The badge is the near-tier marker; this is the one that survives a zoom-out. A dashed edge reads
+   as provisional at any size and prints legibly in a figure, where a 9px pill does not — which is
+   also why no attempt is made to keep the badge alive through the `mid` tier below: at that scale
+   it would render at 2-3px and carry nothing, exactly like the rest of the chrome the tier drops. */
+.modelDerived .flipCardFront,
+.modelDerived .flipCardBack {
+	border-style: dashed;
+	border-color: rgba(72, 44, 122, 0.55);
+}
+
 .assignedText {
 	font-size: 10px;
 	text-align: left;
@@ -208,6 +239,35 @@
 	border-top: 1px solid rgba(255, 255, 255, 0.25);
 }
 
+/* The citation as an affordance. Styled as text rather than as a control — it sits in a block of
+   metadata and should read as part of it — with the underline and the pointer carrying the fact
+   that it opens something. */
+.metaOpenSource {
+	display: block;
+	width: 100%;
+	margin: 0 0 4px 0;
+	padding: 0;
+	border: none;
+	background: transparent;
+	font: inherit;
+	font-size: 10px;
+	line-height: 1.35;
+	color: inherit;
+	text-align: left;
+	word-break: break-word;
+	cursor: pointer;
+}
+
+.metaOpenSourceName {
+	margin-left: 4px;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.metaOpenSource:hover .metaOpenSourceName {
+	text-decoration-thickness: 2px;
+}
+
 .metaText {
 	margin: 0 0 4px 0;
 	font-size: 10px;
@@ -244,6 +304,18 @@
 
 .assignmentSelect option {
 	color: black;
+}
+
+/* `classes.label` was referenced from `Card.tsx` without ever being declared here, so the card's
+   kind was styled only by the `.header p` margin reset. It is declared now because the header is a
+   fixed 188x25 box and the provenance badge shares the left side with it: without a truncation
+   contract, a long kind plus the badge would wrap and spill out of a header that cannot grow. */
+.label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
 }
 
 .labelIcon {
@@ -300,10 +372,20 @@
    is why the panel portals up here instead of rendering where `FilePreview` sits. */
 .previewDock {
 	position: absolute;
-	top: 0;
+	/* Half the card's 260px height, so the column is centred on the card rather than hanging off
+	   its top corner. */
+	top: 130px;
 	left: 100%;
-	width: 0;
-	height: 0;
+	transform: translateY(-50%);
+	margin-left: 18px;
+	width: 560px;
+	/* A column, because a card can have two documents open at once: its own attachment, opened from
+	   the thumbnail on the front, and the source it was extracted from, opened from the citation on
+	   the back. They stack instead of covering each other. Height stays automatic, so an empty dock
+	   occupies nothing. */
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
 }
 
 /* A panel is several times the size of a card and would otherwise be painted under every node that
