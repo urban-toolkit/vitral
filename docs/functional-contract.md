@@ -84,9 +84,14 @@ Covered areas:
   - `iteration of`
   - `referenced by`
 
+- Typed notes become cards **deterministically, without the LLM**: one note, one card, with the label guessed from a keyword table and the note kept verbatim as the description.
+- Newly created cards are offered automatic `referenced by` / `iteration of` relations against the rest of the canvas under the same evidence gates, whether a model extracted them or the researcher typed them.
+
 ### Contract Details
 - If extraction fails, root attachment still persists.
 - Similarity-based relations are applied using threshold logic.
+- The note tool's guessed label is shown before the card is created and stays overridable, both in the input and afterwards on the card. An ambiguous note falls back to `insight` rather than being committed to a reading; a `person` card is never created without an exact match against a project participant's name.
+- A note written inside an activity's drop ring is wired to that activity with the pair's canonical relation; one written on empty canvas stays loose until it is connected.
 
 ## 3) Cards
 
@@ -97,9 +102,12 @@ Covered areas:
   - manual title/description edits,
   - relevance labeling (`relevant`/`irrelevant`),
   - requirement assignment to participants.
+- Every card shows whether a person put it there or the model proposed it, as a mark on the card itself rather than as the absence of one, and both are filterable from the sidebar independently.
+- A card's citation opens the document it was taken from, scrolled to the passage and marked. When the passage cannot be located the document still opens, at the top.
 
 ### Contract Details
 - Card edits update edit metadata/timestamp.
+- The authorship mark is drawn on the card faces, alongside the model-derived dashed edge, so both survive the `mid` level-of-detail tier where badges are dropped.
 - Requirement assignment options come from project participants.
 
 ## 4) Views, Filtering, Recommendations, and Chat
@@ -112,6 +120,7 @@ Covered areas:
 - The level is chosen either from the on-canvas control or by canvas zoom, whichever the user picks.
 - Opening a glyph drills exactly one level for that branch while the rest of the canvas stays abstract.
 - Cluster labels are always borrowed from stored data. This feature never calls the LLM.
+- When the abstraction chooses which cards to promote, a card a person wrote is preferred over one the model proposed at comparable centrality. Structural centrality still decides; authorship only breaks the near-ties.
 - All views share one layout: views select which nodes are shown, never how they are arranged.
 - Activities are positioned by `createdAt`, left to right, one evenly spaced slot per distinct timestamp; activities sharing a timestamp are separated vertically within the slot.
 - Every other card orbits the activity it belongs to, on an onion of fixed-radius layers ordered by graph distance from it; a layer that fills up spills into a new layer around the leaves rather than widening. Cards reaching no activity go to an unassigned band below.

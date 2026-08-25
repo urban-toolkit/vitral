@@ -1,7 +1,7 @@
 import classes from './Toolbar.module.css'
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faSquare, faArrowPointer, faCircle } from '@fortawesome/free-solid-svg-icons'
+import { faSquare, faArrowPointer, faCircle, faNoteSticky } from '@fortawesome/free-solid-svg-icons'
 import type { CursorMode } from '@/pages/projectEditor/types';
 
 type ToolbarProps = {
@@ -21,8 +21,6 @@ export function Toolbar({
     activeMode,
     shifted,
 }: ToolbarProps) {
-    void onFreeInputClicked;
-
     const isActive = (mode: CursorMode) => activeMode === mode;
 
     return (
@@ -48,12 +46,9 @@ export function Toolbar({
                     className={classes.toolIcon}
                 />
             </button>
-            {/* <button type="button" className={`${classes.tool} ${isActive("text") ? classes.toolActive : ""}`} onClick={onFreeInputClicked} title="Text tool">
-                <FontAwesomeIcon icon={faFont} className={classes.toolIcon} />
+            <button type="button" className={`${classes.tool} ${isActive("text") ? classes.toolActive : ""}`} onClick={onFreeInputClicked} title="Note" aria-label="Note" aria-pressed={isActive("text")}>
+                <FontAwesomeIcon icon={faNoteSticky} className={classes.toolIcon} />
             </button>
-            <button type="button" className={classes.tool}>
-                <FontAwesomeIcon icon={faWandSparkles} className={classes.toolIcon} />
-            </button> */}
         </div>
     );
 }

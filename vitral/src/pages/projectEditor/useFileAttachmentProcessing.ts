@@ -3,21 +3,16 @@ import { useCallback, useEffect, useRef } from "react";
 import { parseFile } from "@/func/FileParser";
 import { llmCardsToNodes, requestCardsLLM } from "@/func/LLMRequest";
 import type { LlmProjectSettingsContext } from "@/func/LLMRequest";
-import { compareCardsSimilarity, createFile } from "@/api/stateApi";
+import { createFile } from "@/api/stateApi";
+import { autoLinkNewCards } from "@/pages/projectEditor/autoLinkCards";
 import {
-    decideSimilarityEdges,
-    SIMILARITY_TUNING,
-    type IterationEvidence,
-} from "@/pages/projectEditor/similarityDecision";
-import {
-    canAutoLink,
-    connectionKindFromEdge,
-    isEdgeActive,
+    normalizeArtifactEntity,
     type ConnectionKind,
 } from "@/pages/projectEditor/graphSemantics";
 import { addNode, attachFileIdToNode, addNodes, connectEdges } from "@/store/flowSlice";
 import { upsertFile } from "@/store/filesSlice";
 import { relationLabelFor } from "@/utils/relationships";
+import { cardTypeForLabel } from "@/components/cards/cardVisuals";
 
 import type { AppDispatch } from "@/store";
 import type { edgeType, filePendingUpload, llmCardData, llmConnectionData, nodeType } from "@/config/types";
@@ -44,41 +39,7 @@ export type CanvasDropConnection = {
     kind?: Exclude<ConnectionKind, "regular">;
 };
 
-const KNOWN_CARD_LABELS = new Set(["person", "activity", "requirement", "concept", "insight", "object"]);
-const REFERENCED_BY_LABEL = "referenced by";
-const ITERATION_OF_LABEL = "iteration of";
-const DEBUG_SIMILARITY_SCORES = String(import.meta.env.VITE_DEBUG_SIMILARITY_SCORES ?? "").toLowerCase() === "true";
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "ogg", "ogv", "avi"]);
-
-/**
- * Automatic edges already attached to each card, both ends counted.
- *
- * This is what stops one card becoming a hub. A long, topic-summarising title sits near the centre
- * of a project's subject matter and therefore wins "most similar" against cards that have nothing
- * to do with each other — and because salience weights degree, such a hub does not just clutter the
- * canvas, it hijacks which cards get promoted when the canvas is abstracted.
- */
-function countAutoLinkDegree(edges: edgeType[]): Map<string, number> {
-    const degree = new Map<string, number>();
-    for (const edge of edges) {
-        if (!isEdgeActive(edge)) continue;
-        if (connectionKindFromEdge(edge) === "regular") continue;
-        degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
-        degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
-    }
-    return degree;
-}
-
-function normalizeArtifactEntity(entity: string | undefined): string {
-    const normalized = String(entity ?? "").trim().toLowerCase();
-    if (normalized === "task") return "requirement";
-    if (KNOWN_CARD_LABELS.has(normalized)) return normalized;
-    return "object";
-}
-
-function typeFromLabel(label: string): "technical" | "social" {
-    return label === "requirement" || label === "insight" ? "technical" : "social";
-}
 
 function titleFromFilename(filename: string): string {
     const withoutExt = filename.replace(/\.[^/.]+$/, "").trim();
@@ -288,146 +249,17 @@ export function useFileAttachmentProcessing({
                     dispatch(connectEdges(activityEdges));
                 }
 
-                // `person` cards are excluded at the source rather than filtered out of the
-                // verdicts: a name has no content to be similar *about*, so shipping one only
-                // buys a retrieval round-trip whose every answer would be thrown away. See
-                // `AUTO_LINK_EXCLUDED_LABELS`.
-                const newCardsForSimilarity = nodesToAdd
-                    .map((node) => {
-                        const data = node.data as Record<string, unknown>;
-                        return {
-                            id: node.id,
-                            label: normalizeArtifactEntity(String(data.label ?? "")),
-                            title: typeof data.title === "string" ? data.title : "",
-                            description: typeof data.description === "string" ? data.description : "",
-                        };
-                    })
-                    .filter((card) => canAutoLink(card.label));
-
-                if (newCardsForSimilarity.length > 0) {
-                    void (async () => {
-                        try {
-                            // Only the new cards travel: the server holds the canvas and searches
-                            // its own vector index.
-                            const similarity = await compareCardsSimilarity(projectId, {
-                                newCards: newCardsForSimilarity,
-                            }, signal);
-                            if (signal.aborted) return;
-
-                            if (similarity.status !== "ok") {
-                                console.warn(
-                                    `Similarity lookup unavailable (${similarity.status}); no automatic relations were added.`,
-                                );
-                                return;
-                            }
-
-                            const relationEdges: edgeType[] = [];
-                            const queueRelationEdge = buildEdgeQueuer(relationEdges);
-
-                            // Degree is counted against the live graph *plus* what this pass has
-                            // already queued, so one extraction cannot pile six edges onto the same
-                            // card by never noticing its own work.
-                            const autoDegree = countAutoLinkDegree(edgesRef.current);
-                            const evidenceOf = (cardId: string): IterationEvidence | null => {
-                                const node = generatedNodeById.get(cardId)
-                                    ?? nodesRef.current.find((candidate) => candidate.id === cardId);
-                                if (!node) return null;
-                                const data = (node.data ?? {}) as Record<string, unknown>;
-                                const createdAt = typeof data.createdAt === "string" ? Date.parse(data.createdAt) : NaN;
-                                return {
-                                    title: typeof data.title === "string" ? data.title : "",
-                                    createdAtMs: Number.isFinite(createdAt) ? createdAt : null,
-                                };
-                            };
-
-                            /**
-                             * The far end of the edge is filtered *before* the gates run, not
-                             * after. A `person` candidate left in the ranking would still consume
-                             * one of the two edges a new card may take, and would still set the
-                             * separation floor the real matches have to clear — so dropping its
-                             * verdict afterwards would silently weaken the decision for every
-                             * other candidate. Unknown ids are kept: the retrieval index can lag
-                             * the live canvas, and "not found" is not evidence of a person.
-                             */
-                            const isAutoLinkableCard = (cardId: string): boolean => {
-                                const node = generatedNodeById.get(cardId)
-                                    ?? nodesRef.current.find((candidate) => candidate.id === cardId);
-                                if (!node) return true;
-                                return canAutoLink(String((node.data as Record<string, unknown>)?.label ?? ""));
-                            };
-
-                            for (const rawMatch of similarity.matches) {
-                                const match = {
-                                    ...rawMatch,
-                                    candidates: rawMatch.candidates.filter(
-                                        (candidate) => isAutoLinkableCard(candidate.existingCardId),
-                                    ),
-                                };
-                                const verdicts = decideSimilarityEdges(match, {
-                                    evidenceOf,
-                                    autoDegreeOf: (cardId) => autoDegree.get(cardId) ?? 0,
-                                });
-
-                                if (DEBUG_SIMILARITY_SCORES) {
-                                    console.log("[similarity]", {
-                                        newCardId: match.newCardId,
-                                        baseline: match.baseline,
-                                        candidates: rawMatch.candidates,
-                                        eligibleCandidates: match.candidates,
-                                        accepted: verdicts,
-                                        tuning: SIMILARITY_TUNING,
-                                    });
-                                }
-
-                                for (const verdict of verdicts) {
-                                    const generatedNode = generatedNodeById.get(match.newCardId);
-                                    const normalizedEntity = normalizeArtifactEntity(
-                                        String((generatedNode?.data as Record<string, unknown> | undefined)?.label ?? ""),
-                                    );
-                                    const existingNode = nodesRef.current.find((node) => node.id === verdict.existingCardId);
-                                    const existingLabel = normalizeArtifactEntity(
-                                        String((existingNode?.data as Record<string, unknown> | undefined)?.label ?? normalizedEntity),
-                                    );
-                                    const label = verdict.kind === "iteration_of"
-                                        ? ITERATION_OF_LABEL
-                                        : REFERENCED_BY_LABEL;
-
-                                    queueRelationEdge({
-                                        id: crypto.randomUUID(),
-                                        source: match.newCardId,
-                                        target: verdict.existingCardId,
-                                        type: "relation",
-                                        label,
-                                        data: {
-                                            label,
-                                            from: normalizedEntity,
-                                            to: existingLabel,
-                                            kind: verdict.kind,
-                                            // Kept on the edge so a questionable relation can be
-                                            // explained after the fact, and so thresholds can be
-                                            // retuned against real projects rather than guessed at.
-                                            autoLinked: true,
-                                            similarity: verdict.similarity,
-                                            similarityZ: verdict.z,
-                                            similarityMargin: verdict.margin,
-                                        },
-                                    });
-                                    autoDegree.set(
-                                        verdict.existingCardId,
-                                        (autoDegree.get(verdict.existingCardId) ?? 0) + 1,
-                                    );
-                                }
-                            }
-
-                            if (relationEdges.length > 0 && !signal.aborted) {
-                                dispatch(connectEdges(relationEdges));
-                            }
-                        } catch (error) {
-                            if (signal.aborted) return;
-                            console.error("Failed to compare generated cards with existing cards.", error);
-                        }
-                    })();
-                }
+                // Offered to the rest of the canvas through the shared pass, which the note tool
+                // uses too -- extraction and authorship get the same evidence gates.
+                void autoLinkNewCards({
+                    projectId,
+                    newNodes: nodesToAdd,
+                    nodesRef,
+                    edgesRef,
+                    dispatch,
+                    createdAt: chosenCreatedAt,
+                    signal,
+                });
             }
         } catch (error) {
             if (signal.aborted) return;
@@ -553,7 +385,7 @@ export function useFileAttachmentProcessing({
                 type: "card",
                 data: {
                     label: "object",
-                    type: typeFromLabel("object"),
+                    type: cardTypeForLabel("object"),
                     title: titleFromFilename(parsedFile.name),
                     description: "",
                     createdAt: chosenCreatedAt,

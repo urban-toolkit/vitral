@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "test:similarity": "esbuild src/pages/projectEditor/similarityDecision.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/similarityDecision.test.mjs --log-level=warning && node node_modules/.cache/similarityDecision.test.mjs",
     "test:flow-identity": "esbuild src/store/flowSlice.identity.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/flowSlice.identity.test.mjs --log-level=warning && node node_modules/.cache/flowSlice.identity.test.mjs",
+    "test:note-classification": "esbuild src/pages/projectEditor/noteClassification.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/noteClassification.test.mjs --log-level=warning && node node_modules/.cache/noteClassification.test.mjs",
+    "test:reference-location": "esbuild src/components/files/referenceLocation.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/referenceLocation.test.mjs --log-level=warning && node node_modules/.cache/referenceLocation.test.mjs",
     "test:placement": "esbuild src/pages/projectEditor/activityOrbitLayout.placement.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/placement.test.mjs --log-level=warning && node node_modules/.cache/placement.test.mjs"
   },
   "dependencies": {

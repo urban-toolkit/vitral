@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDownload, faGear, faHouse, faWandMagicSparkles } from "@fortawesome/free-solid-svg-icons";
+import { faChevronLeft, faChevronRight, faCircleInfo, faDesktop, faDownload, faGear, faHouse, faPenNib, faWandMagicSparkles } from "@fortawesome/free-solid-svg-icons";
 import type { cardLabel } from "@/config/types";
 import type { QuerySystemPapersResult, SystemPaper } from "@/api/stateApi";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
@@ -13,6 +13,8 @@ const CANVAS_ARRANGEMENT_TEXT = "Activities are placed left to right by date and
 const BLUEPRINT_COMPONENT_FILTER_COLOR = "rgba(91, 186, 214, 0.70)";
 /** Matches `.modelDerivedBadge` on the card, so the chip and the badge read as one marker. */
 const MODEL_DERIVED_FILTER_COLOR = "rgba(146, 118, 200, 0.70)";
+/** Matches `.authored`'s inset bar on the card, for the same reason. */
+const AUTHORED_FILTER_COLOR = "rgba(176, 96, 24, 0.70)";
 
 function truncateLabel(text: string, maxChars: number): string {
     if (!text) return "";
@@ -145,6 +147,8 @@ type CanvasSidebarProps = {
     onToggleBlueprintComponents: () => void;
     modelDerivedVisible: boolean;
     onToggleModelDerived: () => void;
+    authoredVisible: boolean;
+    onToggleAuthored: () => void;
     selectedLabels: cardLabel[];
     onToggleLabel: (label: cardLabel) => void;
     systemPaperResults: QuerySystemPapersResult[];
@@ -298,6 +302,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     onToggleBlueprintComponents,
     modelDerivedVisible,
     onToggleModelDerived,
+    authoredVisible,
+    onToggleAuthored,
     selectedLabels,
     onToggleLabel,
     systemPaperResults,
@@ -499,6 +505,29 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                     <FontAwesomeIcon icon={faWandMagicSparkles} />
                                 </span>
                                 <span className={styles.labelText}>AI cards</span>
+                            </button>
+
+                            {/* The other side of the same question. With this off the canvas shows
+                                only what the model proposed, which is what it looked like before
+                                anyone read it. */}
+                            <button
+                                type="button"
+                                className={`${styles.labelOption} ${authoredVisible ? styles.labelOptionActive : ""}`}
+                                onClick={onToggleAuthored}
+                                title="cards a person wrote, dropped, or drew by hand"
+                            >
+                                <span
+                                    className={styles.labelCircle}
+                                    style={{
+                                        backgroundColor: authoredVisible
+                                            ? AUTHORED_FILTER_COLOR
+                                            : "transparent",
+                                        borderColor: AUTHORED_FILTER_COLOR,
+                                    }}
+                                >
+                                    <FontAwesomeIcon icon={faPenNib} />
+                                </span>
+                                <span className={styles.labelText}>your cards</span>
                             </button>
                         </div>
 

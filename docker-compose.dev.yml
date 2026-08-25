@@ -21,6 +21,8 @@ services:
             - node_modules/
         - action: rebuild
           path: ./vitral/package.json
+        - action: rebuild
+          path: ./vitral/package-lock.json
   backend:
     build:
       context: ./backend
@@ -48,6 +50,8 @@ services:
             - node_modules/
         - action: rebuild
           path: ./backend/package.json
+        - action: rebuild
+          path: ./backend/package-lock.json
   postgres:
     image: pgvector/pgvector:pg18
     env_file:

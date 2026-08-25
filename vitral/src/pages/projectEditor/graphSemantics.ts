@@ -21,6 +21,23 @@ export function normalizeNodeLabel(label: string): string {
     return normalized;
 }
 
+/** The six card labels the extraction ontology defines. `blueprint_*` are structure, not cards. */
+export const KNOWN_CARD_LABELS: ReadonlySet<string> = new Set([
+    "person", "activity", "requirement", "concept", "insight", "object",
+]);
+
+/**
+ * Constrain a label to the ontology. Unlike `normalizeNodeLabel` this closes the set: anything
+ * unrecognised becomes `object`, which is what a model's invented entity type has to collapse to
+ * before it reaches the canvas.
+ */
+export function normalizeArtifactEntity(entity: string | undefined): string {
+    const normalized = String(entity ?? "").trim().toLowerCase();
+    if (normalized === "task") return "requirement";
+    if (KNOWN_CARD_LABELS.has(normalized)) return normalized;
+    return "object";
+}
+
 export function nodeLabelOf(node: nodeType): string {
     return normalizeNodeLabel(String((node.data as Record<string, unknown> | undefined)?.label ?? ""));
 }

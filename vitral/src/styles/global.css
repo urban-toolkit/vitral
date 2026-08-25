@@ -44,3 +44,12 @@ summary:focus-visible {
         scroll-behavior: auto !important;
     }
 }
+/* The passage a card was extracted from, marked inside the opened source document.
+   Painted through the CSS Custom Highlight API (see `files/useReferenceHighlight.ts`), which tints
+   a Range without inserting elements into a subtree React owns and would re-render away. The name
+   is global by definition -- highlight registrations live on the document, not on a component -- so
+   the rule belongs here rather than in a CSS module. */
+::highlight(vitral-reference) {
+    background-color: rgba(255, 214, 92, 0.55);
+    color: inherit;
+}

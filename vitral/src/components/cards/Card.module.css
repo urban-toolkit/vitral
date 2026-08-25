@@ -193,6 +193,24 @@
 	border-color: rgba(72, 44, 122, 0.55);
 }
 
+/* The other half of the same statement. `.modelDerived` says "a model proposed this, provisionally";
+   this says "a person put this here", and a canvas needs both marks because the absence of one is
+   not a claim -- an unmarked card would just look like the default.
+
+   Same channel as the dashed edge, deliberately: it is drawn on the faces, so it survives the `mid`
+   tier alongside the dashed border and disappears with everything else at `far`, where the card is
+   a few pixels of flat colour.
+
+   An *inset* ring rather than a thicker `border`: these faces are `position: absolute; width: 100%`
+   with no `box-sizing: border-box`, so growing the border would push the painted box past the
+   200x260 that `canvasGeometry` declares and React Flow's ResizeObserver reads. The ring is drawn
+   inside the box and costs no layout at all. */
+.authored .flipCardFront,
+.authored .flipCardBack {
+	border-color: rgba(176, 96, 24, 0.65);
+	box-shadow: inset 0 0 0 3px rgba(176, 96, 24, 0.65);
+}
+
 .assignedText {
 	font-size: 10px;
 	text-align: left;
@@ -273,6 +291,30 @@
 	font-size: 10px;
 	line-height: 1.35;
 	word-break: break-word;
+}
+
+/* The excerpt, as an affordance. Same reasoning as `.metaOpenSource` — it belongs to the metadata
+   block and must keep reading as prose — so the only added signal is the pointer and a hover rule
+   that hints the quote is a link back to where it was said. */
+.metaReferenceButton {
+	display: block;
+	width: 100%;
+	margin: 0 0 4px 0;
+	padding: 0;
+	border: none;
+	background: transparent;
+	font: inherit;
+	font-size: 10px;
+	line-height: 1.35;
+	color: inherit;
+	text-align: left;
+	word-break: break-word;
+	cursor: pointer;
+}
+
+.metaReferenceButton:hover {
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 
 .metaLabel {
@@ -390,9 +432,15 @@
 
 /* A panel is several times the size of a card and would otherwise be painted under every node that
    sorts above this one. React Flow writes `z-index` inline on the node wrapper, hence `!important`;
-   `:has()` keeps it to the cards that actually have a preview open (the dock is empty otherwise). */
+   `:has()` keeps it to the cards that actually have a preview open (the dock is empty otherwise).
+
+   The value has to clear React Flow's own selection band, not just the resting nodes. With
+   `elevateNodesOnSelect` on -- the default -- selecting a node sets its z to `SELECTED_NODE_Z`
+   (1000 in `@xyflow/system`), plus `ROOT_PARENT_Z_INCREMENT` steps for parented ones. At 60 the
+   panel sat above idle cards and then disappeared behind the next card the user clicked, which is
+   precisely when they are reading it. A card with a document open outranks a merely selected one. */
 :global(.react-flow__node):has(.previewDock > *) {
-	z-index: 60 !important;
+	z-index: 2000 !important;
 }
 
 .flipCard3d {

@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { fileRecord } from "@/config/types";
 
 /*
@@ -15,6 +15,7 @@ import classes from "./FilePreview.module.css";
 import { LoadSpinner } from "@/components/project/LoadSpinner";
 import { getFileContent } from "@/api/stateApi";
 import { API_BASE, resolveRawFileUrl } from "@/components/files/fileUrls";
+import { useReferenceHighlight } from "@/components/files/useReferenceHighlight";
 
 const EMPTY_STR = "";
 const RAW_TEXT_FALLBACK_EXTENSIONS = new Set(["tsx", "jsx"]);
@@ -109,7 +110,7 @@ async function convertDocxToMarkdown(blob: Blob, filename: string): Promise<stri
  * state — the fetched content, the pdf object URL and its page count — is discarded on unmount
  * rather than reset by hand.
  */
-function FileDocumentViewImpl({ file }: { file: fileRecord }) {
+function FileDocumentViewImpl({ file, highlight }: { file: fileRecord; highlight?: string }) {
     const ext = normalizeExt(file.ext || "");
     const lang = normalizeLang(ext);
     const rawUrl = resolveRawFileUrl(file);
@@ -306,10 +307,18 @@ function FileDocumentViewImpl({ file }: { file: fileRecord }) {
         hasValidDocId,
     ]);
 
+    // `display: contents` so the wrapper can host a ref for the reference search without adding a
+    // box: the renderers below own their own scrolling and sizing, and an extra layout box here
+    // would change how every one of them fits the panel.
+    const bodyRef = useRef<HTMLDivElement | null>(null);
+    useReferenceHighlight(bodyRef, highlight, loadedContent ?? pdfBlobUrl ?? file.id);
+
     // One boundary for all four renderers: only one is ever mounted at a time.
     return (
         <Suspense fallback={<LoadSpinner loading={true} />}>
-            {inner}
+            <div ref={bodyRef} style={{ display: "contents" }}>
+                {inner}
+            </div>
         </Suspense>
     );
 }
