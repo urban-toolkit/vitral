@@ -561,14 +561,29 @@ export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): 
     }
 
     return nodes.map((node) => {
+        // Stacking among cards is derived, exactly like position. Nothing in the app writes
+        // `zIndex` onto a card -- a card created today has none -- but projects saved by earlier
+        // versions carry values on their activity cards, and React Flow feeds `node.zIndex`
+        // straight into the wrapper's inline `z-index`. A stale 3000 there outranks anything the
+        // stylesheet lifts on purpose: it is what put an opened source document *behind* the
+        // activity card it was opened next to. Dropping it makes an old project stack like a new
+        // one. Blueprint nodes are left alone, where the nesting order is real and deliberate.
+        const stale = node.type === "card" && node.zIndex !== undefined;
+        const normalize = (candidate: nodeType): nodeType => {
+            if (!stale) return candidate;
+            const rest = { ...candidate };
+            delete rest.zIndex;
+            return rest;
+        };
+
         const next = positionById.get(node.id);
-        if (!next) return node;
-        if (node.position.x === next.x && node.position.y === next.y) return node;
+        if (!next) return normalize(node);
+        if (node.position.x === next.x && node.position.y === next.y) return normalize(node);
         // Carry a size across with the new object. React Flow rebuilds an internal node whenever the
         // user node's identity changes and takes `measured` from that object alone, so a node moved by
         // the layout would otherwise arrive unmeasured and every edge touching it would snap to handle
         // geometry for a frame. A real measurement always wins; this only fills the gap, from the same
         // declared size the layout just used to place it.
-        return { ...node, position: next, measured: node.measured ?? nodeSizeOf(node) };
+        return normalize({ ...node, position: next, measured: node.measured ?? nodeSizeOf(node) });
     });
 }

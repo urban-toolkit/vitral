@@ -103,6 +103,7 @@ Covered areas:
   - relevance labeling (`relevant`/`irrelevant`),
   - requirement assignment to participants.
 - Every card shows whether a person put it there or the model proposed it, as a mark on the card itself rather than as the absence of one, and both are filterable from the sidebar independently.
+- The back of a card gives its description all the space; the citation, the source file and the participant assignment are icons in one row beneath it, each explained on hover.
 - A card's citation opens the document it was taken from, scrolled to the passage and marked. When the passage cannot be located the document still opens, at the top.
 
 ### Contract Details

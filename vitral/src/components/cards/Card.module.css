@@ -114,7 +114,13 @@
 
 .backBody {
 	flex: 1;
+	/* Without this a flex item refuses to shrink below its content, so a long description would
+	   push the footer off the bottom of the card instead of scrolling inside it. */
+	min-height: 0;
 	padding: 5px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
 }
 
 .techCard {
@@ -131,12 +137,16 @@
 	border: 1px solid rgba(255, 255, 255, 0.39);
 }
 
+/* The description is the content of this face, so it gets the space: everything else on the back
+   is one short row underneath it. It used to be capped at 84px while the citation and the source
+   filename spelled themselves out in full below, which inverted that. */
 .backText {
 	font-size: var(--font-size-xs);
+	flex: 1;
+	min-height: 0;
 	overflow-y: auto;
 	text-align: left;
 	margin: 0;
-	max-height: 84px;
 }
 
 .relevantToggle {
@@ -237,8 +247,9 @@
 }
 
 .createdAtEditor {
-	margin: 8px 0 0 0;
-	width: 100%;
+	flex: 1;
+	min-width: 0;
+	margin: 0;
 	box-sizing: border-box;
 	font-family: inherit;
 	font-size: 10px;
@@ -248,6 +259,69 @@
 	border: 1px solid rgba(255, 255, 255, 0.35);
 	border-radius: 4px;
 	padding: 2px 4px;
+}
+
+/* One row under the description: the timestamp, then whatever handles this card has. Fixed height
+   so the description's share of the card does not change as icons come and go. */
+.backFooter {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 22px;
+	padding-top: 5px;
+	border-top: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.footerTimestamp {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
+	font-size: 10px;
+	line-height: 1.2;
+	opacity: 0.82;
+	text-align: left;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Deliberately icon-only. At 200px wide the back has room for the note or for labelled controls,
+   not both, and the label each one would carry is already in its tooltip. */
+.footerIconButton {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.4);
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.14);
+	color: inherit;
+	font-size: 10px;
+	cursor: pointer;
+}
+
+.footerIconButton:hover {
+	background: rgba(255, 255, 255, 0.3);
+}
+
+/* Assigned. A filled chip reads as "this is set" at a glance, which is the whole question the
+   icon answers; who it is set to is in the tooltip. */
+.footerIconOn,
+.footerIconOn:hover {
+	background: rgba(255, 255, 255, 0.62);
+	color: rgba(0, 0, 0, 0.75);
+	border-color: rgba(255, 255, 255, 0.85);
+}
+
+/* A source the project can name but not open -- the file record is gone. It still says what the
+   card came from, so it stays, but it must not look clickable. */
+.footerIconInert {
+	cursor: help;
+	opacity: 0.65;
 }
 
 .metaSection {
@@ -336,6 +410,8 @@
 }
 
 .assignmentSelect {
+	flex: 1;
+	min-width: 0;
 	border: 1px solid rgba(255, 255, 255, 0.4);
 	border-radius: 6px;
 	background: rgba(255, 255, 255, 0.18);
