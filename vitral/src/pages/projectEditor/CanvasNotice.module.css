@@ -1,0 +1,61 @@
+/*
+ * The canvas telling the user why it did nothing.
+ *
+ * Deliberately not styled as an error: every message that lands here is a rule being explained
+ * ("that card needs something to attach to"), and the action it refused is one the user is about to
+ * retry a few pixels away. Same slot as the file-processing banner, stepped down when both are up.
+ */
+.notice {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    /*
+     * Below `EdgeConnectMenu` (25), and transparent to the pointer besides. Every message here
+     * tells the user to retry the gesture that raises that menu — or keeps the note input open
+     * underneath — so a notice that painted over either and swallowed its clicks would take back
+     * the advice it just gave. Only the dismiss button takes events.
+     */
+    z-index: 24;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: 560px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid #d9d9d9;
+    background: #ffffff;
+    color: #262626;
+    font-size: 13px;
+    line-height: 18px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+    animation: noticeAppear 160ms ease-out;
+}
+
+.dismiss {
+    flex: 0 0 auto;
+    pointer-events: auto;
+    border: 0;
+    background: transparent;
+    color: #6b6b6b;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 15px;
+    line-height: 1;
+}
+
+.dismiss:hover {
+    color: #161616;
+}
+
+@keyframes noticeAppear {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}

@@ -1,0 +1,72 @@
+/*
+ * Same dashed vocabulary as `ActivityDropRings.module.css` — a ring says "a card created here joins
+ * this activity", a box says "a card created here attaches to this card", and they are the same
+ * offer made about two different anchors, so they read the same. Square rather than round, because
+ * the anchor is a handle on a border and not a whole card's neighbourhood.
+ */
+.box {
+    position: absolute;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 2px dashed rgba(0, 0, 0, 0.55);
+    background: rgba(255, 255, 255, 0.72);
+    color: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    animation: boxAppear 160ms ease-out;
+}
+
+.boxActive {
+    border-width: 3px;
+    border-color: #000000;
+    background: rgba(0, 0, 0, 0.05);
+    color: #000000;
+}
+
+/* The plus is the whole affordance at rest, so it has to survive being small on a zoomed-out
+   canvas — hence a glyph rather than a word. */
+.plus {
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1;
+    user-select: none;
+}
+
+/*
+ * What the box would create, shown only once the pointer is inside it. Sits under the box for the
+ * same reason the ring's label does: above would collide with the card the box is attached to.
+ */
+.boxLabel {
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 5px);
+    transform: translateX(-50%);
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(0, 0, 0, 0.65);
+    background: #ffffff;
+    color: #161616;
+    font-size: var(--font-size-xs, 11px);
+    font-weight: 600;
+    line-height: 16px;
+    white-space: nowrap;
+}
+
+.boxLabelRelation {
+    font-weight: 500;
+    color: #5b5b5b;
+}
+
+@keyframes boxAppear {
+    from {
+        opacity: 0;
+        transform: scale(0.94);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}

@@ -1,4 +1,7 @@
 import type { nodeType } from "@/config/types";
+import { isNodeActive, nodeLabelOf } from "@/pages/projectEditor/graphSemantics";
+import { cardLabelOf } from "@/pages/projectEditor/graphInvariants";
+import { relationLabelFor, spawnPartnerFor } from "@/utils/relationships";
 
 /** Matches `.card` in `components/cards/Card.module.css`. */
 export const CARD_WIDTH_PX = 200;
@@ -11,11 +14,20 @@ const BLUEPRINT_COMPONENT_SIZE_PX = 112;
  * Minimum radius of the dashed drop ring painted around activity cards. The ring must
  * fully enclose the card, so it can never be smaller than half the card diagonal
  * (~164px for a 200x260 card); the extra padding keeps the dashes off the corners.
+ *
+ * It also has to stay *inside* the innermost orbit, because a spawn box wins over a ring it sits
+ * in (contract 15): the nearest satellite's box reaches to within `ORBIT_MIN_RADIUS_PX - 100 -
+ * CARD_SPAWN_BOX_GAP_PX - CARD_SPAWN_BOX_SIZE_PX` of the activity centre — 202px today against a
+ * 176px ring. Growing the ring past that, or shrinking `ORBIT_MIN_RADIUS_PX` in
+ * `activityOrbitLayout.ts`, turns "attach to this activity" gestures into "attach to whichever
+ * satellite is nearest".
  */
 const ACTIVITY_DROP_RING_MIN_RADIUS_PX = 176;
 const ACTIVITY_DROP_RING_CORNER_PADDING_PX = 12;
 
 export type ActivityDropTarget = {
+    /** Identity for hover tracking. One ring per activity, so the node's own id serves. */
+    key: string;
     nodeId: string;
     title: string;
     center: { x: number; y: number };
@@ -24,17 +36,6 @@ export type ActivityDropTarget = {
 
 function nodeDataRecord(node: nodeType): Record<string, unknown> {
     return (node.data ?? {}) as Record<string, unknown>;
-}
-
-function nodeLabelOf(node: nodeType): string {
-    const raw = String(nodeDataRecord(node).label ?? "").trim().toLowerCase();
-    return raw === "task" ? "requirement" : raw;
-}
-
-function isNodeActive(node: nodeType): boolean {
-    const deletedAt = nodeDataRecord(node).deletedAt;
-    if (typeof deletedAt !== "string" || deletedAt.trim() === "") return true;
-    return Number.isNaN(new Date(deletedAt).getTime());
 }
 
 function readDimension(value: unknown, fallback: number): number {
@@ -115,6 +116,7 @@ export function getActivityDropTargets(nodes: nodeType[]): ActivityDropTarget[] 
 
         const title = String(nodeDataRecord(node).title ?? "").trim();
         targets.push({
+            key: node.id,
             nodeId: node.id,
             title: title || "Untitled",
             center: { x: absolute.x + size.width / 2, y: absolute.y + size.height / 2 },
@@ -127,7 +129,7 @@ export function getActivityDropTargets(nodes: nodeType[]): ActivityDropTarget[] 
 
 /** Nearest ring containing `position`, or `null` when the point is outside every ring. */
 export function findActivityDropTarget(
-    targets: ActivityDropTarget[],
+    targets: readonly ActivityDropTarget[],
     position: { x: number; y: number },
 ): ActivityDropTarget | null {
     let best: ActivityDropTarget | null = null;
@@ -136,6 +138,143 @@ export function findActivityDropTarget(
     for (const target of targets) {
         const distance = Math.hypot(position.x - target.center.x, position.y - target.center.y);
         if (distance > target.radius) continue;
+        if (distance >= bestDistance) continue;
+        bestDistance = distance;
+        best = target;
+    }
+
+    return best;
+}
+
+/**
+ * Which of a card's two handles a spawn box sits on, and therefore which way the edge runs.
+ *
+ * `outgoing` is the source handle on the right: the card is the edge's source and the new card its
+ * target. `incoming` is the target handle on the left, and reverses that. The relation *label* is
+ * the same either way — `ALLOWED_RELATION_LABEL_BY_PAIR` is keyed by an unordered pair — so the
+ * side is what carries the direction, exactly as the two handles always have.
+ */
+export type CardSpawnDirection = "incoming" | "outgoing";
+
+/**
+ * Side of the dashed square painted at a handle, and its clearance from the card border, in flow
+ * units. A box therefore occupies `gap`..`gap + size` outside the border, and two facing boxes on
+ * horizontally adjacent cards need twice that between them.
+ *
+ * The binding constraint is the layout's tightest horizontal gap — `UNASSIGNED_ITEM_GAP_PX` (80) in
+ * `activityOrbitLayout.ts`, well under the orbit's own ~148. At 2 + 36 the pair fits in 76 and two
+ * boxes never overlap; grow either number past 40 and cards in the unassigned band start painting
+ * their boxes on top of each other.
+ */
+export const CARD_SPAWN_BOX_SIZE_PX = 36;
+const CARD_SPAWN_BOX_GAP_PX = 2;
+
+export type CardSpawnTarget = {
+    /** Identity for hover tracking. A card carries two boxes, so the node id alone is not enough. */
+    key: string;
+    nodeId: string;
+    anchorLabel: string;
+    anchorTitle: string;
+    direction: CardSpawnDirection;
+    /** Label of the card the box will create. */
+    spawnLabel: string;
+    /** Relation the connecting edge arrives with, before the user picks a kind. */
+    relationLabel: string;
+    center: { x: number; y: number };
+    size: number;
+};
+
+type CardSpawnTargetOptions = {
+    /**
+     * Set when the caller already knows what it is about to create — a dropped file is always an
+     * `object` card. Boxes are then emitted only on the cards that label may legally attach to, so
+     * a drag never offers a target that would be refused on release.
+     */
+    spawnLabel?: string;
+};
+
+/**
+ * A dashed box at each handle of every non-activity card, and what clicking it would create.
+ *
+ * The activity rings answer "which activity is this card about". These answer the same question for
+ * every other card, which is what makes "no card without a connection" a rule the canvas can offer
+ * rather than only enforce: wherever a card may be created, there is something visible to create it
+ * on. Activities are excluded because they already have a ring, and because they are the one card
+ * that is allowed to stand alone.
+ */
+export function getCardSpawnTargets(
+    nodes: nodeType[],
+    options: CardSpawnTargetOptions = {},
+): CardSpawnTarget[] {
+    const requestedSpawnLabel = options.spawnLabel?.trim().toLowerCase() ?? "";
+    const absoluteById = resolveAbsoluteNodePositions(nodes);
+    const targets: CardSpawnTarget[] = [];
+
+    for (const node of nodes) {
+        if (node.type !== "card") continue;
+        if (!isNodeActive(node)) continue;
+
+        // Closed to the ontology, exactly as the card is drawn: a node carrying a label the model
+        // invented renders as an `object` and must be offered the boxes an `object` gets.
+        const anchorLabel = cardLabelOf(node);
+        if (anchorLabel === "activity") continue;
+
+        const partner = requestedSpawnLabel
+            ? (() => {
+                const relationLabel = relationLabelFor(anchorLabel, requestedSpawnLabel);
+                return relationLabel ? { label: requestedSpawnLabel, relationLabel } : null;
+            })()
+            : spawnPartnerFor(anchorLabel);
+        if (!partner) continue;
+
+        const absolute = absoluteById.get(node.id);
+        if (!absolute) continue;
+
+        const size = nodeSizeOf(node);
+        const centerY = absolute.y + (size.height / 2);
+        const offset = CARD_SPAWN_BOX_GAP_PX + (CARD_SPAWN_BOX_SIZE_PX / 2);
+        const anchorTitle = String(nodeDataRecord(node).title ?? "").trim() || "Untitled";
+
+        const shared = {
+            nodeId: node.id,
+            anchorLabel,
+            anchorTitle,
+            spawnLabel: partner.label,
+            relationLabel: partner.relationLabel,
+            size: CARD_SPAWN_BOX_SIZE_PX,
+        };
+
+        targets.push({
+            ...shared,
+            key: `${node.id}:incoming`,
+            direction: "incoming",
+            center: { x: absolute.x - offset, y: centerY },
+        });
+        targets.push({
+            ...shared,
+            key: `${node.id}:outgoing`,
+            direction: "outgoing",
+            center: { x: absolute.x + size.width + offset, y: centerY },
+        });
+    }
+
+    return targets;
+}
+
+/** Nearest spawn box containing `position`, or `null` when the point is outside every box. */
+export function findCardSpawnTarget(
+    targets: readonly CardSpawnTarget[],
+    position: { x: number; y: number },
+): CardSpawnTarget | null {
+    let best: CardSpawnTarget | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (const target of targets) {
+        const dx = Math.abs(position.x - target.center.x);
+        const dy = Math.abs(position.y - target.center.y);
+        const half = target.size / 2;
+        if (dx > half || dy > half) continue;
+        const distance = Math.hypot(dx, dy);
         if (distance >= bestDistance) continue;
         bestDistance = distance;
         best = target;

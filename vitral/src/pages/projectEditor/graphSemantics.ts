@@ -90,3 +90,10 @@ export function isEdgeActive(edge: edgeType): boolean {
     if (typeof deletedAt !== "string" || deletedAt.trim() === "") return true;
     return Number.isNaN(new Date(deletedAt).getTime());
 }
+
+/** The node-side twin of `isEdgeActive`: soft-deleted nodes stay in the store but leave the graph. */
+export function isNodeActive(node: nodeType): boolean {
+    const deletedAt = (node.data as Record<string, unknown> | undefined)?.deletedAt;
+    if (typeof deletedAt !== "string" || deletedAt.trim() === "") return true;
+    return Number.isNaN(new Date(deletedAt).getTime());
+}

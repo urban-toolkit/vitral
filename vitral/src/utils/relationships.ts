@@ -26,3 +26,54 @@ export function isAllowedConnection(a?: string, b?: string): boolean {
     if (!a || !b) return false;
     return !!relationLabelFor(a, b);
 }
+
+export type RelationPartner = {
+    label: string;
+    relationLabel: string;
+};
+
+/**
+ * Every label `label` may legally sit opposite, with the relation that pair carries.
+ *
+ * The table is keyed by an *unordered* pair, so it can say which connections exist but not which
+ * of them a given label takes part in — which is what the spawn boxes on a card's handles have to
+ * answer before they can offer to create anything. Callers pass an already-normalised label
+ * (`normalizeNodeLabel`); `task` is not aliased here, exactly as in `relationPairKey`.
+ */
+export function relationPartnersFor(label: string): RelationPartner[] {
+    const normalized = label.trim().toLowerCase();
+    const partners: RelationPartner[] = [];
+    const seen = new Set<string>();
+
+    for (const [key, relationLabel] of Object.entries(ALLOWED_RELATION_LABEL_BY_PAIR)) {
+        const [first, second] = key.split("|");
+        // A self pair reads the same label on both sides, so `first` matching is enough to make the
+        // label its own partner — and the `seen` set keeps it from being emitted twice.
+        const partner = first === normalized ? second : second === normalized ? first : null;
+        if (partner === null || seen.has(partner)) continue;
+        seen.add(partner);
+        partners.push({ label: partner, relationLabel });
+    }
+
+    return partners;
+}
+
+/**
+ * The card a spawn box on an `anchorLabel` card creates, and the relation it arrives with.
+ *
+ * The choice is the ontology's, not the user's: a card that can be connected to another of its own
+ * kind extends sideways (a requirement `details` a requirement, a concept `composes` a concept),
+ * and one that cannot takes the most specific partner it has — an insight grows a `concept`, never
+ * a second activity. `person` is the one label with a single legal partner, so a box on a person
+ * card offers the activity they took part in and nothing else.
+ */
+export function spawnPartnerFor(anchorLabel: string): RelationPartner | null {
+    const normalized = anchorLabel.trim().toLowerCase();
+    const partners = relationPartnersFor(normalized);
+    if (partners.length === 0) return null;
+
+    const selfPair = partners.find((partner) => partner.label === normalized);
+    if (selfPair) return selfPair;
+
+    return partners.find((partner) => partner.label !== "activity") ?? partners[0];
+}

@@ -11,7 +11,14 @@ import { classifyNote, type NoteClassification } from '@/pages/projectEditor/not
 
 type FreeInputZoneProps = {
     participants: readonly ProjectParticipant[];
-    onInputSubmit: (x: number, y: number, note: NoteClassification) => void
+    /**
+     * Returns `false` when the note has not (yet) become a card — the canvas refused the placement,
+     * or it accepted it and is still asking which relation the connecting edge should carry. The
+     * input stays open with its text intact either way, so neither a refusal nor a cancelled
+     * relation menu costs the researcher the sentence they just wrote. A note that *does* become a
+     * card takes the note tool with it, and this whole component unmounts.
+     */
+    onInputSubmit: (x: number, y: number, note: NoteClassification) => boolean;
 };
 
 export function FreeInputZone({ participants, onInputSubmit }: FreeInputZoneProps) {
@@ -44,11 +51,12 @@ export function FreeInputZone({ participants, onInputSubmit }: FreeInputZoneProp
 
     const submit = () => {
         if (!textValue.trim()) return;
-        onInputSubmit(position.x, position.y, {
+        const accepted = onInputSubmit(position.x, position.y, {
             ...guess,
             label: effectiveLabel,
             ...(labelOverride ? { confidence: "strong", matchedCues: ["chosen by hand"] } : {}),
         });
+        if (!accepted) return;
         close();
     };
 

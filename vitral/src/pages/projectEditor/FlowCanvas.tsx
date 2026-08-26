@@ -4,7 +4,8 @@ import { ReactFlow, MiniMap, Panel, type NodeChange, type EdgeChange, type Conne
 import type { edgeType, nodeType } from "@/config/types";
 import type { CursorMode } from "@/pages/projectEditor/types";
 import { ActivityDropRings, type ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
-import type { ActivityDropTarget } from "@/pages/projectEditor/canvasGeometry";
+import { CardSpawnBoxes } from "@/pages/projectEditor/CardSpawnBoxes";
+import type { ActivityDropTarget, CardSpawnTarget } from "@/pages/projectEditor/canvasGeometry";
 import { RelationEdgeMarkerDefs } from "@/components/edges/RelationEdge";
 import { useCanvasLod } from "@/pages/projectEditor/useCanvasLod";
 import styles from "./FlowCanvas.module.css";
@@ -36,10 +37,20 @@ type FlowCanvasProps = {
     onNodesChange: (changes: NodeChange<nodeType>[]) => void;
     onEdgesChange: (changes: EdgeChange<edgeType>[]) => void;
     onConnect: (connection: Connection) => void;
+    /**
+     * React Flow's veto on a delete gesture. It is handed the selected nodes together with every
+     * edge those nodes drag with them, and returns the subset that may actually go — which is the
+     * only vantage point from which "this edge is being cut" and "this edge's card is going away"
+     * are distinguishable.
+     */
+    onBeforeDelete: (payload: { nodes: nodeType[]; edges: edgeType[] }) =>
+        Promise<{ nodes: nodeType[]; edges: edgeType[] }>;
     onClick: (e: React.MouseEvent) => void;
     onDragOver: (e: React.DragEvent) => void;
     onDrop: (e: React.DragEvent) => void;
     activityDropTargets?: ActivityDropTarget[] | null;
+    /** Spawn boxes on the handles of every non-activity card. Shares `activityDropReason`. */
+    cardSpawnTargets?: CardSpawnTarget[] | null;
     activityDropReason?: ActivityDropRingsReason;
     /** Provided only while at least one node sits away from its derived position. */
     onResetNodePositions?: (() => void) | null;
@@ -89,10 +100,12 @@ export const FlowCanvas = memo(function FlowCanvas({
     onNodesChange,
     onEdgesChange,
     onConnect,
+    onBeforeDelete,
     onClick,
     onDragOver,
     onDrop,
     activityDropTargets = null,
+    cardSpawnTargets = null,
     activityDropReason = "drag",
     onResetNodePositions = null,
     miniMapBottomOffsetPx = 0,
@@ -167,6 +180,7 @@ export const FlowCanvas = memo(function FlowCanvas({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onBeforeDelete={onBeforeDelete}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             nodesDraggable={nodesDraggable}
@@ -187,6 +201,10 @@ export const FlowCanvas = memo(function FlowCanvas({
 
             {activityDropTargets && activityDropTargets.length > 0 ? (
                 <ActivityDropRings targets={activityDropTargets} reason={activityDropReason} />
+            ) : null}
+
+            {cardSpawnTargets && cardSpawnTargets.length > 0 ? (
+                <CardSpawnBoxes targets={cardSpawnTargets} reason={activityDropReason} />
             ) : null}
 
             {/* Top centre: the top-right corner is taken by the system screenshot panel, and the

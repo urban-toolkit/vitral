@@ -96,11 +96,12 @@ import {
     updateStage,
 } from "@/store/timelineSlice";
 
-import { isAllowedConnection, relationLabelFor } from "@/utils/relationships";
+import { isAllowedConnection, relationLabelFor, relationPartnersFor } from "@/utils/relationships";
 import { buildActivityOrbitLayout, buildActivityTreeMembership } from "@/pages/projectEditor/activityOrbitLayout";
 import {
     connectionKindFromEdge,
     edgeLabelFrom,
+    isNodeActive,
     normalizeNodeLabel,
     ITERATION_OF_EDGE_LABEL,
     REFERENCED_BY_EDGE_LABEL,
@@ -124,9 +125,14 @@ import {
     CARD_HEIGHT_PX,
     CARD_WIDTH_PX,
     findActivityDropTarget,
+    findCardSpawnTarget,
     getActivityDropTargets,
+    getCardSpawnTargets,
     nodeSizeOf,
+    type CardSpawnTarget,
 } from "@/pages/projectEditor/canvasGeometry";
+import { describeBlockedRemovals, planEdgeRemovals, withArticle } from "@/pages/projectEditor/graphInvariants";
+import { CanvasNotice } from "@/pages/projectEditor/CanvasNotice";
 import type { ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
 import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
 import { CanvasChatOverlay, type CanvasChatEntry } from "@/pages/projectEditor/CanvasChatOverlay";
@@ -146,6 +152,7 @@ import type { KnowledgeBaseEvent } from "@/components/timeline/timelineTypes";
 import type { BlueprintEventConnection } from "@/components/timeline/timelineTypes";
 import {
     useFileAttachmentProcessing,
+    type CanvasDropAnchor,
     type CanvasDropConnection,
 } from "@/pages/projectEditor/useFileAttachmentProcessing";
 import { SystemScreenshotPanel } from "@/pages/projectEditor/SystemScreenshotPanel";
@@ -224,8 +231,8 @@ type PendingConnectionMenu = {
 };
 
 /**
- * Files dropped inside an activity's ring, waiting on the one question the drop cannot answer:
- * which relation the cards should carry.
+ * Files dropped inside an activity's ring or on a card's spawn box, waiting on the one question the
+ * drop cannot answer: which relation the cards should carry.
  *
  * The whole batch is held rather than created and rewired afterwards, so a cancelled answer leaves
  * nothing behind and every file in the drop ends up with the same relation. `File` handles survive
@@ -235,12 +242,32 @@ type PendingConnectionMenu = {
 type PendingFileDropMenu = {
     files: File[];
     basePosition: { x: number; y: number };
-    activityNodeId: string;
-    activityTitle: string;
+    anchor: CanvasDropAnchor;
+    anchorTitle: string;
     defaultLabel: string;
     x: number;
     y: number;
 };
+
+/**
+ * A card the user asked a spawn box to create, waiting on the same relation question.
+ *
+ * Nothing is created until it is answered, for the reason the file drop holds its batch: the card
+ * and the edge that justifies its existence are one action, and a card committed before the answer
+ * would be exactly the unconnected card the boxes exist to prevent. `note` is set when the note
+ * tool raised the menu, in which case the card carries the researcher's sentence instead of being
+ * an empty `Untitled`.
+ */
+type PendingCardSpawnMenu = {
+    target: CardSpawnTarget;
+    note: NoteClassification | null;
+    x: number;
+    y: number;
+};
+
+/** Menu box for the relation question, matching `EdgeConnectMenu.module.css` with a heading. */
+const SPAWN_MENU_WIDTH_PX = 420;
+const SPAWN_MENU_HEIGHT_PX = 76;
 
 type ReportCardSnapshot = {
     id: string;
@@ -981,6 +1008,29 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [projectGoal, setProjectGoal] = useState("");
     const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
     const [pendingFileDropMenu, setPendingFileDropMenu] = useState<PendingFileDropMenu | null>(null);
+    const [pendingCardSpawnMenu, setPendingCardSpawnMenu] = useState<PendingCardSpawnMenu | null>(null);
+    /**
+     * Set by the pointerdown that dismisses a pending menu, and cleared by the click that follows
+     * it in the same gesture.
+     *
+     * Clicking away is how these menus are cancelled, and `pointerdown` precedes `click` — so
+     * without this the cancel click carries straight on into `onCanvasClick` and, with the card
+     * tool still armed, creates the very card the user just declined to create.
+     */
+    const canvasClickSuppressedRef = useRef(false);
+    /**
+     * Why the canvas just did nothing. Paired with a counter so repeating a refused gesture
+     * re-shows and re-times the same sentence instead of looking ignored.
+     */
+    const [canvasNotice, setCanvasNotice] = useState<{ message: string; id: number } | null>(null);
+    const canvasNoticeIdRef = useRef(0);
+
+    const showCanvasNotice = useCallback((message: string) => {
+        canvasNoticeIdRef.current += 1;
+        setCanvasNotice({ message, id: canvasNoticeIdRef.current });
+    }, []);
+
+    const dismissCanvasNotice = useCallback(() => setCanvasNotice(null), []);
     const queuedPositionChangesRef = useRef<Array<NodeChange<nodeType> & { __editAt?: string }>>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
     const previousNodesRef = useRef<nodeType[]>([]);
@@ -1535,11 +1585,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const onAttachFileForCanvas = useCallback(async (
         file: File,
         dropPosition: { x: number; y: number },
-        targetActivityNodeId?: string | null,
+        anchor?: CanvasDropAnchor | null,
         connection?: CanvasDropConnection | null,
     ): Promise<string | null> => {
         if (interactionLocked) return null;
-        return await onAttachFileToCanvas(file, dropPosition, targetActivityNodeId, connection);
+        return await onAttachFileToCanvas(file, dropPosition, anchor, connection);
     }, [interactionLocked, onAttachFileToCanvas]);
 
     const flushQueuedPositionChanges = useCallback(() => {
@@ -1758,6 +1808,43 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
     }, [dispatch, edges, interactionLocked, resolveActionTimestamp]);
 
+    /**
+     * React Flow's veto on a delete gesture, and the single place the connection rule is enforced.
+     *
+     * It has to live here rather than in `handleEdgesChange` because it is the only point that sees
+     * the *whole* deletion at once: `deleteElements` hands over the selected edges together with the
+     * selected nodes and every edge those nodes drag with them, and it fires the edge changes before
+     * the node changes — so a handler watching edges alone cannot tell "the user cut this card
+     * loose" from "this card is going away and its edges with it", and would refuse the second.
+     *
+     * Deleting a *card* is left alone: it is a different gesture with a different expectation, and
+     * refusing to delete an activity because its whole tree hangs off it would be unusable.
+     */
+    const handleBeforeDelete = useCallback(async ({ nodes: deletingNodes, edges: deletingEdges }: {
+        nodes: nodeType[];
+        edges: edgeType[];
+    }) => {
+        if (interactionLocked) return { nodes: deletingNodes, edges: deletingEdges };
+
+        const deletingNodeIds = new Set(deletingNodes.map((node) => node.id));
+        // A collapsed edge stands for several real ones under an invented id; `handleEdgesChange`
+        // drops those anyway, so they pass through here unjudged rather than being matched against
+        // a store edge that does not exist.
+        const guardable = deletingEdges
+            .map((edge) => edge.id)
+            .filter((edgeId) => !isSyntheticCanvasId(edgeId));
+
+        const { blocked } = planEdgeRemovals(nodes, edges, guardable, { deletingNodeIds });
+        if (blocked.length === 0) return { nodes: deletingNodes, edges: deletingEdges };
+
+        showCanvasNotice(describeBlockedRemovals(blocked));
+        const blockedEdgeIds = new Set(blocked.map((entry) => entry.edgeId));
+        return {
+            nodes: deletingNodes,
+            edges: deletingEdges.filter((edge) => !blockedEdgeIds.has(edge.id)),
+        };
+    }, [edges, interactionLocked, nodes, showCanvasNotice]);
+
     // `ensureVisibleLabel` re-enables the sidebar label chip for a card we are about to create.
     // Without it, creating a card whose label is filtered out silently produces nothing visible —
     // which matters most for the drop/ring paths, where the label is always `object`.
@@ -1888,15 +1975,33 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (interactionLocked) return;
         if (!connection.source || !connection.target) return;
 
+        // A card's own two handles are both live targets for a drag started on either of them, and
+        // every self pair in the relation table would accept the result. A loop connects a card to
+        // nothing: it satisfies no reading of the graph, the orbit layout cannot walk it, and it
+        // would count as the connection that keeps the card off the unassigned band.
+        if (connection.source === connection.target) {
+            showCanvasNotice("A card cannot be connected to itself.");
+            return;
+        }
+
         const sourceNode = nodes.find((node) => node.id === connection.source);
         const targetNode = nodes.find((node) => node.id === connection.target);
         const sourceLabel = normalizeNodeLabel(String(sourceNode?.data?.label ?? ""));
         const targetLabel = normalizeNodeLabel(String(targetNode?.data?.label ?? ""));
 
-        if (!isAllowedConnection(sourceLabel, targetLabel)) return;
-
-        const defaultLabel = relationLabelFor(sourceLabel, targetLabel);
-        if (!defaultLabel) return;
+        const defaultLabel = isAllowedConnection(sourceLabel, targetLabel)
+            ? relationLabelFor(sourceLabel, targetLabel)
+            : undefined;
+        if (!defaultLabel) {
+            // The drag completes visually, so a bare `return` reads as the app dropping the
+            // gesture. Every other refusal in the connection rule says why; this one used to be
+            // the exception.
+            showCanvasNotice(
+                `There is no relation between ${withArticle(sourceLabel)} card and`
+                + ` ${withArticle(targetLabel)} card, so they cannot be connected.`,
+            );
+            return;
+        }
 
         const { x: pointerX, y: pointerY } = pointerPositionRef.current;
         const menuWidth = 380;
@@ -1913,7 +2018,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             x,
             y,
         });
-    }, [nodes, interactionLocked]);
+    }, [nodes, interactionLocked, showCanvasNotice]);
 
     const onDataPropertyChange = useCallback((nodeProps: nodeType, value: unknown, propertyName: string) => {
         if (interactionLocked) return;
@@ -2445,6 +2550,146 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         activityDropReason ? getActivityDropTargets(displayedNodes) : null
     ), [activityDropReason, displayedNodes]);
 
+    /**
+     * Spawn boxes on the handles of every non-activity card, shown alongside the rings and for the
+     * same three triggers.
+     *
+     * A dragged file is always going to become an `object` card, so the boxes are narrowed to the
+     * cards `object` may legally attach to — a drag never offers a target that would be refused on
+     * release. The two tools cannot know their label yet (the card tool derives it from the anchor,
+     * the note tool from what gets typed), so they get every box.
+     */
+    const cardSpawnTargets = useMemo(() => {
+        if (!activityDropReason) return null;
+        return getCardSpawnTargets(
+            displayedNodes,
+            activityDropReason === "drag" ? { spawnLabel: "object" } : {},
+        );
+    }, [activityDropReason, displayedNodes]);
+
+    /** Flow-coordinate hit test shared by all three creation paths. Boxes win over rings. */
+    const resolveCreationTarget = useCallback((position: { x: number; y: number }, spawnLabel?: string) => {
+        const spawnTarget = findCardSpawnTarget(
+            getCardSpawnTargets(displayedNodes, spawnLabel ? { spawnLabel } : {}),
+            position,
+        );
+        if (spawnTarget) return { spawnTarget, activityTarget: null };
+        const activityTarget = findActivityDropTarget(getActivityDropTargets(displayedNodes), position);
+        return { spawnTarget: null, activityTarget };
+    }, [displayedNodes]);
+
+    /** Keeps a fixed-position menu fully on screen, above and centred on the gesture that raised it. */
+    const placeMenuAbove = useCallback((clientX: number, clientY: number, width: number, height: number) => ({
+        x: Math.max(12, Math.min(window.innerWidth - width - 12, clientX - (width / 2))),
+        y: Math.max(12, Math.min(window.innerHeight - height - 12, clientY - height - 8)),
+    }), []);
+
+    /**
+     * Creates the card a spawn box promised, together with the edge that justifies its existence.
+     *
+     * The two are one action on purpose. A card committed before the relation question is answered
+     * would be exactly the unconnected card the boxes exist to prevent — so the whole thing waits in
+     * `pendingCardSpawnMenu` and a dismissed menu leaves the canvas as it was.
+     */
+    const commitCardSpawn = useCallback((pending: PendingCardSpawnMenu, option: EdgeConnectOption) => {
+        if (interactionLocked) return;
+
+        const { target, note } = pending;
+
+        // The menu can outlive its anchor — the card is still selected while the menu is open, so
+        // Delete reaches it. Committing against a deleted card would create the loose card this
+        // whole affordance exists to prevent.
+        const anchorNode = nodes.find((node) => node.id === target.nodeId);
+        if (!anchorNode || !isNodeActive(anchorNode)) {
+            showCanvasNotice(
+                `“${target.anchorTitle}” is no longer on the canvas, so there is nothing to connect`
+                + " the new card to. Nothing was created.",
+            );
+            return;
+        }
+
+        const spawnLabel = target.spawnLabel as cardLabel;
+        const relationLabel = option === "default"
+            ? target.relationLabel
+            : option === "referenced_by"
+                ? REFERENCED_BY_EDGE_LABEL
+                : ITERATION_OF_EDGE_LABEL;
+        const kind = option === "default" ? undefined : option;
+
+        resetFiltersForCanvasCreation(spawnLabel);
+
+        const createdAt = resolveActionTimestamp();
+        const nodeId = crypto.randomUUID();
+        const spawnedNode: nodeType = {
+            id: nodeId,
+            // Stored only as a record of where the box was; the orbit layout decides where the card
+            // actually renders, which is why the camera is sent after it below.
+            position: {
+                x: target.center.x - (CARD_WIDTH_PX / 2),
+                y: target.center.y - (CARD_HEIGHT_PX / 2),
+            },
+            type: "card",
+            data: {
+                label: spawnLabel,
+                type: cardTypeForLabel(spawnLabel),
+                title: note ? note.title : "Untitled",
+                ...(note ? { description: note.description } : {}),
+                createdAt,
+                relevant: true,
+            },
+        };
+        dispatch(addNode(spawnedNode));
+
+        // `outgoing` is the box on the card's source handle, so the anchor is the edge's source.
+        // The relation label is the same either way — the table is keyed by an unordered pair — so
+        // the side of the card the user clicked is the only thing carrying the direction.
+        const anchorIsSource = target.direction === "outgoing";
+        dispatch(connectEdges([{
+            id: crypto.randomUUID(),
+            source: anchorIsSource ? target.nodeId : nodeId,
+            target: anchorIsSource ? nodeId : target.nodeId,
+            type: "relation",
+            label: relationLabel,
+            data: {
+                label: relationLabel,
+                from: anchorIsSource ? target.anchorLabel : spawnLabel,
+                to: anchorIsSource ? spawnLabel : target.anchorLabel,
+                createdAt,
+                // Same reasoning as the drag-connect gesture: the absence of `autoLinked` says
+                // nothing on its own, so "a human asserted this link" is recorded explicitly.
+                manual: true,
+                ...(kind ? { kind } : {}),
+            },
+        }]));
+
+        setPendingFocusNodeId(nodeId);
+
+        // A note carries a sentence worth comparing against the rest of the canvas; an `Untitled`
+        // card from the card tool has nothing to be similar about yet, and `autoLinkNewCards` would
+        // drop it before the request anyway.
+        if (note) {
+            // The card exists now, so the note input has nothing left to protect. Disarming the
+            // tool unmounts `FreeInputZone`, which is what closes and clears it — the same thing
+            // that happens when a note is committed straight into an activity's ring.
+            setCursorMode("");
+            void autoLinkNewCards({
+                projectId,
+                newNodes: [spawnedNode],
+                nodesRef,
+                edgesRef,
+                dispatch,
+                createdAt,
+            });
+        }
+    }, [dispatch, interactionLocked, nodes, projectId, resetFiltersForCanvasCreation, resolveActionTimestamp, showCanvasNotice]);
+
+    const handleCardSpawnSelection = useCallback((option: EdgeConnectOption) => {
+        const pending = pendingCardSpawnMenu;
+        setPendingCardSpawnMenu(null);
+        if (!pending) return;
+        commitCardSpawn(pending, option);
+    }, [commitCardSpawn, pendingCardSpawnMenu]);
+
     // Hit-tests a canvas point against blueprint parent boxes. This must read the *displayed* nodes:
     // the layout translates the blueprint block, so stored positions are in a different space than
     // the flow coordinates a click resolves to.
@@ -2493,6 +2738,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [displayedNodes]);
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
+        if (canvasClickSuppressedRef.current) {
+            canvasClickSuppressedRef.current = false;
+            return;
+        }
         if (interactionLocked) return;
         if (!canvasIsEditable) return;
         if (cursorMode !== "node" && cursorMode !== "blueprint_component") return;
@@ -2531,10 +2780,26 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             return;
         }
 
+        // Three places a click can land, in order of how specific they are. A spawn box wins over
+        // an activity ring it happens to sit inside: the box is an offer about one card, the ring
+        // an offer about a whole neighbourhood, and the box is what is under the cursor.
+        const { spawnTarget, activityTarget } = resolveCreationTarget(position);
+
+        if (spawnTarget) {
+            // Nothing is created yet. The card and the edge that justifies it are one action, and
+            // the relation is the part of it the click cannot answer.
+            setPendingCardSpawnMenu({
+                target: spawnTarget,
+                note: null,
+                ...placeMenuAbove(e.clientX, e.clientY, SPAWN_MENU_WIDTH_PX, SPAWN_MENU_HEIGHT_PX),
+            });
+            return;
+        }
+
         // Clicking inside an activity's drop ring creates an object card wired to that activity;
-        // clicking empty canvas still creates a root activity card. Resolve the target before
-        // resetting filters, so we can un-hide the label of whichever card we are about to create.
-        const activityTarget = findActivityDropTarget(getActivityDropTargets(displayedNodes), position);
+        // clicking empty canvas still creates a root activity card, which is the one card allowed
+        // to stand on its own. Resolve the target before resetting filters, so we can un-hide the
+        // label of whichever card we are about to create.
         resetFiltersForCanvasCreation(activityTarget ? "object" : "activity");
         const createdAt = resolveActionTimestamp();
 
@@ -2589,7 +2854,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 relevant: true,
             },
         }));
-    }, [canvasIsEditable, cursorMode, displayedNodes, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, resolveActionTimestamp, resetFiltersForCanvasCreation, screenToFlowPosition]);
+    }, [canvasIsEditable, cursorMode, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, placeMenuAbove, resolveActionTimestamp, resetFiltersForCanvasCreation, resolveCreationTarget, screenToFlowPosition]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
@@ -2608,23 +2873,24 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
      *
      * Sequential on purpose: the cards are `object` cards named after the file and the uploads are
      * the slow part, so racing them only reorders the canvas. `connection` is the relation chosen
-     * once for the whole batch (drop-ring flow) and is ignored when there is no activity to
-     * connect to.
+     * once for the whole batch and applies to every card in it. `anchor` is never null any more —
+     * an `object` card has to attach to something — but the parameter is kept nullable so the one
+     * place that decides that stays the drop handler.
      */
     const runCanvasFileDrop = useCallback(async (
         files: File[],
         basePosition: { x: number; y: number },
-        activityNodeId: string | null,
+        anchor: CanvasDropAnchor | null,
         connection: CanvasDropConnection | null,
     ) => {
         for (let index = 0; index < files.length; index++) {
-            const dropPosition = activityNodeId
+            const dropPosition = anchor
                 ? basePosition
                 : {
                     x: basePosition.x - (CARD_WIDTH_PX / 2) + (index * (CARD_WIDTH_PX + 100)),
                     y: basePosition.y - (CARD_HEIGHT_PX / 2),
                 };
-            const createdNodeId = await onAttachFileForCanvas(files[index], dropPosition, activityNodeId, connection);
+            const createdNodeId = await onAttachFileForCanvas(files[index], dropPosition, anchor, connection);
 
             // Only the first card pulls the camera; panning once per file in a multi-file drop
             // would yank the canvas around while the uploads finish.
@@ -2651,7 +2917,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 ? { label: REFERENCED_BY_EDGE_LABEL, kind: "referenced_by" }
                 : { label: ITERATION_OF_EDGE_LABEL, kind: "iteration_of" };
 
-        void runCanvasFileDrop(pending.files, pending.basePosition, pending.activityNodeId, connection);
+        void runCanvasFileDrop(pending.files, pending.basePosition, pending.anchor, connection);
     }, [interactionLocked, pendingFileDropMenu, runCanvasFileDrop]);
 
     const handleCanvasDrop = useCallback((e: React.DragEvent) => {
@@ -2687,47 +2953,102 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         e.preventDefault();
 
         const basePosition = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-        // Dropping inside an activity's ring connects every dropped file's card to that activity;
-        // the placement of each card is then resolved next to the activity, not at the cursor.
-        const activityTarget = findActivityDropTarget(getActivityDropTargets(displayedNodes), basePosition);
+        // A dropped file always becomes an `object` card, so the boxes were already narrowed to the
+        // cards `object` may legally attach to — whatever is under the cursor here can take it. The
+        // placement of each card is then resolved next to its anchor, not at the cursor.
+        const { spawnTarget, activityTarget } = resolveCreationTarget(basePosition, "object");
+        const anchor: CanvasDropAnchor | null = spawnTarget
+            ? { nodeId: spawnTarget.nodeId, direction: spawnTarget.direction }
+            : activityTarget
+                ? { nodeId: activityTarget.nodeId, direction: "outgoing" }
+                : null;
 
-        if (activityTarget) {
-            // An edge is about to be created, so the same question the manual connect gesture asks
-            // gets asked here — once, for the whole batch. Nothing is uploaded until it is
-            // answered, so dismissing the menu leaves the canvas exactly as it was.
-            const defaultLabel = relationLabelFor("activity", "object") ?? "related to";
-            const menuWidth = 420;
-            const menuHeight = 76;
-            setPendingFileDropMenu({
-                files: droppedFiles,
-                basePosition,
-                activityNodeId: activityTarget.nodeId,
-                activityTitle: activityTarget.title,
-                defaultLabel,
-                x: Math.max(12, Math.min(window.innerWidth - menuWidth - 12, e.clientX - (menuWidth / 2))),
-                y: Math.max(12, Math.min(window.innerHeight - menuHeight - 12, e.clientY - menuHeight - 8)),
-            });
+        if (!anchor) {
+            // Refused rather than dropped loose: an `object` card is a claim about a study, and one
+            // with nothing attached is the card this rule exists to keep off the canvas. Nothing is
+            // uploaded, so the file is still there to drop again a few pixels away.
+            showCanvasNotice(
+                "A dropped file becomes an object card, and only activity cards can stand on their own."
+                + " Drop it inside an activity's ring, or on the + box beside a card.",
+            );
             return;
         }
 
-        void runCanvasFileDrop(droppedFiles, basePosition, null, null);
-    }, [canvasIsEditable, displayedNodes, dispatch, interactionLocked, runCanvasFileDrop, resolveActionTimestamp, screenToFlowPosition]);
+        // An edge is about to be created, so the same question the manual connect gesture asks
+        // gets asked here — once, for the whole batch. Nothing is uploaded until it is
+        // answered, so dismissing the menu leaves the canvas exactly as it was.
+        const defaultLabel = spawnTarget?.relationLabel
+            ?? relationLabelFor("activity", "object")
+            ?? "related to";
+        setPendingFileDropMenu({
+            files: droppedFiles,
+            basePosition,
+            anchor,
+            anchorTitle: spawnTarget?.anchorTitle ?? activityTarget?.title ?? "Untitled",
+            defaultLabel,
+            ...placeMenuAbove(e.clientX, e.clientY, SPAWN_MENU_WIDTH_PX, SPAWN_MENU_HEIGHT_PX),
+        });
+    }, [canvasIsEditable, dispatch, interactionLocked, placeMenuAbove, resolveActionTimestamp, resolveCreationTarget, screenToFlowPosition, showCanvasNotice]);
 
     // A typed note becomes one card, deterministically. The label is guessed from keyword cues in
     // `noteClassification.ts` -- never by the model, because this is a reading-path affordance and
     // because a round trip would put a spinner between having a thought and seeing it on the
     // canvas. The note itself is stored verbatim as the description; only the title is derived.
-    const onFreeInputSubmit = useCallback((x: number, y: number, note: NoteClassification) => {
-        if (interactionLocked) return;
+    const onFreeInputSubmit = useCallback((x: number, y: number, note: NoteClassification): boolean => {
+        if (interactionLocked) return false;
         // Cards are created at Detail only: at Threads and Overview the thing under the cursor is
         // a glyph, and a card wired to it would be wired to a node the document does not contain.
-        if (!canvasIsEditable) return;
-        if (!note.description.trim()) return;
-
-        setCursorMode("");
+        if (!canvasIsEditable) return false;
+        if (!note.description.trim()) return false;
 
         const position = screenToFlowPosition({ x, y });
-        const activityTarget = findActivityDropTarget(getActivityDropTargets(displayedNodes), position);
+        const { spawnTarget, activityTarget } = resolveCreationTarget(position);
+
+        // A note written on a card's spawn box is about *that card*, so it joins the graph there.
+        // The note brings its own label, which the box could not know in advance, so the pair has
+        // to be checked now rather than assumed — the box was offered for the label the card tool
+        // would have picked.
+        if (spawnTarget) {
+            const relationLabel = relationLabelFor(spawnTarget.anchorLabel, note.label);
+            if (!relationLabel) {
+                // Filtered to the labels the card-type `<select>` actually offers: the relation
+                // table also pairs `requirement` with `blueprint_component`, and naming that here
+                // would send the researcher looking for a choice the UI does not have.
+                const partners = relationPartnersFor(spawnTarget.anchorLabel)
+                    .map((partner) => partner.label)
+                    .filter((label) => CARD_LABELS.includes(label as cardLabel))
+                    .join(", ");
+                showCanvasNotice(
+                    `There is no relation between ${withArticle(note.label)} card and`
+                    + ` ${withArticle(spawnTarget.anchorLabel)} card. From here you can add:`
+                    + ` ${partners} — change the card type, or write the note somewhere else.`,
+                );
+                // The note is kept open with its text intact, so a refusal costs a re-aim and not
+                // the sentence the researcher just wrote.
+                return false;
+            }
+
+            setPendingCardSpawnMenu({
+                target: { ...spawnTarget, spawnLabel: note.label, relationLabel },
+                note,
+                ...placeMenuAbove(x, y, SPAWN_MENU_WIDTH_PX, SPAWN_MENU_HEIGHT_PX),
+            });
+            // Deliberately `false`: the card does not exist until the relation is answered, and
+            // the note input holds the only copy of the sentence until it does. `commitCardSpawn`
+            // disarms the note tool once the card exists, which unmounts the input; cancelling the
+            // menu instead leaves the researcher back in their note with the text intact.
+            return false;
+        }
+
+        if (!activityTarget && normalizeNodeLabel(note.label) !== "activity") {
+            showCanvasNotice(
+                `Only activity cards can stand on their own, and this is ${withArticle(note.label)}`
+                + " card. Write the note inside an activity's ring, or on the + box beside a card.",
+            );
+            return false;
+        }
+
+        setCursorMode("");
         resetFiltersForCanvasCreation(note.label);
 
         const createdAt = resolveActionTimestamp();
@@ -2783,7 +3104,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             dispatch,
             createdAt,
         });
-    }, [canvasIsEditable, displayedNodes, dispatch, interactionLocked, projectId, resetFiltersForCanvasCreation, resolveActionTimestamp, screenToFlowPosition]);
+
+        return true;
+    }, [canvasIsEditable, dispatch, interactionLocked, placeMenuAbove, projectId, resetFiltersForCanvasCreation, resolveActionTimestamp, resolveCreationTarget, screenToFlowPosition, showCanvasNotice]);
 
     const fetchGithubEvents = useCallback(async (connected: boolean) => {
         if (!reviewOnly && !connected) return;
@@ -2993,6 +3316,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (!pendingConnectionMenu) return;
 
         const handleWindowPointerDown = () => {
+            canvasClickSuppressedRef.current = true;
             setPendingConnectionMenu(null);
         };
         const handleWindowKeyDown = (event: KeyboardEvent) => {
@@ -3014,7 +3338,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     useEffect(() => {
         if (!pendingFileDropMenu) return;
 
-        const handleWindowPointerDown = () => setPendingFileDropMenu(null);
+        const handleWindowPointerDown = () => {
+            canvasClickSuppressedRef.current = true;
+            setPendingFileDropMenu(null);
+        };
         const handleWindowKeyDown = (event: KeyboardEvent) => {
             if (event.key === "Escape") setPendingFileDropMenu(null);
         };
@@ -3027,11 +3354,33 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         };
     }, [pendingFileDropMenu]);
 
-    // A drop menu left open across a level change or a review-mode switch would create cards the
-    // canvas can no longer accept, so it is dropped with the affordance that raised it.
+    // Same dismissal contract again. The card does not exist yet either, so cancelling here leaves
+    // the canvas untouched exactly as the file drop does.
+    useEffect(() => {
+        if (!pendingCardSpawnMenu) return;
+
+        const handleWindowPointerDown = () => {
+            canvasClickSuppressedRef.current = true;
+            setPendingCardSpawnMenu(null);
+        };
+        const handleWindowKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setPendingCardSpawnMenu(null);
+        };
+
+        window.addEventListener("pointerdown", handleWindowPointerDown);
+        window.addEventListener("keydown", handleWindowKeyDown);
+        return () => {
+            window.removeEventListener("pointerdown", handleWindowPointerDown);
+            window.removeEventListener("keydown", handleWindowKeyDown);
+        };
+    }, [pendingCardSpawnMenu]);
+
+    // A drop or spawn menu left open across a level change or a review-mode switch would create
+    // cards the canvas can no longer accept, so it is dropped with the affordance that raised it.
     useEffect(() => {
         if (canvasIsEditable && !interactionLocked) return;
         setPendingFileDropMenu(null);
+        setPendingCardSpawnMenu(null);
     }, [canvasIsEditable, interactionLocked]);
 
     useEffect(() => {
@@ -4265,10 +4614,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onNodesChange={handleNodesChange}
                 onEdgesChange={handleEdgesChange}
                 onConnect={handleConnect}
+                onBeforeDelete={handleBeforeDelete}
                 onClick={onCanvasClick}
                 onDragOver={handleCanvasDragOver}
                 onDrop={handleCanvasDrop}
                 activityDropTargets={activityDropTargets}
+                cardSpawnTargets={cardSpawnTargets}
                 activityDropReason={activityDropReason ?? "drag"}
                 onResetNodePositions={hasManualNodePositions ? handleResetNodePositions : null}
                 miniMapBottomOffsetPx={canvasSidebarBottomOffset + (canvasFocusLabel
@@ -4294,12 +4645,33 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 y={pendingFileDropMenu?.y ?? 0}
                 defaultLabel={pendingFileDropMenu?.defaultLabel ?? "generated by"}
                 heading={pendingFileDropMenu
-                    ? `Connect ${pendingFileDropMenu.files.length} ${pendingFileDropMenu.files.length === 1 ? "card" : "cards"} to “${pendingFileDropMenu.activityTitle}” with:`
+                    ? `Connect ${pendingFileDropMenu.files.length} ${pendingFileDropMenu.files.length === 1 ? "card" : "cards"} to “${pendingFileDropMenu.anchorTitle}” with:`
                     : undefined}
                 open={!interactionLocked && pendingFileDropMenu !== null}
                 onCancel={() => setPendingFileDropMenu(null)}
                 onClose={() => setPendingFileDropMenu(null)}
                 onSelect={handleFileDropConnectSelection}
+            />
+
+            <EdgeConnectMenu
+                x={pendingCardSpawnMenu?.x ?? 0}
+                y={pendingCardSpawnMenu?.y ?? 0}
+                defaultLabel={pendingCardSpawnMenu?.target.relationLabel ?? "related to"}
+                heading={pendingCardSpawnMenu
+                    ? `Connect a new ${pendingCardSpawnMenu.target.spawnLabel} to “${pendingCardSpawnMenu.target.anchorTitle}” with:`
+                    : undefined}
+                open={!interactionLocked && pendingCardSpawnMenu !== null}
+                onCancel={() => setPendingCardSpawnMenu(null)}
+                onClose={() => setPendingCardSpawnMenu(null)}
+                onSelect={handleCardSpawnSelection}
+            />
+
+            <CanvasNotice
+                message={canvasNotice?.message ?? null}
+                noticeId={canvasNotice?.id ?? 0}
+                onDismiss={dismissCanvasNotice}
+                /* Steps below the file-processing banner, which owns this slot when it is up. */
+                topOffsetPx={fileProcessingError ? 116 : 64}
             />
 
             <CanvasSidebar
