@@ -40,6 +40,7 @@ import {
 } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { isLocalProjectId } from "@/api/localProjectStore";
+import { useSession } from "@/auth/sessionContext";
 import { getGitHubEvents } from "@/api/eventsApi";
 
 import { Toolbar } from "@/components/toolbar/Toolbar";
@@ -953,6 +954,10 @@ function buildBlueprintComponentGraph(
 const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const { status, error, reviewOnly, canEdit, isOwner, published, ownerUsername } =
         useDocumentSync(projectId);
+    // Publishing is an account action, so the control needs to know whether there is one — a guest
+    // reading an ownerless legacy project counts as its "owner" under the pre-accounts rule, and
+    // would otherwise be offered a button the server refuses.
+    const { user: sessionUser } = useSession();
 
     const dispatch = useDispatch<AppDispatch>();
     const navigate = useNavigate();
@@ -4816,13 +4821,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     {/* Two different reasons, two different things the reader can do about it. */}
                     {reviewOnly
                         ? "You are in review mode. No editing allowed."
-                        : `Published by ${ownerUsername ?? "another account"}. Read-only — duplicate it to make changes.`}
+                        : sessionUser
+                            ? `Published by ${ownerUsername ?? "another account"}. Read-only — duplicate it to make changes.`
+                            // A guest has no account to duplicate it into, so pointing them at
+                            // Duplicate would name a button that is not on their screen.
+                            : `Published by ${ownerUsername ?? "another account"}. Read-only.`}
                 </div>
             ) : null}
 
-            {/* The publish toggle, offered only to the person who can actually act on it — and
-                never for a guest project, which has no account behind it to publish under. */}
-            {isOwner && !reviewOnly && status === "ready" && !isLocalProjectId(projectId) ? (
+            {/* The publish toggle, offered only to the person who can actually act on it — never
+                for a guest project (no account behind it to publish under), and never to a viewer
+                without an account. */}
+            {isOwner && sessionUser && !reviewOnly && status === "ready" && !isLocalProjectId(projectId) ? (
                 <button
                     type="button"
                     onClick={() => void handleTogglePublished()}

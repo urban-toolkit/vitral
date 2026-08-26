@@ -44,14 +44,16 @@ export function ProjectsPage() {
         setDocuments(fetched);
     }, [isGuest]);
 
+    /**
+     * Published projects, for everyone — a guest included.
+     *
+     * Publishing is about being readable, and a guest is a reader. The route needs no session:
+     * `owner_id` never matches a viewer without an account, so every row comes back
+     * `is_owner: false` and the cards below offer nothing a guest cannot do.
+     */
     const fetchPublicDocuments = useCallback(async () => {
-        // Published projects are an account feature; a guest has nothing to open them with.
-        if (isGuest) {
-            setPublicDocuments([]);
-            return;
-        }
         setPublicDocuments(await loadPublicDocuments());
-    }, [isGuest]);
+    }, []);
 
     const removeDocument = async (id: string) => {
         await deleteDocument(id);
@@ -191,7 +193,11 @@ export function ProjectsPage() {
         navigate("/login", { replace: true });
     };
 
-    /** Somebody else's published work, kept out of the list of things you can act on. */
+    /**
+     * Somebody else's published work, kept out of the list of things you can act on.
+     *
+     * For a guest that is every published project, since a guest owns nothing.
+     */
     const otherPeoplesPublished = useMemo(() => (
         publicDocuments.filter((document) => !document.is_owner)
     ), [publicDocuments]);
@@ -234,7 +240,7 @@ export function ProjectsPage() {
 
                 {isGuest ? (
                     <p className={classes.guestBanner}>
-                        You are working as a guest. These projects are saved in this browser only —
+                        You are working as a guest. Your projects are saved in this browser only —
                         they are not backed up and cannot be published.
                         {" "}
                         <button
@@ -326,8 +332,9 @@ export function ProjectsPage() {
                         <div className={classes.publicHeader}>
                             <h2 className={classes.publicTitle}>Public projects</h2>
                             <p className={classes.publicSubtitle}>
-                                Published by other accounts. You can read them and duplicate them, but
-                                only their owner can change them.
+                                {isGuest
+                                    ? "Published by Vitral accounts. You can read them; only their owner can change them."
+                                    : "Published by other accounts. You can read them and duplicate them, but only their owner can change them."}
                             </p>
                         </div>
                         <div className={classes.projectsGrid}>
@@ -354,14 +361,19 @@ export function ProjectsPage() {
                                         >
                                             Open
                                         </button>
-                                        <button
-                                            type="button"
-                                            className={classes.secondaryAction}
-                                            onClick={() => void handleDuplicateProject(document.id)}
-                                            disabled={duplicatingProjectId !== null}
-                                        >
-                                            {duplicatingProjectId === document.id ? "Duplicating..." : "Duplicate"}
-                                        </button>
+                                        {/* A copy is created on the server and has to belong to
+                                            somebody, so duplicating is an account action. A guest
+                                            can still read the original. */}
+                                        {isGuest ? null : (
+                                            <button
+                                                type="button"
+                                                className={classes.secondaryAction}
+                                                onClick={() => void handleDuplicateProject(document.id)}
+                                                disabled={duplicatingProjectId !== null}
+                                            >
+                                                {duplicatingProjectId === document.id ? "Duplicating..." : "Duplicate"}
+                                            </button>
+                                        )}
                                     </div>
                                 </article>
                             })}

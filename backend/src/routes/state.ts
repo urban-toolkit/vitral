@@ -134,6 +134,8 @@ type DuplicateJobStatus = "queued" | "running" | "succeeded" | "failed";
 type DuplicateJobRecord = {
     jobId: string;
     sourceDocId: string;
+    /** Who asked for the copy, and therefore who owns it. `null` for an unauthenticated caller. */
+    ownerId: string | null;
     status: DuplicateJobStatus;
     createdAt: string;
     startedAt: string | null;
@@ -375,10 +377,11 @@ function pruneDuplicateJobs(duplicateJobs: Map<string, DuplicateJobRecord>): voi
     }
 }
 
-function createDuplicateJob(sourceDocId: string): DuplicateJobRecord {
+function createDuplicateJob(sourceDocId: string, ownerId: string | null): DuplicateJobRecord {
     return {
         jobId: crypto.randomUUID(),
         sourceDocId,
+        ownerId,
         status: "queued",
         createdAt: new Date().toISOString(),
         startedAt: null,
@@ -2634,7 +2637,11 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const viewerId = viewer?.id ?? null;
         return rows.map((row: any) => {
-            const mine = row.owner_id === null || row.owner_id === viewerId;
+            // Deliberately *not* the `owner_id === null` allowance that `isDocumentOwner` grants
+            // elsewhere. That rule exists so pre-accounts projects stay editable by whoever finds
+            // them; applied here it would tell a signed-out viewer — a guest — that they own a
+            // published project, and offer them an Unpublish button the server would refuse.
+            const mine = viewerId !== null && row.owner_id === viewerId;
             return {
                 ...row,
                 // A published project is read-only for its readers and still editable by its owner,
@@ -2652,6 +2659,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     const duplicateProjectWithFullFidelity = async (
         sourceDocId: string,
         logger: Pick<typeof app.log, "info" | "error">,
+        ownerId: string | null,
     ): Promise<DuplicatedDocumentSummary> => {
         const duplicateStartedAt = Date.now();
         const client = await app.pg.connect();
@@ -2755,10 +2763,13 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     github_repo,
                     github_default_branch,
                     github_linked_at,
-                    github_last_synced_at
+                    github_last_synced_at,
+                    owner_id
                 )
-                VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9, $10::timestamptz, $11::timestamptz)
-                RETURNING id, title, description, version, updated_at, review_only
+                -- published is left to its FALSE default on purpose: duplicating somebody
+                -- else's public project must not republish it under your name.
+                VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9, $10::timestamptz, $11::timestamptz, $12)
+                RETURNING id, title, description, version, updated_at, review_only, published, owner_id
                 `,
                 [
                     duplicatedTitle,
@@ -2772,6 +2783,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     sourceDocument.github_default_branch ?? null,
                     sourceDocument.github_linked_at ?? null,
                     sourceDocument.github_last_synced_at ?? null,
+                    ownerId,
                 ],
             );
             const duplicatedDocument = duplicatedDocumentResult.rows[0];
@@ -3001,7 +3013,11 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         job.result = null;
 
         try {
-            const duplicatedDocument = await duplicateProjectWithFullFidelity(job.sourceDocId, app.log);
+            const duplicatedDocument = await duplicateProjectWithFullFidelity(
+                job.sourceDocId,
+                app.log,
+                job.ownerId,
+            );
             const current = duplicateJobs.get(jobId);
             if (!current) return;
             current.status = "succeeded";
@@ -3031,17 +3047,12 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         if (!isUuid(id)) {
             return reply.status(400).send({ error: "Invalid document id" });
         }
-        const exists = await app.pg.query<{ id: string }>(
-            `
-            SELECT id
-            FROM documents
-            WHERE id = $1
-            `,
-            [id],
-        );
-        if (exists.rows.length === 0) {
-            return reply.status(404).send({ error: "Document not found" });
-        }
+        // A *read* gate, not a write one: copying someone's published project is the intended way
+        // to build on it. But it has to be one you were allowed to see — this used to check only
+        // that the id existed, which made a guessed id enough to copy a private project wholesale.
+        if (!await ensureDocumentReadable(id, request, reply)) return;
+
+        const duplicator = await app.currentUser(request);
 
         pruneDuplicateJobs(duplicateJobs);
         for (const existingJob of duplicateJobs.values()) {
@@ -3051,7 +3062,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             }
         }
 
-        const job = createDuplicateJob(id);
+        const job = createDuplicateJob(id, duplicator?.id ?? null);
         duplicateJobs.set(job.jobId, job);
         setImmediate(() => {
             void runDuplicateJob(job.jobId);
@@ -3463,6 +3474,12 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      * POST /api/state/import-vi
      */
     app.post("/state/import-vi", async (request, reply) => {
+        // An imported project belongs to whoever imported it, exactly as a created one does.
+        // Without this it landed ownerless, which put a private bundle into the shared legacy
+        // pool that every account can see and edit.
+        const importer = await app.currentUser(request);
+        const importerId = importer?.id ?? null;
+
         const parts = request.parts();
         let uploadedBytes: Buffer | null = null;
 
@@ -3525,16 +3542,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     github_repo,
                     github_default_branch,
                     github_linked_at,
-                    github_last_synced_at
+                    github_last_synced_at,
+                    owner_id
                 )
-                VALUES ($1, $2, $3::jsonb, $4::jsonb, 1, TRUE, NULL, NULL, NULL, NULL, NULL)
-                RETURNING id, title, description, version, updated_at, review_only
+                VALUES ($1, $2, $3::jsonb, $4::jsonb, 1, TRUE, NULL, NULL, NULL, NULL, NULL, $5)
+                RETURNING id, title, description, version, updated_at, review_only, published, owner_id
                 `,
                 [
                     (bundle.document.title || "Untitled").trim() || "Untitled",
                     bundle.document.description ?? null,
                     JSON.stringify(remappedState),
                     JSON.stringify(timelinePayload),
+                    importerId,
                 ],
             );
 
