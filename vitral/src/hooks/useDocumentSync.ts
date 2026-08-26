@@ -66,7 +66,20 @@ export function useDocumentSync(projectId: string) {
 
     const [status, setStatus] = useState<SyncStatus>("idle");
     const [error, setError] = useState<string | null>(null);
+    /**
+     * Whether this session may change the document.
+     *
+     * Named for what it does rather than for `review_only`, which stopped being the whole answer
+     * once projects had owners: a published project is read-only for its readers and fully editable
+     * for the person who published it, so the server decides per request and hands back `can_edit`.
+     * `review_only` is still reported separately, because the banner says something different
+     * ("permanently in review mode" vs "somebody else's project").
+     */
     const [reviewOnly, setReviewOnly] = useState(false);
+    const [canEdit, setCanEdit] = useState(true);
+    const [isOwner, setIsOwner] = useState(true);
+    const [published, setPublished] = useState(false);
+    const [ownerUsername, setOwnerUsername] = useState<string | null>(null);
 
     const lastSavedHashRef = useRef<string>("");
     const lastRevisionHashRef = useRef<string>("");
@@ -198,10 +211,20 @@ export function useDocumentSync(projectId: string) {
             setStatus("loading");
             setError(null);
             setReviewOnly(false);
+            setCanEdit(true);
+            setIsOwner(true);
+            setPublished(false);
+            setOwnerUsername(null);
 
             try {
                 const doc = await loadDocument(projectId);
                 setReviewOnly(Boolean(doc.review_only));
+                // `can_edit` is absent on a response from a server that predates ownership; falling
+                // back to the review flag keeps that case behaving exactly as it used to.
+                setCanEdit(doc.can_edit ?? !doc.review_only);
+                setIsOwner(doc.is_owner ?? true);
+                setPublished(Boolean(doc.published));
+                setOwnerUsername(doc.owner_username ?? null);
 
                 const serverFlow = doc.state?.flow;
 
@@ -274,6 +297,10 @@ export function useDocumentSync(projectId: string) {
                 setStatus("error");
                 setError(e?.message ?? "Failed to load project");
                 setReviewOnly(false);
+                // Closed rather than open on a failed load: a session that could not read the
+                // document must not autosave over it.
+                setCanEdit(false);
+                setIsOwner(false);
             }
         }
 
@@ -290,7 +317,7 @@ export function useDocumentSync(projectId: string) {
     useEffect(() => {
         if (!hasLoadedRef.current) return;
         if (status === "loading" || status === "error") return;
-        if (reviewOnly) return;
+        if (!canEdit) return;
 
         // Hash to avoid saving identical state repeatedly. Computed here rather than in a `useMemo`
         // during render: it is a `JSON.stringify` of the whole document, it is only ever read by this
@@ -339,7 +366,7 @@ export function useDocumentSync(projectId: string) {
         }
 
         debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants, defaultStages, llmModel, timelineStartEnd, flow.title);
-    }, [projectId, flow.nodes, flow.edges, flow.title, status, reviewOnly, debouncedSave, debouncedRevision, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, defaultStages, llmModel, timelineStartEnd, participants]);
+    }, [projectId, flow.nodes, flow.edges, flow.title, status, canEdit, debouncedSave, debouncedRevision, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, defaultStages, llmModel, timelineStartEnd, participants]);
 
-    return { status, error, reviewOnly };
+    return { status, error, reviewOnly, canEdit, isOwner, published, ownerUsername };
 }

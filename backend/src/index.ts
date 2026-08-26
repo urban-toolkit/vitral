@@ -4,11 +4,13 @@ import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 
+import { authRoutes } from "./routes/auth.js";
 import { llmRoutes } from "./routes/llm.js";
 import { stateRoutes } from "./routes/state.js";
 import { githubEventsRoutes } from "./routes/github_events.js";
 import { githubRoutes } from "./routes/github.js";
 import { systemPapersRoutes } from "./routes/system_papers.js";
+import authPlugin from "./plugins/auth.js";
 import dbPlugin from "./plugins/db.js";
 import s3Plugin from "./plugins/s3.js";
 import { doclingRoutes } from './routes/docling.js';
@@ -75,6 +77,11 @@ await app.register(cookie, {
     secret: process.env.COOKIE_SECRET,
 });
 
+// After the cookie plugin (it reads `request.cookies`) and after the db plugin (it queries
+// `app.pg`), and before every route, which reach for `app.currentUser`.
+await app.register(authPlugin);
+
+app.register(authRoutes, { prefix: "/api/auth" });
 app.register(llmRoutes, { prefix: "/api/llm" });
 app.register(doclingRoutes, { prefix: "/api/docling" });
 app.register(stateRoutes, { prefix: "/api" });

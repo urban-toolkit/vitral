@@ -1,10 +1,21 @@
-import { useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useMemo, useRef, useState, type ChangeEvent } from 'react';
 
-import { loadDocuments, deleteDocument, importProjectVi, startDuplicateDocument, loadDuplicateDocumentJob, convertDocumentToReviewOnly } from "@/api/stateApi";
+import {
+    loadDocuments,
+    loadLocalDocuments,
+    loadPublicDocuments,
+    deleteDocument,
+    importProjectVi,
+    startDuplicateDocument,
+    loadDuplicateDocumentJob,
+    setDocumentPublished,
+} from "@/api/stateApi";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
 import type { DocumentResponse } from "@/api/stateApi";
+import { isLocalProjectId } from "@/api/localProjectStore";
+import { useSession } from "@/auth/sessionContext";
 
 import classes from './ProjectsPage.module.css';
 
@@ -14,18 +25,33 @@ import { githubStatus } from '@/api/githubApi';
 
 export function ProjectsPage() {
     const navigate = useNavigate();
+    const { session, user, isGuest, signOut } = useSession();
 
     const [documents, setDocuments] = useState<DocumentResponse[]>([]);
+    const [publicDocuments, setPublicDocuments] = useState<DocumentResponse[]>([]);
     const [importingProject, setImportingProject] = useState(false);
     const [duplicatingProjectId, setDuplicatingProjectId] = useState<string | null>(null);
-    const [convertingProjectId, setConvertingProjectId] = useState<string | null>(null);
+    const [publishingProjectId, setPublishingProjectId] = useState<string | null>(null);
     const importInputRef = useRef<HTMLInputElement | null>(null);
 
-    const fetchDocuments = async () => {
-        const fetchedDocuments = await loadDocuments();
+    /**
+     * A guest reads from the browser, an account reads from the server. Never both: a guest has no
+     * session cookie, so asking the server would return the ownerless legacy projects and quietly
+     * mix somebody else's work into a list that promised to be local-only.
+     */
+    const fetchDocuments = useCallback(async () => {
+        const fetched = isGuest ? await loadLocalDocuments() : await loadDocuments();
+        setDocuments(fetched);
+    }, [isGuest]);
 
-        setDocuments(fetchedDocuments);
-    };
+    const fetchPublicDocuments = useCallback(async () => {
+        // Published projects are an account feature; a guest has nothing to open them with.
+        if (isGuest) {
+            setPublicDocuments([]);
+            return;
+        }
+        setPublicDocuments(await loadPublicDocuments());
+    }, [isGuest]);
 
     const removeDocument = async (id: string) => {
         await deleteDocument(id);
@@ -58,14 +84,21 @@ export function ProjectsPage() {
         }
     }
 
-    useEffect(()=>{
+    useEffect(() => {
+        // Held until the session resolves: which list to load is the first thing this page needs
+        // to know, and loading the wrong one first would flash somebody else's projects.
+        if (session.status === "loading") return;
+
         void fetchDocuments().catch((error) => {
             console.error("Failed to load documents", error);
+        });
+        void fetchPublicDocuments().catch((error) => {
+            console.error("Failed to load public projects", error);
         });
         void checkGitStatus().catch((error) => {
             console.error("Failed to check GitHub status", error);
         });
-    }, []);
+    }, [session.status, fetchDocuments, fetchPublicDocuments]);
 
     const handleImportProject = async (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -118,33 +151,52 @@ export function ProjectsPage() {
         }
     };
 
-    const handleConvertProjectToReviewMode = async (document: DocumentResponse) => {
-        if (convertingProjectId) return;
-        if (document.review_only) return;
+    /**
+     * Publish or unpublish, in place of the old permanent "Make review only".
+     *
+     * Reversible, so there is no confirmation on publishing — the way back is the same button. The
+     * confirmation is on *unpublishing*, which is the one that takes something away from people who
+     * may already be reading it.
+     */
+    const handleTogglePublished = async (document: DocumentResponse) => {
+        if (publishingProjectId) return;
 
         const title = (document.title ?? "").trim() || "Untitled";
-        const confirmed = window.confirm(
-            `Convert "${title}" to review mode permanently?\n\n` +
-            `This cannot be undone and editing will be disabled forever.`,
-        );
-        if (!confirmed) return;
+        const nextPublished = !document.published;
 
-        setConvertingProjectId(document.id);
+        if (!nextPublished) {
+            const confirmed = window.confirm(
+                `Unpublish "${title}"?\n\nIt will disappear from Public projects and other accounts will lose access to it.`,
+            );
+            if (!confirmed) return;
+        }
+
+        setPublishingProjectId(document.id);
         try {
-            const updated = await convertDocumentToReviewOnly(document.id);
-            setDocuments((prevDocuments) => {
-                return prevDocuments.map((entry) => {
-                    if (entry.id !== updated.id) return entry;
-                    return { ...entry, ...updated };
-                });
-            });
+            const updated = await setDocumentPublished(document.id, nextPublished);
+            setDocuments((prevDocuments) => prevDocuments.map((entry) => (
+                entry.id === updated.id ? { ...entry, ...updated } : entry
+            )));
+            await fetchPublicDocuments();
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to convert project to review mode.";
+            const message = error instanceof Error ? error.message : "Failed to update publishing.";
             window.alert(message);
         } finally {
-            setConvertingProjectId(null);
+            setPublishingProjectId(null);
         }
     };
+
+    const handleSignOut = async () => {
+        await signOut();
+        navigate("/login", { replace: true });
+    };
+
+    /** Somebody else's published work, kept out of the list of things you can act on. */
+    const otherPeoplesPublished = useMemo(() => (
+        publicDocuments.filter((document) => !document.is_owner)
+    ), [publicDocuments]);
+
+    const accountLabel = user ? user.username : "Guest";
 
     return (
         <div className={classes.pageContainer}>
@@ -155,7 +207,8 @@ export function ProjectsPage() {
                         type="button"
                         className={classes.importButton}
                         onClick={() => importInputRef.current?.click()}
-                        disabled={importingProject}
+                        disabled={importingProject || isGuest}
+                        title={isGuest ? "Importing a project needs an account." : undefined}
                     >
                         {importingProject ? "Importing..." : "Import project"}
                     </button>
@@ -166,16 +219,49 @@ export function ProjectsPage() {
                         className={classes.hiddenInput}
                         onChange={handleImportProject}
                     />
+
+                    <div className={classes.accountBox}>
+                        <span className={classes.accountName} title={accountLabel}>{accountLabel}</span>
+                        <button
+                            type="button"
+                            className={classes.accountAction}
+                            onClick={() => void handleSignOut()}
+                        >
+                            {isGuest ? "Sign in" : "Log out"}
+                        </button>
+                    </div>
                 </div>
+
+                {isGuest ? (
+                    <p className={classes.guestBanner}>
+                        You are working as a guest. These projects are saved in this browser only —
+                        they are not backed up and cannot be published.
+                        {" "}
+                        <button
+                            type="button"
+                            className={classes.inlineLink}
+                            onClick={() => void handleSignOut()}
+                        >
+                            Create an account
+                        </button>
+                        {" "}to keep them.
+                    </p>
+                ) : null}
 
                 <div className={classes.projectsGrid}>
                     {documents.map((document) => {
                         const projectTitle = (document.title ?? "").trim() || "Untitled";
+                        const local = isLocalProjectId(document.id);
+                        const busy = publishingProjectId !== null || duplicatingProjectId !== null;
                         return <article key={document.id} className={classes.projectCard}>
                             <div className={classes.cardHeader}>
                                 <h2 className={classes.documentTitle} title={projectTitle}>{projectTitle}</h2>
-                                {document.review_only ? (
+                                {document.published ? (
+                                    <span className={classes.publishedBadge}>Published</span>
+                                ) : document.review_only ? (
                                     <span className={classes.reviewBadge}>Review only</span>
+                                ) : local ? (
+                                    <span className={classes.localBadge}>This browser</span>
                                 ) : null}
                             </div>
                             {document.description ? (
@@ -203,17 +289,24 @@ export function ProjectsPage() {
                                     type="button"
                                     className={classes.secondaryAction}
                                     onClick={() => void handleDuplicateProject(document.id)}
-                                    disabled={duplicatingProjectId !== null || convertingProjectId !== null}
+                                    disabled={busy}
                                 >
                                     {duplicatingProjectId === document.id ? "Duplicating..." : "Duplicate"}
                                 </button>
                                 <button
                                     type="button"
                                     className={classes.secondaryAction}
-                                    onClick={() => void handleConvertProjectToReviewMode(document)}
-                                    disabled={Boolean(document.review_only) || convertingProjectId !== null || duplicatingProjectId !== null}
+                                    onClick={() => void handleTogglePublished(document)}
+                                    disabled={busy || local || Boolean(document.review_only)}
+                                    title={local
+                                        ? "Guest projects live in this browser and cannot be published."
+                                        : document.review_only
+                                            ? "This project was permanently converted to review mode."
+                                            : undefined}
                                 >
-                                    {convertingProjectId === document.id ? "Converting..." : (document.review_only ? "Review only" : "Make review only")}
+                                    {publishingProjectId === document.id
+                                        ? (document.published ? "Unpublishing..." : "Publishing...")
+                                        : (document.published ? "Unpublish" : "Publish")}
                                 </button>
                             </div>
                         </article>
@@ -227,6 +320,54 @@ export function ProjectsPage() {
                         <span className={classes.newProjectText}>New project</span>
                     </button>
                 </div>
+
+                {otherPeoplesPublished.length > 0 ? (
+                    <section className={classes.publicSection}>
+                        <div className={classes.publicHeader}>
+                            <h2 className={classes.publicTitle}>Public projects</h2>
+                            <p className={classes.publicSubtitle}>
+                                Published by other accounts. You can read them and duplicate them, but
+                                only their owner can change them.
+                            </p>
+                        </div>
+                        <div className={classes.projectsGrid}>
+                            {otherPeoplesPublished.map((document) => {
+                                const projectTitle = (document.title ?? "").trim() || "Untitled";
+                                return <article key={document.id} className={classes.projectCard}>
+                                    <div className={classes.cardHeader}>
+                                        <h2 className={classes.documentTitle} title={projectTitle}>{projectTitle}</h2>
+                                        <span className={classes.publishedBadge}>Published</span>
+                                    </div>
+                                    {document.description ? (
+                                        <p className={classes.documentDescription}>{document.description}</p>
+                                    ) : (
+                                        <p className={classes.documentDescriptionEmpty}>No description</p>
+                                    )}
+                                    <p className={classes.ownerLine}>
+                                        by {document.owner_username ?? "unknown"}
+                                    </p>
+                                    <div className={classes.cardActions}>
+                                        <button
+                                            type="button"
+                                            className={classes.primaryAction}
+                                            onClick={() => navigate("/project/"+document.id)}
+                                        >
+                                            Open
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className={classes.secondaryAction}
+                                            onClick={() => void handleDuplicateProject(document.id)}
+                                            disabled={duplicatingProjectId !== null}
+                                        >
+                                            {duplicatingProjectId === document.id ? "Duplicating..." : "Duplicate"}
+                                        </button>
+                                    </div>
+                                </article>
+                            })}
+                        </div>
+                    </section>
+                ) : null}
             </div>
         </div>
     );

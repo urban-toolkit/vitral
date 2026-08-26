@@ -4,10 +4,12 @@ import { useNavigate, useParams } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowLeft, faCheck, faPlus, faXmark } from "@fortawesome/free-solid-svg-icons";
 
+import { useSession } from "@/auth/sessionContext";
 import {
     createDocument,
     loadDocument,
     loadDocuments,
+    loadLocalDocuments,
     loadLiteratureSetupTemplates,
     saveDocument,
     updateDocumentMeta,
@@ -456,6 +458,7 @@ function uniqueRoles(roles: string[]): string[] {
 }
 
 export function ProjectSetupPage() {
+    const { isGuest } = useSession();
     const { projectId } = useParams<{ projectId: string }>();
     const isEditMode = Boolean(projectId);
     const navigate = useNavigate();
@@ -483,7 +486,9 @@ export function ProjectSetupPage() {
             const errors: string[] = [];
 
             try {
-                const docs = await loadDocuments();
+                // Same split as the projects list: a guest's "start from a previous project"
+                // choices are the ones in their own browser, never the server's.
+                const docs = isGuest ? await loadLocalDocuments() : await loadDocuments();
                 if (!active) return;
 
                 const previous = docs
@@ -557,7 +562,7 @@ export function ProjectSetupPage() {
         return () => {
             active = false;
         };
-    }, [isEditMode, projectId]);
+    }, [isEditMode, projectId, isGuest]);
 
     useEffect(() => {
         if (activeTab !== "form") return;
@@ -808,7 +813,14 @@ export function ProjectSetupPage() {
                 return;
             }
 
-            const created = await createDocument(title, { flow: { nodes: [], edges: [] } }, goal || undefined);
+            // A guest's project is created in the browser, not on the server. This is the only
+            // place that decision is made — every call after it routes on the id it hands back.
+            const created = await createDocument(
+                title,
+                { flow: { nodes: [], edges: [] } },
+                goal || undefined,
+                { local: isGuest },
+            );
             await saveDocument(created.id, { flow: { nodes: [], edges: [] } }, timelinePayload, title);
             navigate(`/project/${created.id}`);
         } catch (err) {

@@ -2,6 +2,50 @@ import type { filePendingUpload, fileRecord, TimelineStatePayload } from "@/conf
 import { resolveApiBaseUrl } from "@/api/baseUrl";
 import { withDeadline } from "@/utils/abort";
 import type { SimilarityMatch } from "@/pages/projectEditor/similarityDecision";
+import {
+    appendLocalRevision,
+    createLocalDocument,
+    createLocalFile,
+    deleteLocalDocument,
+    deleteLocalFile,
+    duplicateLocalDocument,
+    exportLocalDocument,
+    isLocalProjectId,
+    listLocalDocuments,
+    listLocalFiles,
+    loadLocalDocument,
+    loadLocalDocumentStateAt,
+    readLocalFileBlob,
+    saveLocalDocument,
+    updateLocalDocumentMeta,
+} from "@/api/localProjectStore";
+
+/**
+ * `fetch`, with the session cookie attached.
+ *
+ * Every document call needs it now that projects have owners — a request without it is anonymous,
+ * so the server shows it only the ownerless legacy projects and refuses every write. Three calls in
+ * this file used to set `credentials` by hand and twenty did not; routing them all through here is
+ * what makes "did you remember" stop being a question.
+ */
+function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(input, { ...init, credentials: "include" });
+}
+
+/**
+ * Server-only routes reached with a guest project's id.
+ *
+ * A guest's work never leaves the browser, so the features that are computed server-side —
+ * embeddings, the assistant's retrieval, provenance — have nothing to answer with. Thrown rather
+ * than silently empty so the caller can say so; `autoLinkCards` already treats a failed lookup as
+ * "no matches" rather than "nothing is similar".
+ */
+export class LocalProjectUnsupportedError extends Error {
+    constructor(what: string) {
+        super(`${what} needs a project saved to your account. Sign in to use it.`);
+        this.name = "LocalProjectUnsupportedError";
+    }
+}
 
 export type FlowStatePayload = {
     flow: {
@@ -16,7 +60,22 @@ export type DocumentResponse = {
     description: string | null;
     version: number;
     updated_at: string;
+    /** Legacy permanent edit lock. Superseded by publishing, kept for projects already converted. */
     review_only?: boolean;
+    /** Visible to every account under Public projects. Reversible, and orthogonal to `review_only`. */
+    published?: boolean;
+    published_at?: string | null;
+    owner_id?: string | null;
+    owner_username?: string | null;
+    /**
+     * Whether *this viewer* may change it. Not the same as `!review_only` any more: a published
+     * project is editable by its owner and read-only for everybody else, so the server works this
+     * out per request rather than leaving the client to infer it.
+     */
+    can_edit?: boolean;
+    is_owner?: boolean;
+    /** Set only by the guest store: this project lives in the browser, not on the server. */
+    is_local?: boolean;
     state?: FlowStatePayload; // returned by GET
     timeline?: TimelineStatePayload;
 };
@@ -299,9 +358,16 @@ function normalizeFileRecord(raw: unknown, fallbackDocId: string): fileRecord | 
 export async function createDocument(
     title: string,
     state: FlowStatePayload,
-    description?: string
+    description?: string,
+    options?: { local?: boolean },
 ): Promise<DocumentResponse> {
-    const res = await fetch(`${API_BASE}/state`, {
+    // Creation is the one call with no id to route on, so the caller says which side it belongs
+    // to — and the caller is the only one that knows whether this is a guest session.
+    if (options?.local) {
+        return createLocalDocument(title, state, description);
+    }
+
+    const res = await apiFetch(`${API_BASE}/state`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, state, description }),
@@ -315,7 +381,9 @@ export async function createDocument(
 }
 
 export async function loadDocument(docId: string): Promise<DocumentResponse> {
-    const res = await fetch(`${API_BASE}/state/${docId}`);
+    if (isLocalProjectId(docId)) return loadLocalDocument(docId);
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}`);
 
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
@@ -324,8 +392,25 @@ export async function loadDocument(docId: string): Promise<DocumentResponse> {
     return res.json();
 }
 
+/** The signed-in account's projects, plus the ownerless ones that predate accounts. */
 export async function loadDocuments(): Promise<DocumentResponse[]> {
-    const res = await fetch(`${API_BASE}/state`);
+    const res = await apiFetch(`${API_BASE}/state`);
+
+    if (!res.ok) {
+        throw new Error(`Load failed: ${res.status}`);
+    }
+
+    return res.json();
+}
+
+/** Guest projects held in this browser. Never mixed into the server list by this module. */
+export async function loadLocalDocuments(): Promise<DocumentResponse[]> {
+    return listLocalDocuments();
+}
+
+/** Every published project, whoever owns it. Read-only unless one of them is yours. */
+export async function loadPublicDocuments(): Promise<DocumentResponse[]> {
+    const res = await apiFetch(`${API_BASE}/state/public`);
 
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
@@ -338,9 +423,13 @@ export async function exportProjectVi(
     docId: string,
     options?: { includeGithubData?: boolean },
 ): Promise<Blob> {
+    // A guest project exports as JSON, not `.vi`: the archive is assembled server-side and the
+    // browser has no zip writer here. `ProjectsPage` names the download accordingly.
+    if (isLocalProjectId(docId)) return exportLocalDocument(docId);
+
     const includeGithubData = options?.includeGithubData ?? true;
     const query = includeGithubData ? "" : "?includeGithub=0";
-    const res = await fetch(`${API_BASE}/state/${docId}/export-vi${query}`, {
+    const res = await apiFetch(`${API_BASE}/state/${docId}/export-vi${query}`, {
         method: "GET",
     });
 
@@ -356,7 +445,7 @@ export async function importProjectVi(file: File): Promise<DocumentResponse> {
     const fd = new FormData();
     fd.append("file", file);
 
-    const res = await fetch(`${API_BASE}/state/import-vi`, {
+    const res = await apiFetch(`${API_BASE}/state/import-vi`, {
         method: "POST",
         body: fd,
     });
@@ -370,7 +459,7 @@ export async function importProjectVi(file: File): Promise<DocumentResponse> {
 }
 
 export async function loadLiteratureSetupTemplates(): Promise<LiteratureSetupTemplate[]> {
-    const res = await fetch(`${API_BASE}/setup-templates/literature`);
+    const res = await apiFetch(`${API_BASE}/setup-templates/literature`);
 
     if (!res.ok) {
         throw new Error(`Load failed: ${res.status}`);
@@ -384,7 +473,9 @@ export async function queryDocumentNodes(
     docId: string,
     payload: QueryDocumentNodesRequest,
 ): Promise<QueryDocumentNodesResponse> {
-    const res = await fetch(`${API_BASE}/state/${docId}/query-nodes`, {
+    if (isLocalProjectId(docId)) throw new LocalProjectUnsupportedError("Searching the canvas");
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/query-nodes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -401,7 +492,7 @@ export async function queryDocumentNodes(
 export async function querySystemPapers(
     payload: QuerySystemPapersRequest,
 ): Promise<QuerySystemPapersResponse> {
-    const res = await fetch(`${API_BASE}/system-papers/query`, {
+    const res = await apiFetch(`${API_BASE}/system-papers/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -421,7 +512,9 @@ export async function saveDocument(
     timeline: TimelineStatePayload,
     title?: string
 ): Promise<DocumentResponse> {
-    const res = await fetch(`${API_BASE}/state/${docId}`, {
+    if (isLocalProjectId(docId)) return saveLocalDocument(docId, { title, state, timeline });
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, state, timeline }),
@@ -439,7 +532,12 @@ export async function appendDocumentRevisionSnapshot(
     state: FlowStatePayload,
     timeline: TimelineStatePayload,
 ): Promise<void> {
-    const res = await fetch(`${API_BASE}/state/${docId}/revision`, {
+    if (isLocalProjectId(docId)) {
+        await appendLocalRevision(docId, { state, timeline });
+        return;
+    }
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/revision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state, timeline }),
@@ -452,7 +550,9 @@ export async function appendDocumentRevisionSnapshot(
 }
 
 export async function deleteDocument(docId: string) {
-    const res = await fetch(`${API_BASE}/state/${docId}`, {
+    if (isLocalProjectId(docId)) return deleteLocalDocument(docId);
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}`, {
         method: "DELETE",
     });
 
@@ -462,7 +562,24 @@ export async function deleteDocument(docId: string) {
 }
 
 export async function startDuplicateDocument(docId: string): Promise<DuplicateDocumentJobResponse> {
-    const res = await fetch(`${API_BASE}/state/${docId}/duplicate`, {
+    // Copying a guest project is a local write, not a background job — but the caller polls, so it
+    // gets back a job that has already succeeded rather than a second code path to special-case.
+    if (isLocalProjectId(docId)) {
+        const copy = await duplicateLocalDocument(docId);
+        const now = new Date().toISOString();
+        return {
+            jobId: `local-${copy.id}`,
+            sourceDocId: docId,
+            status: "succeeded",
+            createdAt: now,
+            startedAt: now,
+            finishedAt: now,
+            result: copy,
+            error: null,
+        };
+    }
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/duplicate`, {
         method: "POST",
     });
 
@@ -475,7 +592,7 @@ export async function startDuplicateDocument(docId: string): Promise<DuplicateDo
 }
 
 export async function loadDuplicateDocumentJob(jobId: string): Promise<DuplicateDocumentJobResponse> {
-    const res = await fetch(`${API_BASE}/state/duplicate-jobs/${jobId}`, {
+    const res = await apiFetch(`${API_BASE}/state/duplicate-jobs/${jobId}`, {
         method: "GET",
     });
 
@@ -488,7 +605,9 @@ export async function loadDuplicateDocumentJob(jobId: string): Promise<Duplicate
 }
 
 export async function updateDocumentMeta(docId: string, payload: { title?: string, description?: string | null }) {
-    const res = await fetch(`${API_BASE}/state/${docId}`, {
+    if (isLocalProjectId(docId)) return updateLocalDocumentMeta(docId, payload);
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -501,14 +620,37 @@ export async function updateDocumentMeta(docId: string, payload: { title?: strin
     return res.json();
 }
 
-export async function convertDocumentToReviewOnly(docId: string): Promise<DocumentResponse> {
-    const res = await fetch(`${API_BASE}/state/${docId}/review-only`, {
+/**
+ * Publish or unpublish a project.
+ *
+ * This replaces `convertDocumentToReviewOnly` everywhere in the UI. The two are not the same
+ * operation: publishing is reversible and only changes who can *see* the project, while
+ * review-only was a permanent lock that stopped even its author editing it. The old call stays
+ * exported because the projects already converted with it still report `review_only`.
+ */
+export async function setDocumentPublished(
+    docId: string,
+    published: boolean,
+): Promise<DocumentResponse> {
+    if (isLocalProjectId(docId)) {
+        throw new LocalProjectUnsupportedError("Publishing a project");
+    }
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/publish`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ published }),
     });
 
     if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Convert to review mode failed: ${res.status}`);
+        let message = "";
+        try {
+            const payload = await res.json() as { error?: string };
+            message = typeof payload?.error === "string" ? payload.error : "";
+        } catch {
+            message = "";
+        }
+        throw new Error(message || `Publish failed: ${res.status}`);
     }
 
     return res.json();
@@ -528,9 +670,30 @@ export async function createFile(
     if (typeof createdAt === "string" && createdAt.trim() !== "") {
         fd.append("createdAt", createdAt.trim());
     }
+    if (isLocalProjectId(docId)) {
+        const record = await createLocalFile(docId, {
+            name: pending.name,
+            ext: pending.ext,
+            mimeType: pending.mimeType,
+            sizeBytes: pending.file.size,
+            blob: pending.file,
+        }, createdAt);
+        // Same shape the upload route returns. `bucket`/`key` are empty strings rather than
+        // invented values: nothing about a guest file lives in object storage, and a plausible-
+        // looking key would be a lie the export path would then try to follow.
+        return {
+            fileId: record.id,
+            createdAt: record.createdAt,
+            sha256: "",
+            sizeBytes: record.sizeBytes,
+            bucket: "",
+            key: "",
+        };
+    }
+
     fd.append("file", pending.file); // binary
 
-    const res = await fetch(`${API_BASE}/state/${docId}/files`, {
+    const res = await apiFetch(`${API_BASE}/state/${docId}/files`, {
         method: "POST",
         body: fd,
         signal,
@@ -544,9 +707,10 @@ export async function createFile(
 }
 
 export async function listFiles(docId: string): Promise<{ files: fileRecord[] }> {
-    const res = await fetch(`${API_BASE}/state/${docId}/files`, {
+    if (isLocalProjectId(docId)) return listLocalFiles(docId);
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/files`, {
         method: "GET",
-        credentials: "include",
     });
 
     if (!res.ok) {
@@ -567,7 +731,9 @@ export async function queryCanvasChat(
     docId: string,
     payload: QueryCanvasChatRequest,
 ): Promise<QueryCanvasChatResponse> {
-    const res = await fetch(`${API_BASE}/state/${docId}/query-chat`, {
+    if (isLocalProjectId(docId)) throw new LocalProjectUnsupportedError("The canvas assistant");
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/query-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -585,8 +751,10 @@ export async function loadDocumentStateAt(
     docId: string,
     at: string,
 ): Promise<DocumentStateAtResponse> {
+    if (isLocalProjectId(docId)) return loadLocalDocumentStateAt(docId, at);
+
     const query = encodeURIComponent(at);
-    const res = await fetch(`${API_BASE}/state/${docId}/state-at?at=${query}`, {
+    const res = await apiFetch(`${API_BASE}/state/${docId}/state-at?at=${query}`, {
         method: "GET",
     });
 
@@ -602,8 +770,12 @@ export async function loadKnowledgeProvenance(
     docId: string,
     at: string,
 ): Promise<KnowledgeProvenanceResponse> {
+    // Provenance is derived server-side as revisions land, so a guest project has none. Empty
+    // rather than an error: the knowledge timeline renders nothing and everything else works.
+    if (isLocalProjectId(docId)) return { events: [], trees: [] } as unknown as KnowledgeProvenanceResponse;
+
     const query = encodeURIComponent(at);
-    const res = await fetch(`${API_BASE}/state/${docId}/knowledge/provenance?at=${query}`, {
+    const res = await apiFetch(`${API_BASE}/state/${docId}/knowledge/provenance?at=${query}`, {
         method: "GET",
     });
 
@@ -620,7 +792,13 @@ export async function compareCardsSimilarity(
     payload: CompareCardsSimilarityRequest,
     signal?: AbortSignal,
 ): Promise<CompareCardsSimilarityResponse> {
-    const res = await fetch(`${API_BASE}/state/${docId}/cards/similarity`, {
+    // `degraded`, not an empty match list: "the lookup is unavailable" and "nothing is similar" have
+    // to stay distinguishable (contract 22), and `autoLinkCards` already returns early on this.
+    if (isLocalProjectId(docId)) {
+        return { status: "degraded", matches: [] } as unknown as CompareCardsSimilarityResponse;
+    }
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/cards/similarity`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -636,9 +814,10 @@ export async function compareCardsSimilarity(
 }
 
 export async function deleteFile(docId: string, fileId: string): Promise<void> {
-    const res = await fetch(`${API_BASE}/state/${docId}/files/${fileId}`, {
+    if (isLocalProjectId(docId)) return deleteLocalFile(docId, fileId);
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/files/${fileId}`, {
         method: "DELETE",
-        credentials: "include",
     });
 
     if (!res.ok) {
@@ -649,9 +828,16 @@ export async function deleteFile(docId: string, fileId: string): Promise<void> {
 
 // Only text
 export async function getFileContent(docId: string, fileId: string): Promise<fileRecord & {content: string}> {
-    const res = await fetch(`${API_BASE}/state/${docId}/files/${fileId}/content`, {
+    if (isLocalProjectId(docId)) {
+        const { files } = await listLocalFiles(docId);
+        const record = files.find((file) => file.id === fileId);
+        const blob = await readLocalFileBlob(docId, fileId);
+        if (!record || !blob) throw new Error("Failed to get file content");
+        return { ...record, content: await blob.text() };
+    }
+
+    const res = await apiFetch(`${API_BASE}/state/${docId}/files/${fileId}/content`, {
         method: "GET",
-        credentials: "include",
     });
 
     if (!res.ok) {

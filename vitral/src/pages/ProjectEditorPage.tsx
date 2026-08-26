@@ -30,6 +30,7 @@ import {
     queryCanvasChat,
     queryDocumentNodes,
     querySystemPapers,
+    setDocumentPublished,
     updateDocumentMeta,
     type KnowledgeBlueprintLink,
     type KnowledgeCrossTreeConnection,
@@ -38,6 +39,7 @@ import {
     type QuerySystemPapersResult,
 } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
+import { isLocalProjectId } from "@/api/localProjectStore";
 import { getGitHubEvents } from "@/api/eventsApi";
 
 import { Toolbar } from "@/components/toolbar/Toolbar";
@@ -949,7 +951,8 @@ function buildBlueprintComponentGraph(
 }
 
 const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
-    const { status, error, reviewOnly } = useDocumentSync(projectId);
+    const { status, error, reviewOnly, canEdit, isOwner, published, ownerUsername } =
+        useDocumentSync(projectId);
 
     const dispatch = useDispatch<AppDispatch>();
     const navigate = useNavigate();
@@ -1009,6 +1012,14 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [pendingConnectionMenu, setPendingConnectionMenu] = useState<PendingConnectionMenu | null>(null);
     const [pendingFileDropMenu, setPendingFileDropMenu] = useState<PendingFileDropMenu | null>(null);
     const [pendingCardSpawnMenu, setPendingCardSpawnMenu] = useState<PendingCardSpawnMenu | null>(null);
+    /** Mirrors the document's `published` flag while a publish request is in flight. */
+    const [publishedState, setPublishedState] = useState(false);
+    const [publishBusy, setPublishBusy] = useState(false);
+
+    // The sync hook owns the loaded value; this is the local echo that the toggle updates.
+    useEffect(() => {
+        setPublishedState(published);
+    }, [published]);
     /**
      * Set by the pointerdown that dismisses a pending menu, and cleared by the click that follows
      * it in the same gesture.
@@ -1031,6 +1042,39 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, []);
 
     const dismissCanvasNotice = useCallback(() => setCanvasNotice(null), []);
+
+    /**
+     * Publish or unpublish this project, from the project screen.
+     *
+     * This is what replaced "Make review only". The two are not the same act and must not be
+     * confused: publishing is reversible and only changes who can see the project, and the owner
+     * keeps editing it the whole time. Only the owner sees this control at all.
+     */
+    const handleTogglePublished = useCallback(async () => {
+        if (publishBusy) return;
+        const next = !publishedState;
+
+        if (!next) {
+            const confirmed = window.confirm(
+                "Unpublish this project?\n\nIt will disappear from Public projects and other accounts will lose access to it.",
+            );
+            if (!confirmed) return;
+        }
+
+        setPublishBusy(true);
+        try {
+            const updated = await setDocumentPublished(projectId, next);
+            setPublishedState(Boolean(updated.published));
+            showCanvasNotice(next
+                ? "Published. Other accounts can now find this project under Public projects, read-only."
+                : "Unpublished. This project is private again.");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to update publishing.";
+            showCanvasNotice(message);
+        } finally {
+            setPublishBusy(false);
+        }
+    }, [publishBusy, publishedState, projectId, showCanvasNotice]);
     const queuedPositionChangesRef = useRef<Array<NodeChange<nodeType> & { __editAt?: string }>>([]);
     const nodeChangeRafRef = useRef<number | null>(null);
     const previousNodesRef = useRef<nodeType[]>([]);
@@ -1181,7 +1225,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [edges, nodes]);
     // Where the needle sits never blocks editing: it only chooses which activity trees are on
     // screen, so a card that is visible is a card you can work on.
-    const interactionLocked = reviewOnly;
+    /**
+     * Everything that changes the document is gated on this.
+     *
+     * It used to be `reviewOnly` alone. That is no longer the whole answer: a project can now be
+     * somebody else's, in which case it opens read-only for you and stays fully editable for them.
+     * The server works it out per request (`can_edit`) so the two reasons — a permanent review-mode
+     * conversion, and "this belongs to another account" — cannot drift apart on the client.
+     */
+    const interactionLocked = !canEdit;
     const resolveActionTimestamp = useCallback(() => {
         if (playbackAt) {
             const parsed = new Date(playbackAt);
@@ -4742,7 +4794,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 </div>
             ) : null}
 
-            {reviewOnly ? (
+            {interactionLocked ? (
                 <div
                     style={{
                         position: "fixed",
@@ -4761,8 +4813,47 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                         boxShadow: "0 8px 20px rgba(0, 0, 0, 0.12)",
                     }}
                 >
-                    You are in review mode. No editting allowed.
+                    {/* Two different reasons, two different things the reader can do about it. */}
+                    {reviewOnly
+                        ? "You are in review mode. No editing allowed."
+                        : `Published by ${ownerUsername ?? "another account"}. Read-only — duplicate it to make changes.`}
                 </div>
+            ) : null}
+
+            {/* The publish toggle, offered only to the person who can actually act on it — and
+                never for a guest project, which has no account behind it to publish under. */}
+            {isOwner && !reviewOnly && status === "ready" && !isLocalProjectId(projectId) ? (
+                <button
+                    type="button"
+                    onClick={() => void handleTogglePublished()}
+                    disabled={publishBusy}
+                    style={{
+                        position: "fixed",
+                        top: 12,
+                        right: RIGHT_SIDEBAR_WIDTH_PX + 12,
+                        zIndex: 40,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "8px 14px",
+                        borderRadius: 999,
+                        border: publishedState ? "1px solid #b7ddc4" : "1px solid #c9c9c9",
+                        background: publishedState ? "#dcf1e3" : "#ffffff",
+                        color: publishedState ? "#2f6b40" : "#444",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: publishBusy ? "default" : "pointer",
+                        opacity: publishBusy ? 0.6 : 1,
+                        boxShadow: "0 8px 20px rgba(0, 0, 0, 0.12)",
+                    }}
+                    title={publishedState
+                        ? "This project is visible to every account under Public projects. You can still edit it."
+                        : "Make this project visible to every account, read-only for them."}
+                >
+                    {publishBusy
+                        ? (publishedState ? "Unpublishing..." : "Publishing...")
+                        : (publishedState ? "Published" : "Publish")}
+                </button>
             ) : null}
 
             {/* <div style={{ position: "fixed", right: "350px", top: "30px", opacity: 0.5 }}>

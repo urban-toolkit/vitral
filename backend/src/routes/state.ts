@@ -1259,27 +1259,107 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         : null;
     const embeddingModel = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
 
-    const getDocumentReviewOnly = async (docId: string): Promise<boolean | null> => {
-        const result = await app.pg.query<{ review_only: boolean }>(
+    /**
+     * The three facts every access decision needs. `owner_id` is NULL for projects created before
+     * accounts existed; those stay everybody's, which is what keeps an in-flight study working the
+     * day login is switched on.
+     */
+    type DocumentAccessRow = {
+        review_only: boolean;
+        published: boolean;
+        owner_id: string | null;
+    };
+
+    const getDocumentAccess = async (docId: string): Promise<DocumentAccessRow | null> => {
+        const result = await app.pg.query<DocumentAccessRow>(
             `
-            SELECT review_only
+            SELECT review_only, published, owner_id
             FROM documents
             WHERE id = $1
             `,
             [docId],
         );
         if (result.rows.length === 0) return null;
-        return Boolean(result.rows[0]?.review_only);
+        const row = result.rows[0];
+        return {
+            review_only: Boolean(row.review_only),
+            published: Boolean(row.published),
+            owner_id: row.owner_id ?? null,
+        };
     };
 
-    const ensureDocumentWritable = async (docId: string, reply: any): Promise<boolean> => {
-        const reviewOnly = await getDocumentReviewOnly(docId);
-        if (reviewOnly === null) {
+    /** Owned by nobody (legacy) or owned by this caller. */
+    const isDocumentOwner = (access: DocumentAccessRow, userId: string | null): boolean => (
+        access.owner_id === null || (userId !== null && access.owner_id === userId)
+    );
+
+    /**
+     * Publishing is *visibility*, and it is what makes a project readable by someone who does not
+     * own it. It deliberately grants no write: a published project stays editable by its owner and
+     * read-only for everyone else, which is the difference between it and `review_only` — a
+     * permanent lock that applies to the owner too.
+     */
+    const canReadDocument = (access: DocumentAccessRow, userId: string | null): boolean => (
+        access.published || isDocumentOwner(access, userId)
+    );
+
+    const canWriteDocument = (access: DocumentAccessRow, userId: string | null): boolean => (
+        !access.review_only && isDocumentOwner(access, userId)
+    );
+
+    /**
+     * 404 for a document that does not exist *and* for one this caller may not read.
+     *
+     * The two are the same answer on purpose: a 403 on a private project confirms the id names
+     * something real, which turns `GET /state/:id` into a way of enumerating other people's work.
+     */
+    const ensureDocumentReadable = async (
+        docId: string,
+        request: any,
+        reply: any,
+    ): Promise<DocumentAccessRow | null> => {
+        const access = await getDocumentAccess(docId);
+        if (!access) {
+            reply.status(404).send({ error: "Document not found" });
+            return null;
+        }
+        const user = await app.currentUser(request);
+        if (!canReadDocument(access, user?.id ?? null)) {
+            reply.status(404).send({ error: "Document not found" });
+            return null;
+        }
+        return access;
+    };
+
+    /**
+     * Same shape as before — `if (!await ensureDocumentWritable(id, request, reply)) return;` — with
+     * ownership folded in beside the review-only check. Every existing caller keeps working; the
+     * added `request` argument is what lets it see who is asking.
+     */
+    const ensureDocumentWritable = async (
+        docId: string,
+        request: any,
+        reply: any,
+    ): Promise<boolean> => {
+        const access = await getDocumentAccess(docId);
+        if (!access) {
             reply.status(404).send({ error: "Document not found" });
             return false;
         }
-        if (reviewOnly) {
+        const user = await app.currentUser(request);
+        if (!canReadDocument(access, user?.id ?? null)) {
+            // Unreadable and unwritable are the same 404 for the same reason as above.
+            reply.status(404).send({ error: "Document not found" });
+            return false;
+        }
+        if (access.review_only) {
             reply.status(403).send({ error: "This is a review project and cannot be modified." });
+            return false;
+        }
+        if (!isDocumentOwner(access, user?.id ?? null)) {
+            reply.status(403).send({
+                error: "This project belongs to someone else. Duplicate it to make changes.",
+            });
             return false;
         }
         return true;
@@ -1309,14 +1389,17 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const title = (body.title && body.title.trim()) || "Untitled";
         const description = body.description ?? null;
         const timeline = body.timeline ?? {};
+        // A project belongs to whoever made it. Signed out, `owner_id` is NULL and the project
+        // behaves like the pre-accounts ones — visible and editable by anyone with the link.
+        const creator = await app.currentUser(request);
 
         const { rows } = await app.pg.query(
             `
-            INSERT INTO documents (title, description, state, timeline)
-            VALUES ($1, $2, $3::jsonb, $4::jsonb)
-            RETURNING id, title, description, version, updated_at, review_only
+            INSERT INTO documents (title, description, state, timeline, owner_id)
+            VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
+            RETURNING id, title, description, version, updated_at, review_only, published, owner_id
             `,
-            [title, description, JSON.stringify(body.state), JSON.stringify(timeline)]
+            [title, description, JSON.stringify(body.state), JSON.stringify(timeline), creator?.id ?? null]
         );
 
         try {
@@ -1350,16 +1433,36 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             title: string;
             description: string | null;
             review_only: boolean;
+            published: boolean;
+            published_at: string | null;
+            owner_id: string | null;
+            owner_username: string | null;
         }>(
             `
-            SELECT id, title, description, review_only
-            FROM documents
-            WHERE id = $1
+            SELECT
+                d.id, d.title, d.description, d.review_only,
+                d.published, d.published_at, d.owner_id,
+                u.username AS owner_username
+            FROM documents d
+            LEFT JOIN app_users u ON u.id = d.owner_id
+            WHERE d.id = $1
             `,
             [id]
         );
 
         if (rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        const viewer = await app.currentUser(request);
+        const access = {
+            review_only: Boolean(rows[0].review_only),
+            published: Boolean(rows[0].published),
+            owner_id: rows[0].owner_id ?? null,
+        };
+        // Same 404 as a missing document: a 403 here would confirm that this id names somebody's
+        // real, private project.
+        if (!canReadDocument(access, viewer?.id ?? null)) {
             return reply.status(404).send({ error: "Document not found" });
         }
 
@@ -1370,6 +1473,11 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         return {
             ...rows[0],
+            // What the editor actually needs to know. `review_only` alone stopped being the whole
+            // answer once a project could be somebody else's: opening a published project you do
+            // not own is read-only for you and fully editable for them.
+            can_edit: canWriteDocument(access, viewer?.id ?? null),
+            is_owner: isDocumentOwner(access, viewer?.id ?? null),
             state: snapshot.state,
             timeline: snapshot.timeline,
             version: snapshot.version,
@@ -1383,6 +1491,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.get("/state/:id/state-at", async (request, reply) => {
         const { id } = request.params as { id: string };
+        if (!await ensureDocumentReadable(id, request, reply)) return;
         const { at } = request.query as { at?: string };
 
         if (!isUuid(id)) {
@@ -1416,6 +1525,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.get("/state/:id/knowledge/provenance", async (request, reply) => {
         const { id } = request.params as { id: string };
+        if (!await ensureDocumentReadable(id, request, reply)) return;
         const { at } = request.query as { at?: string };
 
         if (!isUuid(id)) {
@@ -2477,14 +2587,64 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      * GET /api/state/
      */
     app.get("/state", async (request, reply) => {
+        const viewer = await app.currentUser(request);
+
+        // Mine, plus every project created before accounts existed. Somebody else's private work
+        // is not in this list at all — it reaches you through `/state/public` once they publish it.
         const { rows } = await app.pg.query(
             `
-            SELECT id, title, description, version, updated_at, review_only
-            FROM documents
-            `
+            SELECT
+                d.id, d.title, d.description, d.version, d.updated_at,
+                d.review_only, d.published, d.published_at, d.owner_id,
+                u.username AS owner_username
+            FROM documents d
+            LEFT JOIN app_users u ON u.id = d.owner_id
+            WHERE d.owner_id IS NULL OR d.owner_id = $1
+            ORDER BY d.updated_at DESC
+            `,
+            [viewer?.id ?? null],
         );
 
-        return rows;
+        return rows.map((row: any) => ({ ...row, can_edit: !row.review_only }));
+    });
+
+    /**
+     * Every published project, whoever owns it.
+     * GET /api/state/public
+     *
+     * Registered before `/state/:id` would matter if Fastify matched by declaration order, but it
+     * does not — its router puts static segments ahead of parameterised ones, so `public` can never
+     * be read as a document id.
+     */
+    app.get("/state/public", async (request, reply) => {
+        const viewer = await app.currentUser(request);
+
+        const { rows } = await app.pg.query(
+            `
+            SELECT
+                d.id, d.title, d.description, d.version, d.updated_at,
+                d.review_only, d.published, d.published_at, d.owner_id,
+                u.username AS owner_username
+            FROM documents d
+            LEFT JOIN app_users u ON u.id = d.owner_id
+            WHERE d.published
+            ORDER BY d.published_at DESC NULLS LAST, d.updated_at DESC
+            `,
+        );
+
+        const viewerId = viewer?.id ?? null;
+        return rows.map((row: any) => {
+            const mine = row.owner_id === null || row.owner_id === viewerId;
+            return {
+                ...row,
+                // A published project is read-only for its readers and still editable by its owner,
+                // which is the whole difference between publishing and `review_only`.
+                can_edit: !row.review_only && mine,
+                // The projects page uses this to keep your own published work out of the "Public
+                // projects" shelf — it is already in your list above, with its own controls.
+                is_owner: mine,
+            };
+        });
     });
 
     const duplicateJobs = new Map<string, DuplicateJobRecord>();
@@ -2927,6 +3087,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.get("/state/:id/export-vi", async (request, reply) => {
         const { id } = request.params as { id: string };
+        if (!await ensureDocumentReadable(id, request, reply)) return;
         const { includeGithub } = request.query as { includeGithub?: string | string[] };
         const exportStartedAt = Date.now();
         const includeGithubData = (() => {
@@ -3634,6 +3795,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.delete("/state/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
+        if (!await ensureDocumentWritable(id, request, reply)) return;
 
         const result = await app.pg.query(
             `
@@ -3665,9 +3827,23 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const { id } = request.params as { id: string };
         const body = request.body as SaveBody;
 
-        const reviewOnly = await getDocumentReviewOnly(id);
-        if (reviewOnly) {
-            return reply.status(403).send({ error: "This is a review project and cannot be modified." });
+        // This route creates as well as updates, so a missing document is not a refusal — it is
+        // the insert branch, and the caller becomes its owner. An existing one goes through the
+        // same gate as every other write.
+        const existingAccess = await getDocumentAccess(id);
+        const writer = await app.currentUser(request);
+        if (existingAccess) {
+            if (!canReadDocument(existingAccess, writer?.id ?? null)) {
+                return reply.status(404).send({ error: "Document not found" });
+            }
+            if (existingAccess.review_only) {
+                return reply.status(403).send({ error: "This is a review project and cannot be modified." });
+            }
+            if (!isDocumentOwner(existingAccess, writer?.id ?? null)) {
+                return reply.status(403).send({
+                    error: "This project belongs to someone else. Duplicate it to make changes.",
+                });
+            }
         }
 
         if (!body || typeof body !== "object" || body.state === undefined) {
@@ -3694,14 +3870,15 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const { rows } = await app.pg.query(
             `
-            INSERT INTO documents (id, title, description, state, timeline, version)
+            INSERT INTO documents (id, title, description, state, timeline, version, owner_id)
             VALUES (
                 $1,
                 COALESCE($2, 'Untitled'),
                 $3,
                 $4::jsonb,
                 $5::jsonb,
-                1
+                1,
+                $6
             )
             ON CONFLICT (id) DO UPDATE
             SET
@@ -3710,9 +3887,18 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 state = EXCLUDED.state,
                 timeline = EXCLUDED.timeline,
                 version = documents.version + 1
-            RETURNING id, title, description, version, updated_at, review_only
+            RETURNING id, title, description, version, updated_at, review_only, published, owner_id
             `,
-            [id, title, description, JSON.stringify(body.state), JSON.stringify(body.timeline ?? {})]
+            [
+                id,
+                title,
+                description,
+                JSON.stringify(body.state),
+                JSON.stringify(body.timeline ?? {}),
+                // Only meaningful on the insert branch: the UPDATE above deliberately leaves
+                // `owner_id` alone, so saving a legacy ownerless project does not quietly claim it.
+                writer?.id ?? null,
+            ]
         );
 
         try {
@@ -3754,7 +3940,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.post("/state/:id/revision", async (request, reply) => {
         const { id } = request.params as { id: string };
         const body = request.body as RevisionBody;
-        if (!await ensureDocumentWritable(id, reply)) return;
+        if (!await ensureDocumentWritable(id, request, reply)) return;
 
         if (!body || typeof body !== "object" || body.state === undefined) {
             return reply.status(400).send({ error: "Missing state" });
@@ -3825,7 +4011,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.patch("/state/:id", async (request, reply) => {
         const { id } = request.params as { id: string };
         const body = request.body as { title?: string; description?: string | null };
-        if (!await ensureDocumentWritable(id, reply)) return;
+        if (!await ensureDocumentWritable(id, request, reply)) return;
 
         const title = body.title?.trim();
         const description =
@@ -3856,8 +4042,69 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     });
 
     /**
+     * Publish or unpublish a project.
+     * POST /api/state/:id/publish   { published: boolean }
+     *
+     * Publishing is reversible and is only about *visibility*: it puts the project in
+     * `GET /state/public` for every account, read-only for all of them, and leaves it fully
+     * editable for whoever owns it. That is what separates it from `review-only` below, which is a
+     * permanent lock that applies to the owner too — kept for the projects already converted with
+     * it, and no longer offered anywhere in the UI.
+     */
+    app.post("/state/:id/publish", async (request, reply) => {
+        const { id } = request.params as { id: string };
+        if (!isUuid(id)) {
+            return reply.status(400).send({ error: "Invalid document id" });
+        }
+
+        const body = (request.body ?? {}) as { published?: unknown };
+        if (typeof body.published !== "boolean") {
+            return reply.status(400).send({ error: "Missing published flag" });
+        }
+
+        const access = await getDocumentAccess(id);
+        if (!access) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        const user = await app.currentUser(request);
+        // Publishing is an outward-facing act, so it is the one thing an ownerless legacy project
+        // cannot do anonymously: somebody has to be answerable for what appears in the public list.
+        if (!user) {
+            return reply.status(401).send({ error: "Sign in to publish a project." });
+        }
+        if (access.owner_id !== null && access.owner_id !== user.id) {
+            return reply.status(403).send({ error: "Only the owner can publish this project." });
+        }
+
+        const { rows } = await app.pg.query(
+            `
+            UPDATE documents
+            SET
+                published = $2,
+                published_at = CASE WHEN $2 THEN COALESCE(published_at, now()) ELSE NULL END,
+                -- Publishing an ownerless legacy project claims it, because the public list has to
+                -- be able to say who put it there.
+                owner_id = COALESCE(owner_id, $3)
+            WHERE id = $1
+            RETURNING id, title, description, version, updated_at, review_only, published, published_at, owner_id
+            `,
+            [id, body.published, user.id],
+        );
+
+        if (rows.length === 0) {
+            return reply.status(404).send({ error: "Document not found" });
+        }
+
+        return { ...rows[0], owner_username: user.username, can_edit: !rows[0].review_only };
+    });
+
+    /**
      * Convert a document to permanent review-only mode.
      * POST /api/state/:id/review-only
+     *
+     * Superseded by publish/unpublish above and no longer reachable from the UI. It stays because
+     * projects already converted with it must keep behaving the way they were converted to.
      */
     app.post("/state/:id/review-only", async (request, reply) => {
         const { id } = request.params as { id: string };
@@ -3888,7 +4135,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.post("/state/:id/github/link", async (request, reply) => {
         const { id } = request.params as { id: string };
         const { owner, repo } = request.body as { owner?: string; repo?: string };
-        if (!await ensureDocumentWritable(id, reply)) return;
+        if (!await ensureDocumentWritable(id, request, reply)) return;
 
         if (!owner || !repo) {
             return reply.status(400).send({ error: "Missing owner or repo" });
@@ -3968,7 +4215,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.delete("/state/:id/github/link", async (request, reply) => {
         const { id } = request.params as { id: string };
-        if (!await ensureDocumentWritable(id, reply)) return;
+        if (!await ensureDocumentWritable(id, request, reply)) return;
 
         const { rowCount } = await app.pg.query(
             `
@@ -4073,7 +4320,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.post("/state/:docId/files", async (request, reply) => {
         const { docId } = request.params as { docId: string };
-        if (!await ensureDocumentWritable(docId, reply)) return;
+        if (!await ensureDocumentWritable(docId, request, reply)) return;
 
         const parts = request.parts();
 
@@ -4207,6 +4454,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
      */
     app.get("/state/:id/files", async (request, reply) => {
         const { id } = request.params as { id: string };
+        if (!await ensureDocumentReadable(id, request, reply)) return;
         if (!isUuid(id)) {
             return reply.status(400).send({ error: "Invalid document id" });
         }
@@ -4290,7 +4538,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
     app.delete("/state/:docId/files/:id", async (request, reply) => {
         const { docId } = request.params as { docId: string };
         const { id } = request.params as { id: string };
-        if (!await ensureDocumentWritable(docId, reply)) return;
+        if (!await ensureDocumentWritable(docId, request, reply)) return;
 
         const client = await request.server.pg.connect();
         try {

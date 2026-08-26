@@ -194,6 +194,34 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 - **Cancelling creates nothing, and costs nothing.** Clicking away is how the menus are dismissed and `pointerdown` precedes `click`, so the dismissing gesture sets `canvasClickSuppressedRef` and `onCanvasClick` swallows the click that follows — otherwise a cancel with the card tool armed creates the card that was just declined. A note waiting on the relation question keeps its input open (`onFreeInputSubmit` returns `false`, and only `noteCommittedCount` closes it), because the note tool holds the only copy of the researcher's sentence until the card exists.
 - `npm run test:connection-rule` pins the properties: the exempt label, the batch decision, the already-loose case, the node-deletion exemption, and that every spawn box offers a pair the relation table actually allows.
 
+25. Accounts, sessions and guests
+- An account is a **username and a password**; email is optional and stored as `NULL` when not given. `app_users` (not `users` — `prov_user` in migration 012 is a canvas-provenance node table, and the two must not be read as the same thing). `username_lower` carries the UNIQUE index, so names are case-insensitive for both collision and login.
+- Passwords are **scrypt via `node:crypto`** (`backend/src/utils/passwords.ts`), parameters encoded in the stored string so they can be raised without invalidating existing accounts. Deliberately not bcrypt/argon2: both are native addons and the backend image is `node:25-alpine` with no build toolchain, so adding one means adding musl build deps for something Node already ships.
+- Sessions are **server-side and opaque** (`backend/src/plugins/auth.ts`): the cookie holds 32 random bytes, `user_sessions` holds only their SHA-256. A leaked table cannot be replayed as a login, and logging out is a `DELETE` that actually ends the session rather than a client-side promise to forget a token. The cookie is httpOnly, `sameSite: lax`, `secure` from the existing `COOKIE_SECURE` env, matching the GitHub OAuth cookies already set in `routes/github.ts`.
+- `app.currentUser(request)` memoises per request on `request.sessionUser` — `undefined` means "not looked up", `null` means "looked up, nobody". Several routes ask twice; it must not cost two queries.
+- **Login answers with 200 and `{user: null}`**, never 401, at `GET /api/auth/session`. The frontend calls it on every load to choose a screen, and "nobody is signed in" is an answer rather than an error.
+- A failed login says **"Wrong username or password"** for both a missing account and a bad password, and burns a scrypt verification against a dummy hash in the missing-account case. Answering instantly for an unknown name while a real one costs ~100ms is the same enumeration oracle as a distinct message, by timing.
+- **`credentials: "include"` is not optional.** The session is a cookie, so every call in `api/stateApi.ts` goes through the `apiFetch` wrapper. Before this feature only 3 of 23 set it by hand; a call that forgets is silently anonymous, which means the ownerless legacy projects and a 403 on every write.
+- **Three session states, and `guest` is a real one.** `anonymous` is the only one `RequireSession` redirects; a guest has answered the login screen and gets the whole app. The guest flag lives in `localStorage` (`vitral.guest`) because it has to survive a reload, and reading it is wrapped in try/catch — a private window throws on access rather than returning null.
+
+26. A guest's work never leaves the browser
+- "Continue as a guest" is a promise, and `api/localProjectStore.ts` is the only place that keeps it: IndexedDB (localforage) for the document, its revisions and its file blobs. Nothing in that module calls the API.
+- **Routing is by id, not by asking who is signed in.** Guest projects carry a `local-` prefix and every function in `stateApi.ts` dispatches on `isLocalProjectId`, so a request cannot leak to the server because some caller forgot to check. Creation is the one call with no id yet, so `createDocument(..., { local })` takes it explicitly — from `ProjectSetupPage`, the only place that decision is made.
+- What a guest gives up, and why: **publishing** (no account to publish under), **import `.vi`** and **the canvas assistant / node search** (server-side), **automatic `referenced by` / `iteration of` edges** (embeddings live in Postgres — `compareCardsSimilarity` returns `status: "degraded"`, never an empty match list, so contract 22's distinction survives), and **knowledge provenance** (derived server-side as revisions land; returns empty so the timeline renders nothing rather than erroring). LLM card extraction still works: `/api/llm/chat` is stateless.
+- Guest revisions are capped at `MAX_LOCAL_REVISIONS`. A browser cannot hold what Postgres does, and the oldest snapshots are the ones the timeline can afford to lose — the cap is what stops a long session from filling the storage quota and failing the *next* save, which would lose live work rather than history.
+- Guest attachments have no URL, so `resolveRawFileUrl` mints `blob:` object URLs from a cache and `ensureLocalFileUrl` warms it. They are deliberately never revoked: the same file is re-rendered on every canvas redraw and a revoked URL would blank an image still on screen.
+- A guest project exports as **JSON, not `.vi`** — the archive is assembled server-side and the browser carries no zip writer. Different format, different extension, so nobody feeds it to the importer.
+
+27. Ownership and publishing replace "Make review only"
+- `documents.owner_id` is **nullable, and NULL means "created before accounts existed"**. Those stay visible and editable to everyone, so switching login on does not take an in-flight study's projects away. `ON DELETE SET NULL`, never CASCADE: deleting an account must not destroy research data.
+- **Publishing is visibility, and it is reversible. `review_only` is a permanent edit lock, and it is not.** They are different columns because they are different facts. Publishing puts a project in `GET /api/state/public` for every account, **read-only for all of them and still fully editable by its owner**. The old permanent conversion is gone from the UI; its route and column stay because projects already converted with it must keep behaving the way they were converted to.
+- The three access rules live in one place in `routes/state.ts` — `isDocumentOwner` / `canReadDocument` / `canWriteDocument` — and nothing should re-derive them inline. Readable = published or mine (or ownerless). Writable = readable, not `review_only`, **and** mine.
+- **An unreadable document answers 404, not 403.** A 403 confirms the id names somebody's real, private project, which turns `GET /state/:id` into a way of enumerating other people's work.
+- `PUT /api/state/:id` is an upsert, so a missing document there is the *insert* branch and the caller becomes its owner — not a refusal. The `ON CONFLICT` branch deliberately leaves `owner_id` alone, so saving a legacy ownerless project does not quietly claim it. Publishing one **does** claim it: the public list has to be able to say who put it there.
+- `can_edit` is computed **per request** and returned by `GET /state/:id`, because `!review_only` stopped being the whole answer once a project could be somebody else's. `useDocumentSync` reports it, `interactionLocked = !canEdit`, and autosave follows it — a session that may not write must not write. The banner distinguishes the two reasons ("review mode" vs "published by X, duplicate it to make changes") because they leave the reader with different things to do.
+- Duplicating a published project you do not own is **allowed and is the intended way to build on one**: the copy is created fresh and owned by whoever asked for it.
+- The Publish toggle is on the **project screen** (`ProjectEditorPage`) and mirrored on the project card. Publishing needs no confirmation — the way back is the same button; **unpublishing does**, because it takes something away from people who may already be reading it.
+
 ## Key Areas and Files
 
 - Timeline defaults / playhead / context menu cutoff:
@@ -203,6 +231,14 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 
 - Playback lock, clear edits, connect/delete behavior:
   - `vitral/src/pages/ProjectEditorPage.tsx`
+
+- Accounts, sessions, ownership and publishing (contracts 25-27):
+  - `backend/db/migrations/015_add_accounts_and_publishing.sql` (schema)
+  - `backend/src/plugins/auth.ts` (sessions, `currentUser`/`requireUser`), `backend/src/routes/auth.ts`
+  - `backend/src/utils/passwords.ts` (scrypt hashing + credential rules)
+  - `backend/src/routes/state.ts` (`canReadDocument`/`canWriteDocument`/`ensureDocumentWritable`, `/state/public`, `/state/:id/publish`)
+  - `vitral/src/auth/` (session context, provider, route guard), `vitral/src/pages/LoginPage.tsx`
+  - `vitral/src/api/authApi.ts`, `vitral/src/api/localProjectStore.ts` (guest storage)
 
 - The connection rule (contract 24) and the creation targets that serve it (contract 15):
   - `vitral/src/pages/projectEditor/graphInvariants.ts` (who must stay connected, and which deletions are refused)

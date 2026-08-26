@@ -235,3 +235,129 @@
 .newProjectText {
     font-weight: 600;
 }
+
+/* --- Account, guest mode, publishing and the public list ------------------------------------ */
+
+/* Sits at the far end of the header row, past the import button. */
+.accountBox {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding-left: var(--space-3);
+    border-left: 1px solid var(--color-border);
+}
+
+.accountName {
+    max-width: 16ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+}
+
+.accountAction {
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    padding: var(--space-1) var(--space-3);
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast),
+        color var(--transition-fast);
+}
+
+.accountAction:hover {
+    background: var(--color-surface-hover);
+    border-color: var(--color-text-muted);
+    color: var(--color-text);
+}
+
+/*
+ * Guest mode has a consequence the researcher has to be able to see at a glance, so it is stated
+ * on the page rather than only on the login screen they passed through once. Informational tints,
+ * not the error red — nothing has gone wrong.
+ */
+.guestBanner {
+    margin: 0 0 var(--space-5);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid #d8e2f0;
+    border-left: 3px solid #4a7fc1;
+    border-radius: var(--radius-md);
+    background: #f2f7fd;
+    color: #2c4a70;
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+}
+
+.inlineLink {
+    border: 0;
+    padding: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* Same badge shape as `.reviewBadge`, in the green that says "this is out in the world". */
+.publishedBadge,
+.localBadge {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size: var(--font-size-xxs);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.publishedBadge {
+    background: #dcf1e3;
+    color: #2f6b40;
+}
+
+.localBadge {
+    background: #e9e9e9;
+    color: #5b5b5b;
+}
+
+.ownerLine {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+}
+
+.publicSection {
+    margin-top: var(--space-7);
+    padding-top: var(--space-5);
+    border-top: 1px solid var(--color-border);
+}
+
+.publicHeader {
+    display: grid;
+    gap: 2px;
+    margin-bottom: var(--space-4);
+}
+
+.publicTitle {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.publicSubtitle {
+    margin: 0;
+    max-width: 68ch;
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    color: var(--color-text-muted);
+}
