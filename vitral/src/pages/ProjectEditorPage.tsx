@@ -9,11 +9,7 @@ import type {
     edgeType,
     nodeType,
     Stage,
-    BlueprintComponent,
-    BlueprintData,
     BlueprintEvent,
-    BlueprintHighBlock,
-    BlueprintIntermediate,
 } from "@/config/types";
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
@@ -29,14 +25,13 @@ import {
     loadKnowledgeProvenance,
     queryCanvasChat,
     queryDocumentNodes,
-    querySystemPapers,
     setDocumentPublished,
     updateDocumentMeta,
     type KnowledgeBlueprintLink,
     type KnowledgeCrossTreeConnection,
     type KnowledgePillEvent,
     type KnowledgePill,
-    type QuerySystemPapersResult,
+    type SystemPaperQueryCard,
 } from "@/api/stateApi";
 import { getGithubDocumentLink, githubStatus, type GitHubDocumentResponse } from "@/api/githubApi";
 import { isLocalProjectId } from "@/api/localProjectStore";
@@ -57,14 +52,12 @@ import { BlueprintNode } from "@/components/blueprint/BlueprintNode";
 import { BlueprintComponentNode } from "@/components/blueprint/BlueprintComponentNode";
 import { BlueprintGroupNode } from "@/components/blueprint/BlueprintGroupNode";
 import {
-    BLUEPRINT_DRAG_MIME,
-    parseBlueprintDragPayload,
-    type BlueprintDragPayload,
+    BLUEPRINT_ATTACH_MIME,
+    parseBlueprintAttachPayload,
 } from "@/components/blueprint/blueprintDnD";
 
 import {
     addNode,
-    addNodes,
     connectEdges,
     detachFileIdFromAllNodes,
     detachFileIdFromNode,
@@ -99,6 +92,11 @@ import {
     updateStage,
 } from "@/store/timelineSlice";
 
+import {
+    attachedComponentIds,
+    canvasBlueprintEdges,
+    canvasBlueprintNodes,
+} from "@/pages/projectEditor/blueprintSurfaces";
 import { isAllowedConnection, relationLabelFor, relationPartnersFor } from "@/utils/relationships";
 import { buildActivityOrbitLayout, buildActivityTreeMembership } from "@/pages/projectEditor/activityOrbitLayout";
 import {
@@ -128,6 +126,7 @@ import {
     CARD_HEIGHT_PX,
     CARD_WIDTH_PX,
     findActivityDropTarget,
+    findCardAtPosition,
     findCardSpawnTarget,
     getActivityDropTargets,
     getCardSpawnTargets,
@@ -159,6 +158,10 @@ import {
     type CanvasDropConnection,
 } from "@/pages/projectEditor/useFileAttachmentProcessing";
 import { SystemScreenshotPanel } from "@/pages/projectEditor/SystemScreenshotPanel";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faDiagramProject } from "@fortawesome/free-solid-svg-icons";
+import { BlueprintTray } from "@/pages/projectEditor/BlueprintTray";
+import trayStyles from "@/pages/projectEditor/BlueprintTray.module.css";
 
 const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["requirement"]);
 const FEEDS_INTO_EDGE_LABEL = "feeds into";
@@ -608,348 +611,6 @@ function getBlueprintComponentSnapshots(nodes: nodeType[]): ReportBlueprintCompo
     return snapshots;
 }
 
-function toBlueprintData(payload: BlueprintDragPayload): BlueprintData {
-    const highBlocks: BlueprintHighBlock[] = payload.paper.HighBlocks.map((high) => ({
-        name: high.HighBlockName,
-        intermediates: high.IntermediateBlocks.map((intermediate): BlueprintIntermediate => ({
-            name: intermediate.IntermediateBlockName,
-            components: intermediate.GranularBlocks.map((granular): BlueprintComponent => ({
-                id: granular.ID,
-                name: granular.GranularBlockName,
-                feedsInto: Array.isArray(granular.FeedsInto) ? granular.FeedsInto : [],
-                description: granular.PaperDescription,
-                referenceCitation: granular.ReferenceCitation,
-                highBlockName: high.HighBlockName,
-                intermediateBlockName: intermediate.IntermediateBlockName,
-            })),
-        })),
-    }));
-
-    const components = highBlocks.flatMap((high) =>
-        high.intermediates.flatMap((intermediate) => intermediate.components),
-    );
-
-    return {
-        fileName: payload.fileName,
-        paperTitle: payload.paperTitle,
-        year: payload.year,
-        highBlocks,
-        components,
-    };
-}
-
-function buildBlueprintComponentGraph(
-    payload: BlueprintDragPayload,
-    dropPosition: { x: number; y: number },
-    createdAt?: string,
-): { nodes: nodeType[]; edges: edgeType[] } {
-    const blueprint = toBlueprintData(payload);
-
-    const nodes: nodeType[] = [];
-    const edges: edgeType[] = [];
-    const nodeIdByComponentId = new Map<number, string>();
-    const edgeKeySet = new Set<string>();
-
-    const HIGH_BLOCK_GAP_X = 120;
-    const PAPER_PADDING_X = 28;
-    const PAPER_CONTENT_TOP = 54;
-    const PAPER_PADDING_BOTTOM = 24;
-    const PAPER_MIN_WIDTH = 360;
-    const PAPER_MIN_HEIGHT = 220;
-    const HIGH_PADDING_X = 22;
-    const HIGH_CONTENT_TOP = 46;
-    const HIGH_PADDING_BOTTOM = 22;
-    const INTERMEDIATE_GAP_X = 28;
-    const INTERMEDIATE_GAP_Y = 28;
-    const INTERMEDIATE_PADDING_X = 18;
-    const INTERMEDIATE_CONTENT_TOP = 42;
-    const INTERMEDIATE_PADDING_BOTTOM = 18;
-    const COMPONENT_SIZE = 112;
-    const COMPONENT_GAP_X = 24;
-    const COMPONENT_GAP_Y = 24;
-
-    const getIntermediateColumns = (count: number): number => {
-        if (count <= 1) return 1;
-        if (count <= 4) return 2;
-        return 3;
-    };
-
-    const getComponentColumns = (count: number): number => {
-        if (count <= 1) return 1;
-        if (count <= 4) return 2;
-        if (count <= 9) return 3;
-        return 4;
-    };
-
-    type IntermediateLayout = {
-        intermediate: BlueprintIntermediate;
-        componentColumns: number;
-        width: number;
-        height: number;
-    };
-
-    type HighLayout = {
-        high: BlueprintHighBlock;
-        intermediateColumns: number;
-        intermediateLayouts: IntermediateLayout[];
-        columnOffsets: number[];
-        rowOffsets: number[];
-        highWidth: number;
-        highHeight: number;
-    };
-
-    const highLayouts: HighLayout[] = [];
-
-    for (let highIndex = 0; highIndex < blueprint.highBlocks.length; highIndex++) {
-        const high = blueprint.highBlocks[highIndex];
-        const intermediateColumns = getIntermediateColumns(high.intermediates.length);
-        const intermediateRows = Math.max(1, Math.ceil(high.intermediates.length / intermediateColumns));
-
-        const intermediateLayouts: IntermediateLayout[] = high.intermediates.map((intermediate) => {
-            const componentCount = intermediate.components.length;
-            const componentColumns = getComponentColumns(componentCount);
-            const componentRows = Math.max(1, Math.ceil(componentCount / componentColumns));
-            const componentAreaWidth = (
-                componentColumns * COMPONENT_SIZE +
-                Math.max(0, componentColumns - 1) * COMPONENT_GAP_X
-            );
-            const componentAreaHeight = (
-                componentRows * COMPONENT_SIZE +
-                Math.max(0, componentRows - 1) * COMPONENT_GAP_Y
-            );
-            const width = INTERMEDIATE_PADDING_X * 2 + componentAreaWidth;
-            const height = INTERMEDIATE_CONTENT_TOP + componentAreaHeight + INTERMEDIATE_PADDING_BOTTOM;
-
-            return {
-                intermediate,
-                componentColumns,
-                width,
-                height,
-            };
-        });
-
-        const columnWidths = new Array<number>(intermediateColumns).fill(0);
-        const rowHeights = new Array<number>(intermediateRows).fill(0);
-
-        for (let intermediateIndex = 0; intermediateIndex < intermediateLayouts.length; intermediateIndex++) {
-            const intermediateCol = intermediateIndex % intermediateColumns;
-            const intermediateRow = Math.floor(intermediateIndex / intermediateColumns);
-            const layout = intermediateLayouts[intermediateIndex];
-            columnWidths[intermediateCol] = Math.max(columnWidths[intermediateCol], layout.width);
-            rowHeights[intermediateRow] = Math.max(rowHeights[intermediateRow], layout.height);
-        }
-
-        const columnOffsets = new Array<number>(intermediateColumns).fill(0);
-        for (let index = 1; index < intermediateColumns; index++) {
-            columnOffsets[index] = (
-                columnOffsets[index - 1] +
-                columnWidths[index - 1] +
-                INTERMEDIATE_GAP_X
-            );
-        }
-
-        const rowOffsets = new Array<number>(intermediateRows).fill(0);
-        for (let index = 1; index < intermediateRows; index++) {
-            rowOffsets[index] = (
-                rowOffsets[index - 1] +
-                rowHeights[index - 1] +
-                INTERMEDIATE_GAP_Y
-            );
-        }
-
-        const intermediateGridWidth = (
-            columnWidths.reduce((total, width) => total + width, 0) +
-            Math.max(0, intermediateColumns - 1) * INTERMEDIATE_GAP_X
-        );
-        const intermediateGridHeight = (
-            rowHeights.reduce((total, height) => total + height, 0) +
-            Math.max(0, intermediateRows - 1) * INTERMEDIATE_GAP_Y
-        );
-
-        const highWidth = HIGH_PADDING_X * 2 + intermediateGridWidth;
-        const highHeight = HIGH_CONTENT_TOP + intermediateGridHeight + HIGH_PADDING_BOTTOM;
-        highLayouts.push({
-            high,
-            intermediateColumns,
-            intermediateLayouts,
-            columnOffsets,
-            rowOffsets,
-            highWidth,
-            highHeight,
-        });
-    }
-
-    const totalHighWidth = (
-        highLayouts.reduce((total, layout) => total + layout.highWidth, 0) +
-        Math.max(0, highLayouts.length - 1) * HIGH_BLOCK_GAP_X
-    );
-    const tallestHigh = highLayouts.reduce(
-        (maxHeight, layout) => Math.max(maxHeight, layout.highHeight),
-        0,
-    );
-    const paperWidth = Math.max(PAPER_MIN_WIDTH, PAPER_PADDING_X * 2 + totalHighWidth);
-    const paperHeight = Math.max(PAPER_MIN_HEIGHT, PAPER_CONTENT_TOP + tallestHigh + PAPER_PADDING_BOTTOM);
-    const paperTitle = Number.isFinite(blueprint.year) && blueprint.year > 0
-        ? `${blueprint.paperTitle} (${blueprint.year})`
-        : blueprint.paperTitle;
-    const paperNodeId = crypto.randomUUID();
-
-    nodes.push({
-        id: paperNodeId,
-        position: {
-            x: dropPosition.x,
-            y: dropPosition.y,
-        },
-        type: "blueprintGroup",
-        style: {
-            width: paperWidth,
-            height: paperHeight,
-        },
-        zIndex: 0,
-        data: {
-            label: "blueprint_group",
-            type: "technical",
-            title: paperTitle,
-            description: "System Paper",
-            ...(createdAt ? { createdAt } : {}),
-            blueprintGroupLevel: "paper",
-            blueprintPaperTitle: blueprint.paperTitle,
-            blueprintFileName: blueprint.fileName,
-        },
-    });
-
-    let highCursorX = PAPER_PADDING_X;
-    for (let highIndex = 0; highIndex < highLayouts.length; highIndex++) {
-        const highLayout = highLayouts[highIndex];
-        const highNodeId = crypto.randomUUID();
-
-        nodes.push({
-            id: highNodeId,
-            parentId: paperNodeId,
-            extent: "parent",
-            position: {
-                x: highCursorX,
-                y: PAPER_CONTENT_TOP,
-            },
-            type: "blueprintGroup",
-            style: {
-                width: highLayout.highWidth,
-                height: highLayout.highHeight,
-            },
-            zIndex: 1,
-            data: {
-                label: "blueprint_group",
-                type: "technical",
-                title: highLayout.high.name,
-                description: "High Block",
-                ...(createdAt ? { createdAt } : {}),
-                blueprintGroupLevel: "high",
-                blueprintPaperTitle: blueprint.paperTitle,
-                blueprintFileName: blueprint.fileName,
-            },
-        });
-
-        for (let intermediateIndex = 0; intermediateIndex < highLayout.intermediateLayouts.length; intermediateIndex++) {
-            const intermediateLayout = highLayout.intermediateLayouts[intermediateIndex];
-            const intermediate = intermediateLayout.intermediate;
-            const intermediateCol = intermediateIndex % highLayout.intermediateColumns;
-            const intermediateRow = Math.floor(intermediateIndex / highLayout.intermediateColumns);
-            const intermediateNodeId = crypto.randomUUID();
-
-            nodes.push({
-                id: intermediateNodeId,
-                parentId: highNodeId,
-                extent: "parent",
-                position: {
-                    x: HIGH_PADDING_X + highLayout.columnOffsets[intermediateCol],
-                    y: HIGH_CONTENT_TOP + highLayout.rowOffsets[intermediateRow],
-                },
-                type: "blueprintGroup",
-                style: {
-                    width: intermediateLayout.width,
-                    height: intermediateLayout.height,
-                },
-                zIndex: 2,
-                data: {
-                    label: "blueprint_group",
-                    type: "technical",
-                    title: intermediate.name,
-                    description: "Intermediate Block",
-                    ...(createdAt ? { createdAt } : {}),
-                    blueprintGroupLevel: "intermediate",
-                    blueprintPaperTitle: blueprint.paperTitle,
-                    blueprintFileName: blueprint.fileName,
-                },
-            });
-
-            for (let componentIndex = 0; componentIndex < intermediate.components.length; componentIndex++) {
-                const component = intermediate.components[componentIndex];
-                const componentCol = componentIndex % intermediateLayout.componentColumns;
-                const componentRow = Math.floor(componentIndex / intermediateLayout.componentColumns);
-                const nodeId = crypto.randomUUID();
-
-                nodes.push({
-                    id: nodeId,
-                    parentId: intermediateNodeId,
-                    extent: "parent",
-                    position: {
-                        x: INTERMEDIATE_PADDING_X + componentCol * (COMPONENT_SIZE + COMPONENT_GAP_X),
-                        y: INTERMEDIATE_CONTENT_TOP + componentRow * (COMPONENT_SIZE + COMPONENT_GAP_Y),
-                    },
-                    type: "blueprintComponent",
-                    zIndex: 3,
-                    data: {
-                        label: "blueprint_component",
-                        type: "technical",
-                        title: component.name,
-                        codebaseFilePaths: [],
-                        description: `${component.highBlockName} / ${component.intermediateBlockName}`,
-                        ...(createdAt ? { createdAt } : {}),
-                        blueprintComponent: component,
-                        blueprintPaperTitle: blueprint.paperTitle,
-                        blueprintFileName: blueprint.fileName,
-                    },
-                });
-
-                if (!nodeIdByComponentId.has(component.id)) {
-                    nodeIdByComponentId.set(component.id, nodeId);
-                }
-            }
-        }
-
-        highCursorX += highLayout.highWidth + HIGH_BLOCK_GAP_X;
-    }
-
-    for (const component of blueprint.components) {
-        const sourceNodeId = nodeIdByComponentId.get(component.id);
-        if (!sourceNodeId) continue;
-
-        for (const targetComponentId of component.feedsInto) {
-            const targetNodeId = nodeIdByComponentId.get(targetComponentId);
-            if (!targetNodeId || targetNodeId === sourceNodeId) continue;
-
-            const key = `${sourceNodeId}->${targetNodeId}`;
-            if (edgeKeySet.has(key)) continue;
-            edgeKeySet.add(key);
-
-            edges.push({
-                id: crypto.randomUUID(),
-                source: sourceNodeId,
-                target: targetNodeId,
-                type: "relation",
-                label: "feeds into",
-                data: {
-                    label: "feeds into",
-                    from: "blueprint_component",
-                    to: "blueprint_component",
-                    ...(createdAt ? { createdAt } : {}),
-                },
-            });
-        }
-    }
-
-    return { nodes, edges };
-}
 
 const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const { status, error, reviewOnly, canEdit, isOwner, published, ownerUsername } =
@@ -957,7 +618,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // Publishing is an account action, so the control needs to know whether there is one — a guest
     // reading an ownerless legacy project counts as its "owner" under the pre-accounts rule, and
     // would otherwise be offered a button the server refuses.
-    const { user: sessionUser } = useSession();
+    const { user: sessionUser, isGuest } = useSession();
 
     const dispatch = useDispatch<AppDispatch>();
     const navigate = useNavigate();
@@ -999,9 +660,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // Replaces the blocking `alert` the extraction path used to raise: the file is already
     // attached by the time extraction can fail, so this is a notice, not a dialog.
     const [fileProcessingError, setFileProcessingError] = useState<string | null>(null);
-    const [systemPaperResults, setSystemPaperResults] = useState<QuerySystemPapersResult[]>([]);
-    const [systemPapersLoading, setSystemPapersLoading] = useState(false);
-    const [systemPapersError, setSystemPapersError] = useState<string | null>(null);
+    // Session state, like the manual positions and the filters: whether a panel is open is not
+    // something the project remembers.
+    const [trayOpen, setTrayOpen] = useState(false);
     const [exportingProject, setExportingProject] = useState(false);
     const [exportingMarkdown, setExportingMarkdown] = useState(false);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
@@ -1238,7 +899,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
      * The server works it out per request (`can_edit`) so the two reasons — a permanent review-mode
      * conversion, and "this belongs to another account" — cannot drift apart on the client.
      */
-    const interactionLocked = !canEdit;
+    // `!canEdit` is the server's answer, and it is about whatever cookie the request carried. A
+    // guest may edit exactly one kind of project — the `local-` ones in this browser (contract 26)
+    // — so that is asserted here instead of being inferred from a session the client cannot see.
+    // Without it, a browser calling itself a guest while still holding an account's cookie gets the
+    // whole editor on that account's published project.
+    const interactionLocked = !canEdit || (isGuest && !isLocalProjectId(projectId));
     const resolveActionTimestamp = useCallback(() => {
         if (playbackAt) {
             const parsed = new Date(playbackAt);
@@ -2286,12 +1952,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         onDetachFile: typeof onDetachFile;
         onDataPropertyChange: typeof onDataPropertyChange;
         onDeleteNode: typeof onDeleteNode;
+        readOnly: boolean;
         participantOptions: string[];
     }>({
         onAttachFile: onAttachFileForNode,
         onDetachFile,
         onDataPropertyChange,
         onDeleteNode,
+        // Carried on the same ref as the handlers so `nodeTypes` keeps its identity: a new
+        // `nodeTypes` object remounts every node on the canvas.
+        readOnly: interactionLocked,
         participantOptions: participantNames,
     });
     useEffect(() => {
@@ -2300,9 +1970,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             onDetachFile,
             onDataPropertyChange,
             onDeleteNode,
+            readOnly: interactionLocked,
             participantOptions: participantNames,
         };
-    }, [onAttachFileForNode, onDataPropertyChange, onDeleteNode, onDetachFile, participantNames]);
+    }, [onAttachFileForNode, onDataPropertyChange, onDeleteNode, onDetachFile, interactionLocked, participantNames]);
 
     const blueprintComponentHandlersRef = useRef<{
         onRenameTitle: typeof handleBlueprintComponentTitleChange;
@@ -2334,6 +2005,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onDetachFile: handlers.onDetachFile,
                 onDataPropertyChange: handlers.onDataPropertyChange,
                 onDeleteNode: handlers.onDeleteNode,
+                readOnly: handlers.readOnly,
                 participantOptions: handlers.participantOptions,
             };
 
@@ -2383,39 +2055,38 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             // the canvas looked like before anyone touched it.
             if (!authoredVisible && !isModelDerived) return false;
             const rawLabel = normalizeNodeLabel(String(node.data?.label ?? ""));
+            // Only attached components reach this far, so the chip now answers a narrower question
+            // than it used to: whether to draw the answers alongside the requirements, or read the
+            // study on its own.
             if (BLUEPRINT_NODE_LABELS.has(rawLabel)) return blueprintComponentsVisible;
             if (!CARD_LABELS.includes(rawLabel as cardLabel)) return true;
             return selectedLabelSet.has(rawLabel as cardLabel);
         }));
     }, [authoredVisible, blueprintComponentsVisible, modelDerivedVisible, selectedLabelSet, timelineContextNodes]);
 
-    const emphasizedBlueprintComponentIds = useMemo(() => {
-        const nodeById = new Map(timelineContextNodes.map((node) => [node.id, node]));
-        const emphasized = new Set<string>();
+    /**
+     * Which components answer a requirement, as the **timeline** sees it — playback-scoped, exactly
+     * as this was before the tray, because it decides which blueprint events the track draws as
+     * connected. It is deliberately not the canvas surface set: a sidebar chip must not restyle the
+     * blueprint track.
+     */
+    const emphasizedBlueprintComponentIds = useMemo(
+        () => attachedComponentIds(timelineContextNodes, timelineContextEdges),
+        [timelineContextEdges, timelineContextNodes],
+    );
 
-        for (let index = 0; index < timelineContextEdges.length; index++) {
-            const edge = timelineContextEdges[index];
-            const sourceNode = nodeById.get(edge.source);
-            const targetNode = nodeById.get(edge.target);
-            if (!sourceNode || !targetNode) continue;
-
-            const sourceLabel = normalizeNodeLabel(String(sourceNode.data?.label ?? ""));
-            const targetLabel = normalizeNodeLabel(String(targetNode.data?.label ?? ""));
-            const sourceIsComponent = sourceLabel === "blueprint_component";
-            const targetIsComponent = targetLabel === "blueprint_component";
-            const sourceIsTaskOrRequirement = sourceLabel === "requirement";
-            const targetIsTaskOrRequirement = targetLabel === "requirement";
-
-            if (sourceIsComponent && targetIsTaskOrRequirement) {
-                emphasized.add(sourceNode.id);
-            }
-            if (targetIsComponent && sourceIsTaskOrRequirement) {
-                emphasized.add(targetNode.id);
-            }
-        }
-
-        return emphasized;
-    }, [timelineContextEdges, timelineContextNodes]);
+    /**
+     * The same question asked of the whole document, for the tray.
+     *
+     * The tray is a workbench, not a view of the study: it shows the system design whatever the
+     * needle is doing, so the mark saying "this one already answers something" has to be
+     * document-scoped too. Scrubbing the timeline must not make badges blink on and off in a panel
+     * that is not showing history.
+     */
+    const trayAttachedComponentIds = useMemo(
+        () => attachedComponentIds(liveNodes, liveEdges),
+        [liveEdges, liveNodes],
+    );
     const connectedBlueprintComponentNodeIds = useMemo(
         () => Array.from(emphasizedBlueprintComponentIds),
         [emphasizedBlueprintComponentIds]
@@ -2473,25 +2144,48 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // Highlight used to be injected here as `node.style`, which cloned node objects and so invalidated
     // salience, clustering, abstraction and the layout on every hover. It now reaches the nodes
     // through `canvasHighlightStore`, leaving this memo to do only what its name says.
-    const filteredNodes = useMemo(() => (
+    const queryFilteredNodes = useMemo(() => (
         queryMatchedNodeSet
             ? keepAll(labelFilteredNodes, labelFilteredNodes.filter((node) => queryMatchedNodeSet.has(node.id)))
             : labelFilteredNodes
     ), [labelFilteredNodes, queryMatchedNodeSet]);
 
+    /**
+     * The surface split: what of the blueprint this canvas is entitled to draw.
+     *
+     * A component appears exactly when it answers a requirement that is **itself still on screen**;
+     * group boxes never do, and neither does the `feeds into` wiring between components. Everything
+     * else about the blueprint lives in the tray, which reads the store directly.
+     *
+     * It has to run *last*, after the needle, the label chips and the chat query have each had their
+     * say. Attachment is a claim about a pair, and `filteredEdges` below drops any edge with a
+     * filtered-out endpoint — so judging attachment earlier would leave a component on the canvas
+     * with its requirement filtered away, orbiting nothing, in the unassigned band this whole change
+     * exists to get it out of. Switching the `requirement` chip off is enough to reach that.
+     *
+     * A component answering several requirements survives while *any* of them does, which is the
+     * other reason this is a filter here rather than activity-tree membership: membership can only
+     * name one tree.
+     */
+    const filteredNodes = useMemo(
+        () => canvasBlueprintNodes(queryFilteredNodes, timelineContextEdges),
+        [queryFilteredNodes, timelineContextEdges],
+    );
+
     // Structural, not hover-driven, so it belongs to the graph — but it reaches the blueprint nodes as
     // a class rather than an injected `opacity`, for the same reason as above.
     useEffect(() => {
-        setEmphasizedBlueprintComponentIds(emphasizedBlueprintComponentIds);
-    }, [emphasizedBlueprintComponentIds]);
+        setEmphasizedBlueprintComponentIds(trayAttachedComponentIds);
+    }, [trayAttachedComponentIds]);
 
 
     const filteredEdges = useMemo(() => {
+        const surfaceEdges = canvasBlueprintEdges(filteredNodes, timelineContextEdges);
         const visibleNodeIds = new Set(filteredNodes.map((node) => node.id));
-        return keepAll(timelineContextEdges, timelineContextEdges.filter((edge) => (
+        return keepAll(surfaceEdges, surfaceEdges.filter((edge) => (
             visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)
         )));
-    }, [timelineContextEdges, filteredNodes]);
+    }, [filteredNodes, timelineContextEdges]);
 
 
     // --- Focus + context lens. Sits after every filter, so a glyph always describes what is
@@ -2747,52 +2441,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         commitCardSpawn(pending, option);
     }, [commitCardSpawn, pendingCardSpawnMenu]);
 
-    // Hit-tests a canvas point against blueprint parent boxes. This must read the *displayed* nodes:
-    // the layout translates the blueprint block, so stored positions are in a different space than
-    // the flow coordinates a click resolves to.
-    const isInsideSystemBlueprintParentBox = useCallback((position: { x: number; y: number }) => {
-        const nodes = displayedNodes;
-        const nodeById = new Map(nodes.map((node) => [node.id, node]));
-        const absolutePositionById = new Map<string, { x: number; y: number }>();
-        const resolveAbsolutePosition = (nodeId: string): { x: number; y: number } => {
-            const cached = absolutePositionById.get(nodeId);
-            if (cached) return cached;
-            const node = nodeById.get(nodeId);
-            if (!node) return { x: 0, y: 0 };
-            if (!node.parentId) {
-                const root = { x: node.position.x, y: node.position.y };
-                absolutePositionById.set(nodeId, root);
-                return root;
-            }
-            const parentAbs = resolveAbsolutePosition(node.parentId);
-            const abs = { x: parentAbs.x + node.position.x, y: parentAbs.y + node.position.y };
-            absolutePositionById.set(nodeId, abs);
-            return abs;
-        };
-
-        for (const node of nodes) {
-            const nodeData = node.data as Record<string, unknown>;
-            const label = String(nodeData.label ?? "").toLowerCase();
-            if (label !== "blueprint_group") continue;
-            if (typeof nodeData.blueprintFileName !== "string" || nodeData.blueprintFileName.trim() === "") continue;
-
-            const absolute = resolveAbsolutePosition(node.id);
-            const style = node.style as Record<string, unknown> | undefined;
-            const width = typeof style?.width === "number"
-                ? style.width
-                : Number.parseFloat(String(style?.width ?? "0")) || 0;
-            const height = typeof style?.height === "number"
-                ? style.height
-                : Number.parseFloat(String(style?.height ?? "0")) || 0;
-            if (width <= 0 || height <= 0) continue;
-
-            const insideX = position.x >= absolute.x && position.x <= absolute.x + width;
-            const insideY = position.y >= absolute.y && position.y <= absolute.y + height;
-            if (insideX && insideY) return true;
-        }
-
-        return false;
-    }, [displayedNodes]);
 
     const onCanvasClick = useCallback((e: React.MouseEvent) => {
         if (canvasClickSuppressedRef.current) {
@@ -2801,41 +2449,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
         if (interactionLocked) return;
         if (!canvasIsEditable) return;
-        if (cursorMode !== "node" && cursorMode !== "blueprint_component") return;
+        if (cursorMode !== "node") return;
 
         const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-        if (cursorMode === "blueprint_component") {
-            if (isInsideSystemBlueprintParentBox(position)) return;
-
-            resetFiltersForCanvasCreation();
-            const componentId = Math.floor(Date.now() + Math.random() * 1000);
-            dispatch(addNode({
-                id: crypto.randomUUID(),
-                position,
-                type: "blueprintComponent",
-                data: {
-                    label: "blueprint_component",
-                    type: "technical",
-                    title: "Blueprint component",
-                    codebaseFilePaths: [],
-                    manualCreated: true,
-                    description: "",
-                    blueprintComponent: {
-                        id: componentId,
-                        name: "Blueprint component",
-                        feedsInto: [],
-                        description: "",
-                        referenceCitation: "",
-                        highBlockName: "Manual",
-                        intermediateBlockName: "Manual",
-                    },
-                    blueprintPaperTitle: "Manual component",
-                    blueprintFileName: "",
-                    createdAt: resolveActionTimestamp(),
-                },
-            }));
-            return;
-        }
 
         // Three places a click can land, in order of how specific they are. A spawn box wins over
         // an activity ring it happens to sit inside: the box is an offer about one card, the ring
@@ -2911,15 +2527,97 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 relevant: true,
             },
         }));
-    }, [canvasIsEditable, cursorMode, dispatch, interactionLocked, isInsideSystemBlueprintParentBox, placeMenuAbove, resolveActionTimestamp, resetFiltersForCanvasCreation, resolveCreationTarget, screenToFlowPosition]);
+    }, [canvasIsEditable, cursorMode, dispatch, interactionLocked, placeMenuAbove, resolveActionTimestamp, resetFiltersForCanvasCreation, resolveCreationTarget, screenToFlowPosition]);
+
+    /**
+     * Attach a tray component to the requirement under the cursor, or say why not.
+     *
+     * The whole "attach" gesture is this one edge. A `tackled in` relation is what puts the
+     * component on the canvas at all (`blueprintSurfaces.canvasBlueprintNodes`), what mints the
+     * dated `BlueprintEvent` on the timeline, and what the researcher removes to detach — so there
+     * is nothing else to create, and nothing to keep in sync with the tray.
+     *
+     * The hit test reads `displayedNodes`, never the store `nodes`: the layout owns rendered
+     * positions and the two coordinate spaces stopped agreeing when it did.
+     */
+    const attachComponentToRequirementAt = useCallback((
+        payload: { nodeId: string; title: string },
+        position: { x: number; y: number },
+    ) => {
+        const componentNode = nodes.find((node) => node.id === payload.nodeId);
+        if (!componentNode) return;
+
+        const requirementNode = findCardAtPosition(displayedNodes, position, { label: "requirement" });
+        if (!requirementNode) {
+            showCanvasNotice(
+                `Drop "${payload.title || "the component"}" onto a requirement card to say it answers that requirement.`,
+            );
+            return;
+        }
+
+        const label = relationLabelFor("blueprint_component", "requirement");
+        if (!label) return;
+
+        const alreadyConnected = edges.some((edge) => (
+            ((edge.source === componentNode.id && edge.target === requirementNode.id)
+                || (edge.source === requirementNode.id && edge.target === componentNode.id))
+            && toTimestampMs((edge.data as Record<string, unknown> | undefined)?.deletedAt) === null
+            && edgeLabelFrom(edge) === label
+        ));
+        if (alreadyConnected) {
+            showCanvasNotice(
+                `"${payload.title || "That component"}" already answers this requirement.`,
+            );
+            return;
+        }
+
+        // Direction is not cosmetic here. `routes/state.ts` builds the report's blueprint links from
+        // `card -> blueprint_component` rows only ("Enforce directional links only"), so an edge
+        // drawn the other way is accepted by the canvas, the timeline and provenance and then
+        // silently missing from the markdown report. The relation table is unordered and this
+        // gesture always knows which end is which, so it always writes the direction that survives.
+        const createdAt = resolveActionTimestamp();
+        dispatch(connectEdges([{
+            id: crypto.randomUUID(),
+            source: requirementNode.id,
+            target: componentNode.id,
+            type: "relation",
+            label,
+            data: {
+                label,
+                from: "requirement",
+                to: "blueprint_component",
+                createdAt,
+                manual: true,
+            },
+        }]));
+
+        maybeCreateBlueprintEventFromConnection(
+            requirementNode,
+            componentNode,
+            "requirement",
+            "blueprint_component",
+        );
+        setPendingFocusNodeId(componentNode.id);
+    }, [
+        displayedNodes,
+        dispatch,
+        edges,
+        maybeCreateBlueprintEventFromConnection,
+        nodes,
+        resolveActionTimestamp,
+        showCanvasNotice,
+    ]);
 
     const handleCanvasDragOver = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
         const dragTypes = Array.from(e.dataTransfer?.types ?? []);
         const hasFiles = dragTypes.includes("Files");
-        const hasBlueprint = dragTypes.includes(BLUEPRINT_DRAG_MIME);
+        // A whole paper is no longer droppable here: blueprint structure lives in the tray, and the
+        // only blueprint gesture the canvas takes is attaching one component to one requirement.
+        const hasBlueprintAttach = dragTypes.includes(BLUEPRINT_ATTACH_MIME);
         const hasGitHubFile = dragTypes.includes("application/x-vitral-github-file");
-        if (!hasFiles && !hasBlueprint && !hasGitHubFile) return;
+        if (!hasFiles && !hasBlueprintAttach && !hasGitHubFile) return;
 
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
@@ -2980,21 +2678,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const handleCanvasDrop = useCallback((e: React.DragEvent) => {
         if (interactionLocked) return;
         if (!canvasIsEditable) return;
-        const blueprintRaw = e.dataTransfer?.getData(BLUEPRINT_DRAG_MIME);
-        if (blueprintRaw) {
+        const attachRaw = e.dataTransfer?.getData(BLUEPRINT_ATTACH_MIME);
+        if (attachRaw) {
             e.preventDefault();
 
-            const payload = parseBlueprintDragPayload(blueprintRaw);
+            const payload = parseBlueprintAttachPayload(attachRaw);
             if (!payload) return;
 
             const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-            const graph = buildBlueprintComponentGraph(payload, position, resolveActionTimestamp());
-            if (graph.nodes.length > 0) {
-                dispatch(addNodes(graph.nodes));
-            }
-            if (graph.edges.length > 0) {
-                dispatch(connectEdges(graph.edges));
-            }
+            attachComponentToRequirementAt(payload, position);
             return;
         }
 
@@ -3045,7 +2737,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             defaultLabel,
             ...placeMenuAbove(e.clientX, e.clientY, SPAWN_MENU_WIDTH_PX, SPAWN_MENU_HEIGHT_PX),
         });
-    }, [canvasIsEditable, dispatch, interactionLocked, placeMenuAbove, resolveActionTimestamp, resolveCreationTarget, screenToFlowPosition, showCanvasNotice]);
+    }, [attachComponentToRequirementAt, canvasIsEditable, interactionLocked, placeMenuAbove, resolveCreationTarget, screenToFlowPosition, showCanvasNotice]);
 
     // A typed note becomes one card, deterministically. The label is guessed from keyword cues in
     // `noteClassification.ts` -- never by the model, because this is a reading-path affordance and
@@ -3488,7 +3180,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 document.body.style.cursor = "text";
                 break;
             case "node":
-            case "blueprint_component":
                 document.body.style.cursor = "pointer";
                 break;
             default:
@@ -3658,41 +3349,92 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         })();
     }, [chatLoading, chatMessages, labelFilteredNodes, playbackAt, projectId]);
 
-    const handleSystemPapersRefresh = useCallback(() => {
-        const cards = nodes
-            .map((node) => node.data)
-            .filter((data) => SYSTEM_PAPER_CARD_LABELS.has(normalizeNodeLabel(String(data?.label ?? "")) as cardLabel))
-            .map((data) => ({
-                label: normalizeNodeLabel(String(data?.label ?? "")),
-                title: String(data?.title ?? ""),
-                description: String(data?.description ?? ""),
-            }));
+    /**
+     * The requirement cards each search is scoped to.
+     *
+     * `requirementSearchCards` is every requirement in the project, which is what the blueprint
+     * search asks about — "which published system covers this work". It reads `liveNodes` and drops
+     * anything marked irrelevant: the previous version read the raw store, so a soft-deleted card
+     * and one the researcher had explicitly labelled noise both still shaped the query.
+     *
+     * `selectedRequirementCards` is the subset selected on the canvas, which is what the component
+     * search asks about. Selection is React Flow's own — `flowSlice.onNodesChange` has always
+     * written `selected` onto the store nodes through `applyNodeChanges`, and until now nothing read
+     * it. `dropNoOpSelectChanges` already keeps clicking an already-selected card from churning the
+     * array, so this memo settles as soon as the selection does.
+     */
+    const requirementSearchCards = useMemo<SystemPaperQueryCard[]>(() => (
+        liveNodes
+            .filter((node) => (
+                SYSTEM_PAPER_CARD_LABELS.has(
+                    normalizeNodeLabel(String(node.data?.label ?? "")) as cardLabel,
+                )
+                && (node.data as Record<string, unknown> | undefined)?.relevant !== false
+            ))
+            .map((node) => ({
+                label: "requirement",
+                title: String(node.data?.title ?? ""),
+                description: String(node.data?.description ?? ""),
+            }))
+    ), [liveNodes]);
 
-        if (cards.length === 0) {
-            setSystemPaperResults([]);
-            setSystemPapersError("Add at least one requirement card before refreshing.");
-            return;
-        }
+    /**
+     * Say where the blueprint went, once, on a project that had one before the tray existed.
+     *
+     * Opening such a project after this change, the paper boxes and every component not answering a
+     * requirement leave the canvas. Nothing is deleted and it is all in the tray — but a canvas that
+     * silently loses a block of content reads as data loss, and the count on a closed panel is not
+     * an explanation. Session state, and only for a project that actually has something to explain.
+     */
+    const migrationNoticeShownRef = useRef(false);
+    useEffect(() => {
+        if (status !== "ready") return;
+        if (migrationNoticeShownRef.current) return;
+        if (trayOpen) return;
 
-        setSystemPapersLoading(true);
-        setSystemPapersError(null);
+        const trayOnly = liveNodes.filter((node) => {
+            const label = normalizeNodeLabel(String(node.data?.label ?? ""));
+            if (!BLUEPRINT_NODE_LABELS.has(label)) return false;
+            return label !== "blueprint_component" || !trayAttachedComponentIds.has(node.id);
+        }).length;
+        if (trayOnly === 0) return;
 
-        void (async () => {
-            try {
-                const response = await querySystemPapers({
-                    cards,
-                    limit: 5,
-                });
-                setSystemPaperResults(response.results);
-            } catch (error) {
-                const message = error instanceof Error ? error.message : "Failed to refresh system papers.";
-                setSystemPapersError(message);
-                setSystemPaperResults([]);
-            } finally {
-                setSystemPapersLoading(false);
-            }
-        })();
-    }, [nodes]);
+        migrationNoticeShownRef.current = true;
+        showCanvasNotice(
+            `${trayOnly} blueprint ${trayOnly === 1 ? "item is" : "items are"} in the blueprint tray.`
+            + " The canvas shows a component once it answers a requirement — open the tray to see the rest.",
+        );
+    }, [liveNodes, showCanvasNotice, status, trayAttachedComponentIds, trayOpen]);
+
+    /**
+     * How many components are waiting in the tray, shown on the chip that reopens it.
+     *
+     * Without it a closed tray is indistinguishable from an empty one, and a researcher who has
+     * dragged a whole paper in has no sign that anything happened — the canvas deliberately does not
+     * change until something is attached.
+     */
+    const trayComponentCount = useMemo(
+        () => liveNodes.filter((node) => (
+            normalizeNodeLabel(String(node.data?.label ?? "")) === "blueprint_component"
+        )).length,
+        [liveNodes],
+    );
+
+    const selectedRequirementCards = useMemo<SystemPaperQueryCard[]>(() => (
+        liveNodes
+            .filter((node) => (
+                node.selected === true
+                && SYSTEM_PAPER_CARD_LABELS.has(
+                    normalizeNodeLabel(String(node.data?.label ?? "")) as cardLabel,
+                )
+                && (node.data as Record<string, unknown> | undefined)?.relevant !== false
+            ))
+            .map((node) => ({
+                label: "requirement",
+                title: String(node.data?.title ?? ""),
+                description: String(node.data?.description ?? ""),
+            }))
+    ), [liveNodes]);
 
     const handleExportMarkdown = useCallback(() => {
         if (exportingMarkdown) return;
@@ -4102,11 +3844,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         setCursorMode("node");
     }, [interactionLocked]);
 
-    const handleBlueprintComponentInputClicked = useCallback(() => {
-        if (interactionLocked) return;
-        setCursorMode("blueprint_component");
-    }, [interactionLocked]);
-
     const handlePointerClicked = useCallback(() => {
         setCursorMode("");
     }, []);
@@ -4237,7 +3974,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         direction: "before" | "after",
         cutoffOverrideIso?: string
     ) => {
-        if (reviewOnly) return;
+        // `interactionLocked`, not `reviewOnly`: this deletes edits, and it must be as closed to
+        // somebody reading another account's published project as it is in review mode.
+        if (interactionLocked) return;
         let cutoffIso = resolveActionTimestamp();
         if (typeof cutoffOverrideIso === "string" && cutoffOverrideIso.trim() !== "") {
             const parsedOverride = new Date(cutoffOverrideIso);
@@ -4601,7 +4340,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         setKnowledgeBlueprintLinks((previous) => previous.filter((connection) => (
             nextKnowledgeNodeIdSet.has(connection.cardNodeId)
         )));
-    }, [dispatch, edges, nodes, resolveActionTimestamp, reviewOnly, timelineRangeEndMs, timelineRangeStartMs]);
+    }, [dispatch, edges, interactionLocked, nodes, resolveActionTimestamp, timelineRangeEndMs, timelineRangeStartMs]);
 
     const handleClearKnowledgePreviousEdits = useCallback((cutoffIso?: string) => {
         clearKnowledgeEditsAroundPlayback("before", cutoffIso);
@@ -4735,7 +4474,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 title={title}
                 onSetTitle={handleSetTitle}
                 onGoHome={handleGoHome}
-                onOpenSettings={reviewOnly ? undefined : handleOpenSettings}
+                onOpenSettings={interactionLocked ? undefined : handleOpenSettings}
                 onExportProject={handleExportProject}
                 exportingProject={exportingProject}
                 onExportMarkdown={handleExportMarkdown}
@@ -4751,11 +4490,46 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onToggleModelDerived={handleToggleModelDerived}
                 selectedLabels={selectedLabels}
                 onToggleLabel={handleToggleLabelWithQueryRefresh}
-                systemPaperResults={systemPaperResults}
-                systemPapersLoading={systemPapersLoading}
-                systemPapersError={systemPapersError}
-                onSystemPapersRefresh={handleSystemPapersRefresh}
             />
+
+            {/*
+              * The blueprint tray, docked bottom-left.
+              *
+              * Always mounted, and merely translated away when closed: the tray holds its own React
+              * Flow viewport and the search results, and unmounting would throw both away every time
+              * the researcher glanced at the canvas underneath. `content-visibility: hidden` makes
+              * that free — the whole subtree is skipped for layout, style and paint while it is off
+              * screen. Same reasoning as `TimelineDock`.
+              *
+              * It sits under the left sidebar rather than over the canvas centre, because the attach
+              * gesture is a drag from here onto a card: a panel covering the canvas would be
+              * covering its own drop target.
+              */}
+            <BlueprintTray
+                open={trayOpen}
+                onToggleOpen={() => setTrayOpen((previous) => !previous)}
+                interactionLocked={interactionLocked}
+                bottomOffsetPx={canvasSidebarBottomOffset}
+                requirementCards={requirementSearchCards}
+                selectedRequirementCards={selectedRequirementCards}
+                resolveActionTimestamp={resolveActionTimestamp}
+            />
+
+            {!trayOpen ? (
+                <button
+                    type="button"
+                    className={trayStyles.reopen}
+                    style={{ bottom: canvasSidebarBottomOffset + 12 }}
+                    onClick={() => setTrayOpen(true)}
+                    title="Open the blueprint tray"
+                >
+                    <FontAwesomeIcon icon={faDiagramProject} />
+                    <span>Blueprint tray</span>
+                    {trayComponentCount > 0 ? (
+                        <span className={trayStyles.reopenCount}>{trayComponentCount}</span>
+                    ) : null}
+                </button>
+            ) : null}
 
             {fileProcessingError ? (
                 <div
@@ -4874,7 +4648,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 <Toolbar
                     onFreeInputClicked={handleFreeInputClicked}
                     onNodeInputClicked={handleNodeInputClicked}
-                    onBlueprintComponentClicked={handleBlueprintComponentInputClicked}
                     onPointerClicked={handlePointerClicked}
                     activeMode={cursorMode}
                     shifted={timelineOpen}
@@ -4895,6 +4668,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 connectionStatus={gitConnectionStatus}
                 assetsRecords={allFiles}
                 reviewOnly={reviewOnly}
+                readOnly={interactionLocked}
                 bottomOffsetPx={canvasSidebarBottomOffset}
                 onAssetHover={setHoveredAssetFileId}
                 deletingAssetId={deletingAssetId}
@@ -4926,7 +4700,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     ? TIMELINE_TOGGLE_OFFSET_NO_TOOLBAR_PX
                     : TIMELINE_TOGGLE_OFFSET_WITH_TOOLBAR_PX}
                 readOnly={interactionLocked}
-                allowKnowledgeTrackClearMenu={!reviewOnly}
+                allowKnowledgeTrackClearMenu={!interactionLocked}
                 startMarker={timelineStartEnd.start}
                 endMarker={timelineStartEnd.end}
                 projectName={title}

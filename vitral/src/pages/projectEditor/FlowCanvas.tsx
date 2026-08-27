@@ -118,9 +118,7 @@ export const FlowCanvas = memo(function FlowCanvas({
         ? styles.cursorText
         : cursorMode === "node"
             ? styles.cursorNode
-            : cursorMode === "blueprint_component"
-                ? styles.cursorBlueprintComponent
-                : styles.cursorPointer;
+            : styles.cursorPointer;
 
     const { wrapperRef, handleLodMove, handleLodInit } = useCanvasLod();
     const restTimerRef = useRef<number | null>(null);

@@ -1,4 +1,4 @@
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import classes from "./CanvasChatOverlay.module.css";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faPaperPlane } from '@fortawesome/free-solid-svg-icons';
@@ -36,6 +36,15 @@ export function CanvasChatOverlay({
     onClearFilter,
 }: CanvasChatOverlayProps) {
     const [inputValue, setInputValue] = useState("");
+    const bottomRef = useRef<HTMLDivElement | null>(null);
+
+    // The thinking bubble is appended below the question, which on a long conversation is below the
+    // fold — an indicator nobody can see is not one. Follows the answer down as well, so the reply
+    // lands in view rather than needing to be scrolled to.
+    useEffect(() => {
+        if (!open) return;
+        bottomRef.current?.scrollIntoView({ block: "end" });
+    }, [open, loading, messages.length]);
 
     const send = useCallback(() => {
         const trimmed = inputValue.trim();
@@ -99,6 +108,25 @@ export function CanvasChatOverlay({
                             </article>
                         ))
                     )}
+
+                    {loading ? (
+                        <article
+                            className={`${classes.message} ${classes.assistantMessage} ${classes.pending}`}
+                            aria-live="polite"
+                        >
+                            <span className={classes.messageRole}>Assistant</span>
+                            <p className={classes.thinking}>
+                                <span className={classes.thinkingDots} aria-hidden="true">
+                                    <span className={classes.thinkingDot} />
+                                    <span className={classes.thinkingDot} />
+                                    <span className={classes.thinkingDot} />
+                                </span>
+                                Thinking...
+                            </p>
+                        </article>
+                    ) : null}
+
+                    <div ref={bottomRef} />
                 </div>
 
                 {error ? (

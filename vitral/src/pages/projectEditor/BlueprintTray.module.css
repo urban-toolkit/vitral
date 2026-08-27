@@ -1,0 +1,184 @@
+/*
+ * A floating panel over the canvas, docked to the left edge under the sidebar.
+ *
+ * Opaque, and no `backdrop-filter`: the panel is fixed over a canvas that transforms on every pan
+ * and zoom, and a blur here makes the browser read back and re-blur the whole panel on every frame
+ * of a gesture happening behind it. `CanvasSidebar.module.css` carries the same note for the same
+ * reason.
+ *
+ * z-index 14: above both sidebars (11, 12) so the tray is never half-covered, and below
+ * `CanvasNotice` (24) and `EdgeConnectMenu` (25) — a refusal has to stay readable over whatever
+ * raised it.
+ */
+.root {
+    position: fixed;
+    left: 12px;
+    z-index: 14;
+    /* `bottom` is set inline from the timeline dock's height; the tray grows upward from there so it
+       never has to know how tall the left sidebar currently is. */
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    box-sizing: border-box;
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: var(--radius-lg, 12px);
+    box-shadow: var(--shadow-lg, 0 10px 26px rgba(0, 0, 0, 0.16));
+}
+
+/*
+ * Closed: translated off-screen rather than unmounted, so the tray's own viewport and the search
+ * results survive a close/open cycle. `content-visibility` makes that free — the nested React Flow
+ * is skipped for layout, style and paint while it is out of view.
+ */
+.rootClosed {
+    content-visibility: hidden;
+    pointer-events: none;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.headerIcon {
+    color: #5bbad6;
+    font-size: 13px;
+}
+
+.title {
+    flex: 1;
+    margin: 0;
+    font-size: var(--font-size-sm, 13px);
+    font-weight: 700;
+    color: #14213d;
+}
+
+.collapse {
+    border: 1px solid var(--color-border, #d6d6d6);
+    border-radius: var(--radius-sm, 6px);
+    background: #fff;
+    color: #14213d;
+    font-size: 11px;
+    padding: 4px 7px;
+    cursor: pointer;
+}
+
+/* The graph takes whatever the search panel above it does not. */
+.canvasWrap {
+    position: relative;
+    flex: 1;
+    min-height: 120px;
+    border: 1px solid var(--color-border, #e2e5ec);
+    border-radius: var(--radius-md, 8px);
+    background: #fbfcfe;
+    overflow: hidden;
+}
+
+.empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 18px;
+    text-align: center;
+    /* Painted, never clicked: a drop still has to reach the canvas underneath. */
+    pointer-events: none;
+}
+
+.emptyIcon {
+    font-size: 22px;
+    color: rgba(91, 186, 214, 0.55);
+}
+
+.emptyText {
+    margin: 0;
+    max-width: 280px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #5a6477;
+}
+
+.addComponent {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--color-border, #d6d6d6);
+    border-radius: var(--radius-pill, 999px);
+    background: rgba(255, 255, 255, 0.96);
+    color: #2f466a;
+    font-size: 11px;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+
+.addComponent:hover {
+    border-color: #5bbad6;
+}
+
+/*
+ * Resize grip. Hand-rolled on pointer capture — this is the only resizable panel in the app, and
+ * adding a drag library for it would be the project's first.
+ */
+.resizeGrip {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+    touch-action: none;
+    background: linear-gradient(
+        135deg,
+        transparent 0 50%,
+        rgba(47, 70, 106, 0.35) 50% 60%,
+        transparent 60% 72%,
+        rgba(47, 70, 106, 0.35) 72% 82%,
+        transparent 82%
+    );
+    border-bottom-right-radius: var(--radius-lg, 12px);
+}
+
+/* The toggle that brings the tray back, where the tray's own header sits. */
+.reopen {
+    position: fixed;
+    left: 12px;
+    z-index: 13;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: var(--radius-pill, 999px);
+    background: #ffffff;
+    box-shadow: var(--shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.12));
+    color: #14213d;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 13px;
+    cursor: pointer;
+}
+
+.reopen:hover {
+    border-color: #5bbad6;
+}
+
+.reopenCount {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(91, 186, 214, 0.18);
+    color: #1f3b47;
+    font-size: 10px;
+}

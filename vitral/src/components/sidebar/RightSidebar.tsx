@@ -8,6 +8,8 @@ type RightSidebarProps = {
     connectionStatus: { connected: boolean; user?: { id: number; login: string } };
     assetsRecords: fileRecord[];
     reviewOnly?: boolean;
+    /** Whether this session may change the document. See `GithubFiles` for why it is not `reviewOnly`. */
+    readOnly?: boolean;
     bottomOffsetPx?: number;
     onAssetHover?: (fileId: string | null) => void;
     deletingAssetId?: string | null;
@@ -19,6 +21,7 @@ export function RightSidebar({
     connectionStatus,
     assetsRecords,
     reviewOnly = false,
+    readOnly = false,
     bottomOffsetPx = 0,
     onAssetHover,
     deletingAssetId,
@@ -34,6 +37,7 @@ export function RightSidebar({
                         projectId={projectId}
                         connectionStatus={connectionStatus}
                         reviewOnly={reviewOnly}
+                        readOnly={readOnly}
                         className={styles.sectionCard}
                     />
                 </div>

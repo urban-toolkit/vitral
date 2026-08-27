@@ -11,7 +11,12 @@
  * globals, so it runs standalone under esbuild + node.
  */
 
-import flowReducer, { onEdgesChange, onNodesChange } from "@/store/flowSlice";
+import flowReducer, {
+    dissolveBlueprintGroup,
+    onEdgesChange,
+    onNodesChange,
+    setNodes,
+} from "@/store/flowSlice";
 import type { edgeType, nodeType } from "@/config/types";
 
 let failures = 0;
@@ -106,6 +111,97 @@ check(
     afterMove.edges.every((edge, index) => edge === settledAgain.edges[index]),
     "a node change rewrote edge objects",
 );
+
+// --- Dissolving a blueprint group frees its children without disturbing anything else. ---------
+
+{
+    const box = (id: string, level: string, x: number, y: number, parentId?: string): nodeType => ({
+        id,
+        type: "blueprintGroup",
+        position: { x, y },
+        ...(parentId ? { parentId, extent: "parent" as const } : {}),
+        data: {
+            label: "blueprint_group",
+            type: "technical",
+            title: id,
+            blueprintGroupLevel: level,
+            blueprintFileName: "paper.json",
+            blueprintPaperTitle: "Paper",
+            createdAt: "2026-01-01T00:00:00.000Z",
+        },
+    } as nodeType);
+
+    const piece = (id: string, x: number, y: number, parentId: string): nodeType => ({
+        id,
+        type: "blueprintComponent",
+        position: { x, y },
+        parentId,
+        extent: "parent",
+        data: {
+            label: "blueprint_component",
+            type: "technical",
+            title: id,
+            createdAt: "2026-01-01T00:00:00.000Z",
+        },
+    } as nodeType);
+
+    const trayed = flowReducer(undefined, setNodes([
+        box("paper", "paper", 1000, 500),
+        box("high", "high", 28, 54, "paper"),
+        piece("c1", 18, 42, "high"),
+        card("loose", 0),
+    ]));
+
+    const dissolved = flowReducer(trayed, dissolveBlueprintGroup({
+        groupId: "high",
+        deletedAt: "2026-02-01T00:00:00.000Z",
+    }));
+    const byId = (state: typeof dissolved, id: string) => state.nodes.find((node) => node.id === id)!;
+
+    check(
+        "the dissolved box is soft-deleted, never removed",
+        dissolved.nodes.some((node) => node.id === "high")
+        && (byId(dissolved, "high").data as Record<string, unknown>).deletedAt === "2026-02-01T00:00:00.000Z",
+        "history has to keep replaying, so the box stays in the document",
+    );
+    check(
+        "its child is re-parented to the surviving ancestor",
+        byId(dissolved, "c1").parentId === "paper",
+        `parentId was ${String(byId(dissolved, "c1").parentId)}`,
+    );
+    check(
+        "the child does not move on screen",
+        byId(dissolved, "c1").position.x === 46 && byId(dissolved, "c1").position.y === 96,
+        `position was ${JSON.stringify(byId(dissolved, "c1").position)}`,
+    );
+    check(
+        "an unrelated node keeps its object identity",
+        byId(dissolved, "loose") === byId(trayed, "loose"),
+        "dissolving rewrote a node it has nothing to do with",
+    );
+
+    const paperDissolved = flowReducer(dissolved, dissolveBlueprintGroup({
+        groupId: "paper",
+        deletedAt: "2026-02-02T00:00:00.000Z",
+    }));
+    check(
+        "dissolving the outermost box leaves its children parentless and freely placeable",
+        byId(paperDissolved, "c1").parentId === undefined
+        && byId(paperDissolved, "c1").extent === undefined,
+        `parentId was ${String(byId(paperDissolved, "c1").parentId)}`,
+    );
+    check(
+        "and in absolute tray coordinates",
+        byId(paperDissolved, "c1").position.x === 1046 && byId(paperDissolved, "c1").position.y === 596,
+        `position was ${JSON.stringify(byId(paperDissolved, "c1").position)}`,
+    );
+    check(
+        "dissolving an already-dissolved box does nothing",
+        flowReducer(paperDissolved, dissolveBlueprintGroup({ groupId: "paper" })) === paperDissolved
+        || byId(flowReducer(paperDissolved, dissolveBlueprintGroup({ groupId: "paper" })), "c1").position.x === 1046,
+        "a second dissolve moved the children again",
+    );
+}
 
 if (failures > 0) {
     // A throw is the exit code: this runs under plain node, with no test runner to report to.

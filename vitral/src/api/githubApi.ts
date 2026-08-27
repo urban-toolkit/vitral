@@ -1,4 +1,5 @@
 import { resolveApiBaseUrl } from "@/api/baseUrl";
+import { apiCredentials } from "@/api/guestMode";
 
 const API_BASE = resolveApiBaseUrl();
 
@@ -28,7 +29,7 @@ export type GitHubContentItem = {
 
 export async function githubStatus() {
     const res = await fetch(`${API_BASE}/auth/github/status`, {
-        credentials: "include",
+        credentials: apiCredentials(),
     });
     if (!res.ok) throw new Error("Failed to check GitHub status");
     return res.json() as Promise<
@@ -41,7 +42,7 @@ export async function getGithubDocumentLink(
     docId: string
 ): Promise<GitHubDocumentResponse> {
     const res = await fetch(`${API_BASE}/state/${docId}/github`, {
-        credentials: "include",
+        credentials: apiCredentials(),
     });
 
     if (res.status === 204) return {};
@@ -54,7 +55,7 @@ export async function getGithubDocumentLink(
 
 export async function getGitHubRepos(): Promise<GitHubRepo[]> {
     const res = await fetch(`${API_BASE}/auth/github/repos`, {
-        credentials: "include",
+        credentials: apiCredentials(),
     });
 
     if (res.status === 401) return []; // not connected
@@ -73,7 +74,7 @@ export async function linkRepoToDocument(
 ): Promise<{ id: string, github_owner: string, github_repo: string, github_default_branch: string }> {
     const res = await fetch(`${API_BASE}/state/${docId}/github/link`, {
         method: "POST",
-        credentials: "include",
+        credentials: apiCredentials(),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ owner, repo }),
     });
@@ -95,7 +96,7 @@ export async function getGitHubContents(
 
     const res = await fetch(url, {
         method: "GET",
-        credentials: "include",
+        credentials: apiCredentials(),
     });
 
     if (res.status === 401) {

@@ -282,3 +282,54 @@ export function findCardSpawnTarget(
 
     return best;
 }
+
+/**
+ * The card whose own box contains `position`, optionally narrowed to one label.
+ *
+ * Unlike the rings and the spawn boxes this hit-tests the card itself, because the gesture it serves
+ * — dragging a component out of the tray onto the requirement it answers — is about *that card* and
+ * nothing near it. A ring would claim the whole neighbourhood and attach the component to whichever
+ * requirement happened to be closest, which is a different claim from the one the researcher made.
+ *
+ * `nodes` must be the **displayed** nodes: the layout owns rendered positions, and stored ones no
+ * longer agree with canvas coordinates for anything but blueprint group boxes.
+ */
+export function findCardAtPosition(
+    nodes: readonly nodeType[],
+    position: { x: number; y: number },
+    options: { label?: string } = {},
+): nodeType | null {
+    const absolute = resolveAbsoluteNodePositions(nodes as nodeType[]);
+    const wanted = options.label?.trim().toLowerCase();
+
+    let best: nodeType | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (const node of nodes) {
+        if (node.type !== "card") continue;
+        if (wanted !== undefined) {
+            const raw = String((node.data as Record<string, unknown> | undefined)?.label ?? "")
+                .trim()
+                .toLowerCase();
+            const label = raw === "task" ? "requirement" : raw;
+            if (label !== wanted) continue;
+        }
+
+        const origin = absolute.get(node.id) ?? node.position;
+        const size = nodeSizeOf(node);
+        if (position.x < origin.x || position.x > origin.x + size.width) continue;
+        if (position.y < origin.y || position.y > origin.y + size.height) continue;
+
+        // Overlapping cards are possible while the layout is settling; the nearest centre wins, the
+        // same tie-break `findActivityDropTarget` uses.
+        const distance = Math.hypot(
+            position.x - (origin.x + (size.width / 2)),
+            position.y - (origin.y + (size.height / 2)),
+        );
+        if (distance >= bestDistance) continue;
+        bestDistance = distance;
+        best = node;
+    }
+
+    return best;
+}

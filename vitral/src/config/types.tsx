@@ -177,7 +177,15 @@ export type nodeType = {
      * document content and are deliberately never persisted; see `handleNodesChange`.
      */
     measured?: { width?: number, height?: number },
-    zIndex?: number
+    zIndex?: number,
+    /**
+     * React Flow's own selection flag, written onto the stored node by `applyNodeChanges` in
+     * `flowSlice.onNodesChange`. It has always been there; it is declared now because something
+     * finally reads it — selecting requirement cards on the canvas is how the component search is
+     * scoped. Not document content: it is stripped by nothing and saved with the rest, but it means
+     * nothing on reload.
+     */
+    selected?: boolean
 }
 
 export type edgeType = {

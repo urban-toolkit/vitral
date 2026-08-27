@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import type { Dirent } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 
 export interface SystemPaper {
     PaperTitle: string;
@@ -30,11 +30,28 @@ export interface GranularBlock {
     FeedsInto: number[];
 }
 
+/**
+ * Whole papers, or the components inside them.
+ *
+ * The two answer different questions and cannot share a ranking. "Which system in the literature
+ * covers this project?" is a question about a paper, and its evidence is spread across everything
+ * the paper describes. "What has anyone built that answers *these* requirements?" is a question
+ * about one block, and a paper-level score cannot tell you which block it was.
+ *
+ * They cannot share an IDF either: a term is rare among 101 papers and common among 1434
+ * components, or the other way round, and using the wrong denominator silently mis-weights every
+ * term in the query.
+ */
+type Granularity = "paper" | "component";
+
 type QueryBody = {
     cards?: unknown;
     nodes?: unknown;
     query?: unknown;
     limit?: unknown;
+    granularity?: unknown;
+    /** Component mode only: at most this many components from any one paper. See `PER_PAPER_CAP`. */
+    perPaperCap?: unknown;
 };
 
 type LoadedSystemPaper = {
@@ -42,39 +59,88 @@ type LoadedSystemPaper = {
     paper: SystemPaper;
 };
 
-type FieldName =
+type PaperFieldName =
     | "PaperTitle"
     | "GranularBlockName"
     | "PaperDescription"
     | "ReferenceCitation";
+
+type ComponentFieldName =
+    | "GranularBlockName"
+    | "PaperDescription"
+    | "InputsOutputs"
+    | "ReferenceCitation"
+    | "IntermediateBlockName"
+    | "HighBlockName"
+    | "PaperTitle";
 
 type IndexedField = {
     termFreq: Map<string, number>;
     length: number;
 };
 
-type IndexedPaper = {
+/** One retrievable thing — a paper or a component — reduced to weighted term frequencies. */
+type IndexedDoc<F extends string> = {
+    fields: Record<F, IndexedField>;
+    termSet: Set<string>;
+};
+
+type IndexedPaper = IndexedDoc<PaperFieldName> & {
     fileName: string;
     paper: SystemPaper;
-    fields: Record<FieldName, IndexedField>;
-    termSet: Set<string>;
+};
+
+type IndexedComponent = IndexedDoc<ComponentFieldName> & {
+    fileName: string;
+    paperTitle: string;
+    year: number;
+    highBlockName: string;
+    intermediateBlockName: string;
+    granularBlock: GranularBlock;
 };
 
 const BM25_K1 = 1.2;
 
-const FIELD_WEIGHTS: Record<FieldName, number> = {
+const PAPER_FIELD_WEIGHTS: Record<PaperFieldName, number> = {
     PaperTitle: 3.0,
     GranularBlockName: 2.5,
     PaperDescription: 1.5,
     ReferenceCitation: 0.6,
 };
 
-const FIELD_B: Record<FieldName, number> = {
-    PaperTitle: 0.75,
-    GranularBlockName: 0.75,
-    PaperDescription: 0.75,
-    ReferenceCitation: 0.75,
+/**
+ * Component field weights, chosen against what the corpus actually contains rather than by analogy
+ * with the paper weights above. Measured over all 101 files: 1434 components, median 14 per paper.
+ *
+ * - `GranularBlockName` is the name of the thing, but it is a **median of two words** and often
+ *   entirely generic — "Crime", "Map 2D", "Set Operations", "Area Selection". It gets the top weight
+ *   because a hit there is the most direct evidence there is, and it still cannot carry a ranking
+ *   alone, which is why the ancestor fields exist at all.
+ * - `InputsOutputs` and `ReferenceCitation` are where the discriminating text lives: inputs/outputs
+ *   are populated on **100%** of components and name real data ("Crime event records (type,
+ *   timestamp, geolocation)"), and `ReferenceCitation` is not a citation key but a prose excerpt,
+ *   median 25 words and never empty. Both were indexed nowhere before — inputs and outputs were not
+ *   even carried to the client.
+ * - The three ancestor fields disambiguate a generic name: a "Filtering" under "Interaction" is a
+ *   different component from a "Filtering" under "Data Wrangling". They are weighted low on purpose.
+ *   Every component in a paper shares its `PaperTitle`, so weighting that highly would lift a whole
+ *   paper's components together and turn component search back into paper search — the failure the
+ *   per-paper cap also guards against.
+ */
+const COMPONENT_FIELD_WEIGHTS: Record<ComponentFieldName, number> = {
+    GranularBlockName: 3.0,
+    InputsOutputs: 1.6,
+    PaperDescription: 1.5,
+    ReferenceCitation: 0.9,
+    IntermediateBlockName: 0.8,
+    HighBlockName: 0.6,
+    PaperTitle: 0.4,
 };
+
+const DEFAULT_FIELD_B = 0.75;
+
+/** Component mode: how many components one paper may contribute before the rest are passed over. */
+const PER_PAPER_CAP = 3;
 
 const TASK_CARD_LABELS = new Set(["requirement", "task"]);
 
@@ -213,26 +279,12 @@ function flattenGranularBlocks(paper: SystemPaper): GranularBlock[] {
     return granular;
 }
 
-function indexPaper(entry: LoadedSystemPaper): IndexedPaper {
-    const granular = flattenGranularBlocks(entry.paper);
-
-    const fieldText: Record<FieldName, string> = {
-        PaperTitle: entry.paper.PaperTitle,
-        GranularBlockName: granular.map((block) => block.GranularBlockName).join(" "),
-        PaperDescription: granular.map((block) => block.PaperDescription).join(" "),
-        ReferenceCitation: granular.map((block) => block.ReferenceCitation).join(" "),
-    };
-
-    const fields: Record<FieldName, IndexedField> = {
-        PaperTitle: { termFreq: new Map(), length: 0 },
-        GranularBlockName: { termFreq: new Map(), length: 0 },
-        PaperDescription: { termFreq: new Map(), length: 0 },
-        ReferenceCitation: { termFreq: new Map(), length: 0 },
-    };
-
+/** Turn a map of field name to raw text into the term frequencies BM25F scores over. */
+function indexFields<F extends string>(fieldText: Record<F, string>): IndexedDoc<F> {
+    const fields = {} as Record<F, IndexedField>;
     const termSet = new Set<string>();
 
-    for (const field of Object.keys(fieldText) as FieldName[]) {
+    for (const field of Object.keys(fieldText) as F[]) {
         const tokens = tokenize(fieldText[field]);
         fields[field] = {
             termFreq: termFreq(tokens),
@@ -244,12 +296,126 @@ function indexPaper(entry: LoadedSystemPaper): IndexedPaper {
         }
     }
 
+    return { fields, termSet };
+}
+
+function indexPaper(entry: LoadedSystemPaper): IndexedPaper {
+    const granular = flattenGranularBlocks(entry.paper);
+
     return {
         fileName: entry.fileName,
         paper: entry.paper,
-        fields,
-        termSet,
+        ...indexFields<PaperFieldName>({
+            PaperTitle: entry.paper.PaperTitle,
+            GranularBlockName: granular.map((block) => block.GranularBlockName).join(" "),
+            PaperDescription: granular.map((block) => block.PaperDescription).join(" "),
+            ReferenceCitation: granular.map((block) => block.ReferenceCitation).join(" "),
+        }),
     };
+}
+
+function indexComponents(entry: LoadedSystemPaper): IndexedComponent[] {
+    const out: IndexedComponent[] = [];
+
+    for (const high of entry.paper.HighBlocks) {
+        for (const intermediate of high.IntermediateBlocks) {
+            for (const granular of intermediate.GranularBlocks) {
+                out.push({
+                    fileName: entry.fileName,
+                    paperTitle: entry.paper.PaperTitle,
+                    year: entry.paper.Year,
+                    highBlockName: high.HighBlockName,
+                    intermediateBlockName: intermediate.IntermediateBlockName,
+                    granularBlock: granular,
+                    ...indexFields<ComponentFieldName>({
+                        GranularBlockName: granular.GranularBlockName,
+                        PaperDescription: granular.PaperDescription,
+                        InputsOutputs: [...granular.Inputs, ...granular.Outputs].join(" "),
+                        ReferenceCitation: granular.ReferenceCitation,
+                        IntermediateBlockName: intermediate.IntermediateBlockName,
+                        HighBlockName: high.HighBlockName,
+                        PaperTitle: entry.paper.PaperTitle,
+                    }),
+                });
+            }
+        }
+    }
+
+    return out;
+}
+
+type Scored<T> = {
+    doc: T;
+    score: number;
+    coverage: number;
+    matchedTerms: string[];
+};
+
+/**
+ * BM25F over a set of documents, shared by both granularities.
+ *
+ * The corpus passed in **is** the IDF corpus: rarity is a property of the population being searched,
+ * so scoring components against paper-level document frequencies would weight every term wrongly.
+ * That is the whole reason this takes the docs rather than reading a module-level index.
+ */
+function scoreDocs<F extends string, T extends IndexedDoc<F>>(
+    docs: T[],
+    queryTokens: string[],
+    fieldWeights: Record<F, number>,
+): Scored<T>[] {
+    const fieldNames = Object.keys(fieldWeights) as F[];
+
+    const avgFieldLen = {} as Record<F, number>;
+    for (const field of fieldNames) {
+        avgFieldLen[field] = docs.reduce((sum, doc) => sum + doc.fields[field].length, 0)
+            / Math.max(1, docs.length);
+    }
+
+    const docFreq = new Map<string, number>();
+    for (const term of queryTokens) {
+        let freq = 0;
+        for (const doc of docs) {
+            if (doc.termSet.has(term)) freq += 1;
+        }
+        docFreq.set(term, freq);
+    }
+
+    const totalDocs = docs.length;
+
+    return docs.map((doc) => {
+        let score = 0;
+        const matchedTerms: string[] = [];
+
+        for (const term of queryTokens) {
+            const df = docFreq.get(term) ?? 0;
+            if (df <= 0) continue;
+
+            let tfPrime = 0;
+            for (const field of fieldNames) {
+                const tf = doc.fields[field].termFreq.get(term) ?? 0;
+                if (tf <= 0) continue;
+
+                const avgLen = Math.max(1, avgFieldLen[field]);
+                const len = doc.fields[field].length;
+                const norm = (1 - DEFAULT_FIELD_B) + DEFAULT_FIELD_B * (len / avgLen);
+
+                tfPrime += fieldWeights[field] * (tf / Math.max(norm, 1e-9));
+            }
+
+            if (tfPrime <= 0) continue;
+
+            const idf = Math.log(1 + ((totalDocs - df + 0.5) / (df + 0.5)));
+            score += idf * ((tfPrime * (BM25_K1 + 1)) / (BM25_K1 + tfPrime));
+            matchedTerms.push(term);
+        }
+
+        return {
+            doc,
+            score,
+            coverage: matchedTerms.length / Math.max(1, queryTokens.length),
+            matchedTerms,
+        };
+    });
 }
 
 function keepCardByLabel(cardLike: Record<string, unknown>): boolean {
@@ -300,25 +466,25 @@ function extractQueryText(body: QueryBody): string {
     return chunks.join(" ").trim();
 }
 
-async function loadSystemPapersFromDisk(): Promise<{
-    sourceDir: string;
-    papers: LoadedSystemPaper[];
-    skippedFiles: string[];
-}> {
+function resolveSourceDir(): string {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const defaultDir = path.resolve(here, "../../systemPapers");
     const configuredDir = process.env.SYSTEM_PAPERS_DIR?.trim();
-    const sourceDir = configuredDir
-        ? (path.isAbsolute(configuredDir)
-            ? configuredDir
-            : path.resolve(process.cwd(), configuredDir))
-        : defaultDir;
+    if (!configuredDir) return defaultDir;
+    return path.isAbsolute(configuredDir)
+        ? configuredDir
+        : path.resolve(process.cwd(), configuredDir);
+}
 
+async function loadSystemPapersFromDisk(sourceDir: string): Promise<{
+    papers: LoadedSystemPaper[];
+    skippedFiles: string[];
+}> {
     let entries: Dirent<string>[];
     try {
         entries = await readdir(sourceDir, { withFileTypes: true, encoding: "utf8" });
     } catch {
-        return { sourceDir, papers: [], skippedFiles: [] };
+        return { papers: [], skippedFiles: [] };
     }
 
     const jsonFiles = entries
@@ -347,127 +513,185 @@ async function loadSystemPapersFromDisk(): Promise<{
         }
     }
 
-    return { sourceDir, papers, skippedFiles };
+    return { papers, skippedFiles };
+}
+
+type CorpusIndex = {
+    sourceDir: string;
+    papers: LoadedSystemPaper[];
+    skippedFiles: string[];
+    indexedPapers: IndexedPaper[];
+    indexedComponents: IndexedComponent[];
+};
+
+/**
+ * The corpus, read and tokenised once rather than on every request.
+ *
+ * It used to be re-read and re-indexed per call: 101 files off disk, then every field of every paper
+ * re-tokenised, to answer a query that changes far less often than that. The corpus is static —
+ * ~1400 components of roughly 55 words each, a few megabytes of maps — so it belongs in memory.
+ *
+ * Invalidation is the directory's own mtime, which moves whenever a file is added, removed or
+ * renamed. A paper edited **in place** does not touch it, so a developer changing one file restarts
+ * the backend; that is the trade for not stat-ing 101 files per request. `SYSTEM_PAPERS_DIR` is read
+ * on every call, so pointing the env var somewhere else takes effect without a restart.
+ */
+let corpusCache: { key: string; index: CorpusIndex } | null = null;
+let corpusInFlight: Promise<CorpusIndex> | null = null;
+
+async function loadCorpus(): Promise<CorpusIndex> {
+    const sourceDir = resolveSourceDir();
+
+    let key = `${sourceDir}|missing`;
+    try {
+        const info = await stat(sourceDir);
+        key = `${sourceDir}|${info.mtimeMs}`;
+    } catch {
+        // Left as "missing": an absent directory still answers, with no papers.
+    }
+
+    if (corpusCache && corpusCache.key === key) return corpusCache.index;
+
+    // Two requests arriving cold would otherwise both read and index the whole corpus.
+    if (corpusInFlight) {
+        const pending = await corpusInFlight;
+        if (corpusCache && corpusCache.key === key) return corpusCache.index;
+        return pending;
+    }
+
+    corpusInFlight = (async () => {
+        const { papers, skippedFiles } = await loadSystemPapersFromDisk(sourceDir);
+        const index: CorpusIndex = {
+            sourceDir,
+            papers,
+            skippedFiles,
+            indexedPapers: papers.map(indexPaper),
+            indexedComponents: papers.flatMap(indexComponents),
+        };
+        corpusCache = { key, index };
+        return index;
+    })();
+
+    try {
+        return await corpusInFlight;
+    } finally {
+        corpusInFlight = null;
+    }
+}
+
+function resolveGranularity(value: unknown): Granularity {
+    return value === "component" ? "component" : "paper";
 }
 
 export const systemPapersRoutes: FastifyPluginAsync = async (app) => {
     app.post("/system-papers/query", async (request, reply) => {
         const body = (request.body ?? {}) as QueryBody;
+        const granularity = resolveGranularity(body.granularity);
         const queryText = extractQueryText(body);
         const queryTokens = tokenize(queryText);
         const uniqueQueryTokens = Array.from(new Set(queryTokens));
 
         if (uniqueQueryTokens.length === 0) {
             return reply.status(400).send({
-                error: "No valid query text. Send requirement/task cards in `cards` or `nodes`.",
+                error: granularity === "component"
+                    ? "No valid query text. Select at least one requirement card with a title or description."
+                    : "No valid query text. Send requirement/task cards in `cards` or `nodes`.",
             });
         }
 
         const requestedLimit = Number(body.limit);
+        const defaultLimit = granularity === "component" ? 12 : 5;
         const limit = Number.isFinite(requestedLimit)
-            ? Math.max(1, Math.min(20, Math.trunc(requestedLimit)))
-            : 5;
+            ? Math.max(1, Math.min(40, Math.trunc(requestedLimit)))
+            : defaultLimit;
 
-        const { sourceDir, papers, skippedFiles } = await loadSystemPapersFromDisk();
-        if (papers.length === 0) {
-            return {
-                sourceDir,
-                totalPapers: 0,
-                skippedFiles,
-                queryTerms: uniqueQueryTokens,
-                results: [],
-            };
-        }
-
-        if (skippedFiles.length > 0) {
-            request.log.warn({ skippedFiles }, "Some system paper files were skipped due to invalid JSON/shape");
-        }
-
-        const indexed = papers.map(indexPaper);
-
-        const avgFieldLen: Record<FieldName, number> = {
-            PaperTitle: 0,
-            GranularBlockName: 0,
-            PaperDescription: 0,
-            ReferenceCitation: 0,
+        const corpus = await loadCorpus();
+        const base = {
+            sourceDir: corpus.sourceDir,
+            totalPapers: corpus.papers.length,
+            skippedFiles: corpus.skippedFiles,
+            granularity,
+            queryTerms: uniqueQueryTokens,
         };
 
-        for (const field of Object.keys(avgFieldLen) as FieldName[]) {
-            avgFieldLen[field] =
-                indexed.reduce((sum, paper) => sum + paper.fields[field].length, 0) /
-                Math.max(1, indexed.length);
+        if (corpus.papers.length === 0) {
+            return { ...base, totalComponents: 0, results: [] };
         }
 
-        const docFreq = new Map<string, number>();
-        for (const term of uniqueQueryTokens) {
-            let freq = 0;
-            for (const paper of indexed) {
-                if (paper.termSet.has(term)) freq += 1;
-            }
-            docFreq.set(term, freq);
+        if (corpus.skippedFiles.length > 0) {
+            request.log.warn(
+                { skippedFiles: corpus.skippedFiles },
+                "Some system paper files were skipped due to invalid JSON/shape",
+            );
         }
 
-        const totalDocs = indexed.length;
+        if (granularity === "component") {
+            const requestedCap = Number(body.perPaperCap);
+            const perPaperCap = Number.isFinite(requestedCap)
+                ? Math.max(1, Math.min(40, Math.trunc(requestedCap)))
+                : PER_PAPER_CAP;
 
-        const scored = indexed.map((paper) => {
-            let score = 0;
-            const matchedTerms: string[] = [];
+            const scored = scoreDocs(corpus.indexedComponents, uniqueQueryTokens, COMPONENT_FIELD_WEIGHTS)
+                .filter((item) => item.score > 0)
+                .sort((a, b) => {
+                    if (b.score !== a.score) return b.score - a.score;
+                    if (b.coverage !== a.coverage) return b.coverage - a.coverage;
+                    if (b.doc.year !== a.doc.year) return b.doc.year - a.doc.year;
+                    return a.doc.granularBlock.GranularBlockName
+                        .localeCompare(b.doc.granularBlock.GranularBlockName);
+                });
 
-            for (const term of uniqueQueryTokens) {
-                const df = docFreq.get(term) ?? 0;
-                if (df <= 0) continue;
+            // One well-matched paper contributes fourteen components, which would fill the list and
+            // turn this back into the paper search it exists to be an alternative to. Taking the
+            // best few from each spreads the answer across the literature, which is what a
+            // researcher looking for a component to borrow is actually after.
+            const takenByPaper = new Map<string, number>();
+            const results = [];
+            for (const item of scored) {
+                if (results.length >= limit) break;
+                const taken = takenByPaper.get(item.doc.fileName) ?? 0;
+                if (taken >= perPaperCap) continue;
+                takenByPaper.set(item.doc.fileName, taken + 1);
 
-                let tfPrime = 0;
-                for (const field of Object.keys(FIELD_WEIGHTS) as FieldName[]) {
-                    const tf = paper.fields[field].termFreq.get(term) ?? 0;
-                    if (tf <= 0) continue;
-
-                    const avgLen = Math.max(1, avgFieldLen[field]);
-                    const len = paper.fields[field].length;
-                    const b = FIELD_B[field];
-                    const norm = (1 - b) + b * (len / avgLen);
-
-                    tfPrime += FIELD_WEIGHTS[field] * (tf / Math.max(norm, 1e-9));
-                }
-
-                if (tfPrime <= 0) continue;
-
-                const idf = Math.log(1 + ((totalDocs - df + 0.5) / (df + 0.5)));
-                const termScore = idf * ((tfPrime * (BM25_K1 + 1)) / (BM25_K1 + tfPrime));
-                score += termScore;
-                matchedTerms.push(term);
+                results.push({
+                    fileName: item.doc.fileName,
+                    paperTitle: item.doc.paperTitle,
+                    year: item.doc.year,
+                    highBlockName: item.doc.highBlockName,
+                    intermediateBlockName: item.doc.intermediateBlockName,
+                    score: Number(item.score.toFixed(6)),
+                    coverage: Number(item.coverage.toFixed(4)),
+                    matchedTerms: item.matchedTerms,
+                    granularBlock: item.doc.granularBlock,
+                });
             }
-
-            const coverage = matchedTerms.length / Math.max(1, uniqueQueryTokens.length);
 
             return {
-                fileName: paper.fileName,
-                paper: paper.paper,
-                score,
-                coverage,
-                matchedTerms,
+                ...base,
+                totalComponents: corpus.indexedComponents.length,
+                perPaperCap,
+                results,
             };
-        });
+        }
 
-        scored.sort((a, b) => {
-            if (b.score !== a.score) return b.score - a.score;
-            if (b.coverage !== a.coverage) return b.coverage - a.coverage;
-            return b.paper.Year - a.paper.Year;
-        });
+        const scored = scoreDocs(corpus.indexedPapers, uniqueQueryTokens, PAPER_FIELD_WEIGHTS)
+            .sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                if (b.coverage !== a.coverage) return b.coverage - a.coverage;
+                return b.doc.paper.Year - a.doc.paper.Year;
+            });
 
         return {
-            sourceDir,
-            totalPapers: papers.length,
-            skippedFiles,
-            queryTerms: uniqueQueryTokens,
+            ...base,
+            totalComponents: corpus.indexedComponents.length,
             results: scored.slice(0, limit).map((item) => ({
-                fileName: item.fileName,
-                paperTitle: item.paper.PaperTitle,
-                year: item.paper.Year,
+                fileName: item.doc.fileName,
+                paperTitle: item.doc.paper.PaperTitle,
+                year: item.doc.paper.Year,
                 score: Number(item.score.toFixed(6)),
                 coverage: Number(item.coverage.toFixed(4)),
                 matchedTerms: item.matchedTerms,
-                paper: item.paper,
+                paper: item.doc.paper,
             })),
         };
     });

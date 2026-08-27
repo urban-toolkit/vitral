@@ -1,5 +1,6 @@
 import type { GitHubEvent } from "@/config/types";
 import { resolveApiBaseUrl } from "@/api/baseUrl";
+import { apiCredentials } from "@/api/guestMode";
 
 const API_BASE = resolveApiBaseUrl();
 
@@ -21,7 +22,7 @@ export async function getGitHubEvents(
 
     const res = await fetch(url, {
         method: "GET",
-        credentials: "include",
+        credentials: apiCredentials(),
     });
 
     if (res.status === 401) {

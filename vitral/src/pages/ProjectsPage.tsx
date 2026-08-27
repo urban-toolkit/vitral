@@ -20,7 +20,7 @@ import { useSession } from "@/auth/sessionContext";
 import classes from './ProjectsPage.module.css';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faXmark, faPlus } from '@fortawesome/free-solid-svg-icons';
+import { faXmark, faPlus, faFileImport } from '@fortawesome/free-solid-svg-icons';
 import { githubStatus } from '@/api/githubApi';
 
 export function ProjectsPage() {
@@ -196,11 +196,16 @@ export function ProjectsPage() {
     /**
      * Somebody else's published work, kept out of the list of things you can act on.
      *
-     * For a guest that is every published project, since a guest owns nothing.
+     * For a guest that is every published project, since a guest owns nothing — and that is
+     * asserted here rather than read off `is_owner`. The server answers `is_owner` for the session
+     * cookie the request carried, which is not necessarily who this screen says is using the app: a
+     * second tab signing in mid-session leaves this one a guest with a live cookie, and the
+     * account's own published project would then be filtered out of the only shelf a guest has.
+     * The list above holds nothing but this browser's local projects, so it would be nowhere.
      */
     const otherPeoplesPublished = useMemo(() => (
-        publicDocuments.filter((document) => !document.is_owner)
-    ), [publicDocuments]);
+        publicDocuments.filter((document) => isGuest || !document.is_owner)
+    ), [publicDocuments, isGuest]);
 
     const accountLabel = user ? user.username : "Guest";
 
@@ -208,16 +213,24 @@ export function ProjectsPage() {
         <div className={classes.pageContainer}>
             <div className={classes.innerContent}>
                 <div className={classes.headerRow}>
-                    <h1 className={classes.title}>Projects</h1>
-                    <button
-                        type="button"
-                        className={classes.importButton}
-                        onClick={() => importInputRef.current?.click()}
-                        disabled={importingProject || isGuest}
-                        title={isGuest ? "Importing a project needs an account." : undefined}
-                    >
-                        {importingProject ? "Importing..." : "Import project"}
-                    </button>
+                    {/* Import sits with the title on the left; the account box keeps the right. */}
+                    <div className={classes.headerLeft}>
+                        <h1 className={classes.title}>Projects</h1>
+                        <button
+                            type="button"
+                            className={classes.importButton}
+                            onClick={() => importInputRef.current?.click()}
+                            disabled={importingProject || isGuest}
+                            // Icon-only, so the name of the action lives in the tooltip and the
+                            // accessible name rather than beside it.
+                            aria-label={importingProject ? "Importing project" : "Import project"}
+                            title={isGuest
+                                ? "Importing a project needs an account."
+                                : importingProject ? "Importing..." : "Import project"}
+                        >
+                            <FontAwesomeIcon icon={faFileImport} />
+                        </button>
+                    </div>
                     <input
                         ref={importInputRef}
                         type="file"
@@ -240,8 +253,8 @@ export function ProjectsPage() {
 
                 {isGuest ? (
                     <p className={classes.guestBanner}>
-                        You are working as a guest. Your projects are saved in this browser only —
-                        they are not backed up and cannot be published.
+                        You are working as a guest. Your projects are temporary and cannot be
+                        published.
                         {" "}
                         <button
                             type="button"
@@ -333,7 +346,7 @@ export function ProjectsPage() {
                             <h2 className={classes.publicTitle}>Public projects</h2>
                             <p className={classes.publicSubtitle}>
                                 {isGuest
-                                    ? "Published by Vitral accounts. You can read them; only their owner can change them."
+                                    ? "Public projects are read only."
                                     : "Published by other accounts. You can read them and duplicate them, but only their owner can change them."}
                             </p>
                         </div>

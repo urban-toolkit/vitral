@@ -5,6 +5,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowLeft, faCheck, faPlus, faXmark } from "@fortawesome/free-solid-svg-icons";
 
 import { useSession } from "@/auth/sessionContext";
+import { isLocalProjectId } from "@/api/localProjectStore";
 import {
     createDocument,
     loadDocument,
@@ -523,6 +524,19 @@ export function ProjectSetupPage() {
                     const doc = await loadDocument(projectId);
                     if (!active) return;
 
+                    // This screen is nothing but edits — name, goal, timeline, participants — so a
+                    // session that may not write the document has no business on it. The editor
+                    // hides the way in, but the URL is still typeable and the server would refuse
+                    // every field on save; bouncing back to the project says so before the work is
+                    // typed rather than after. `can_edit` is the server's per-request answer, which
+                    // covers both reasons: review mode, and somebody else's published project.
+                    // Same rule as the editor's lock: the server's answer, plus "a guest edits
+                    // only this browser's projects".
+                    if (doc.can_edit === false || (isGuest && !isLocalProjectId(projectId))) {
+                        navigate(`/project/${projectId}`, { replace: true });
+                        return;
+                    }
+
                     const initial = buildInitialSetup();
                 const timeline = timelineToSetupTimeline(
                     doc.timeline,
@@ -562,7 +576,7 @@ export function ProjectSetupPage() {
         return () => {
             active = false;
         };
-    }, [isEditMode, projectId, isGuest]);
+    }, [isEditMode, projectId, isGuest, navigate]);
 
     useEffect(() => {
         if (activeTab !== "form") return;
@@ -831,11 +845,6 @@ export function ProjectSetupPage() {
         }
     };
 
-    const selectedTemplateLabel = selectedTemplate
-        ? (selectedTemplate.kind === "literature"
-            ? literatureTemplates.find((template) => template.id === selectedTemplate.id)?.name
-            : previousProjects.find((project) => project.id === selectedTemplate.id)?.title)
-        : null;
     const selectedLiteratureTemplate = selectedTemplate?.kind === "literature"
         ? (literatureTemplates.find((template) => template.id === selectedTemplate.id) ?? null)
         : null;
@@ -961,7 +970,6 @@ export function ProjectSetupPage() {
                         <section className={classes.section}>
                             <div className={classes.sectionHead}>
                                 <h2 className={classes.sectionTitle}>Project</h2>
-                                <p className={classes.sectionHint}>What it is called, and what it is trying to achieve.</p>
                             </div>
 
                             <div className={classes.fieldGrid}>
@@ -998,9 +1006,6 @@ export function ProjectSetupPage() {
                                     value={setup.goal}
                                     onChange={(event) => setSetup((prev) => ({ ...prev, goal: event.target.value }))}
                                 />
-                                <span className={classes.fieldHint}>
-                                    Optional. When this changes, saving asks the model for extra milestones to match it.
-                                </span>
                             </label>
                         </section>
 
@@ -1011,13 +1016,6 @@ export function ProjectSetupPage() {
                                     Optional. Pick one and it fills in the participants and the timeline below.
                                 </p>
                             </div>
-
-                            {selectedTemplateLabel ? (
-                                <p className={classes.selectedTemplate}>
-                                    <FontAwesomeIcon icon={faCheck} className={classes.selectedTemplateIcon} />
-                                    Using <strong>{selectedTemplateLabel}</strong>
-                                </p>
-                            ) : null}
 
                             <div className={classes.templateGrid}>
                                 <div className={classes.templateColumn}>
@@ -1084,9 +1082,6 @@ export function ProjectSetupPage() {
                         <section className={classes.section}>
                             <div className={classes.sectionHead}>
                                 <h2 className={classes.sectionTitle}>Participants</h2>
-                                <p className={classes.sectionHint}>
-                                    Who is working on this. Roles are shared across the project and can be assigned to cards later.
-                                </p>
                             </div>
 
                             <div className={classes.roleRow}>

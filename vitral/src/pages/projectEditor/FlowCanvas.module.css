@@ -95,3 +95,26 @@
 .flowCanvas :global(.react-flow__handle.connectingto) {
     opacity: 1;
 }
+
+/*
+ * Selection, made visible.
+ *
+ * React Flow puts `.selected` on its own node wrapper, but its stylesheet only dresses the built-in
+ * node types — a custom node has always rendered with no feedback at all. That was survivable while
+ * nothing read the flag; selecting requirement cards is now how the component search is scoped, so
+ * a selection nobody can see is a control nobody can use.
+ *
+ * A ring outside the node's own box (`outline`, not `border`) because the card faces are
+ * `position: absolute; width: 100%` with no `box-sizing: border-box` — a border here would push the
+ * painted box past the 200x260 `canvasGeometry` declares and React Flow's observer reads.
+ */
+.flowCanvas :global(.react-flow__node.selected) {
+    outline: 3px solid rgba(91, 186, 214, 0.9);
+    outline-offset: 3px;
+    border-radius: 10px;
+}
+
+/* A selected component circle takes the ring on its own shape rather than on a square around it. */
+.flowCanvas :global(.react-flow__node-blueprintComponent.selected) {
+    border-radius: 50%;
+}

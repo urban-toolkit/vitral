@@ -328,6 +328,12 @@ function resizeSystemBlueprintGroups(nodes: nodeType[]): void {
 
         if (currentWidth === nextWidth && currentHeight === nextHeight) continue;
 
+        // Both places, deliberately. React Flow decides whether a node has dimensions — and so
+        // whether to draw it at all — from the top-level fields, and `nodeSizeOf` reads `style`.
+        // Writing only `style` left a regrown box hidden until something happened to measure it,
+        // which the tray, having no layout pass to carry a size across, never does.
+        group.width = nextWidth;
+        group.height = nextHeight;
         group.style = {
             ...(group.style ?? {}),
             width: nextWidth,
@@ -764,6 +770,55 @@ const flowSlice = createSlice({
                 (blueprintComponent as Record<string, unknown>).name = nextTitle;
             }
         },
+        /**
+         * Dissolve one blueprint group box in the tray, freeing its children to be placed by hand.
+         *
+         * A box is a grid, not a space: `compactBlueprintChildren` re-lays its children out on every
+         * resize pass, so a component inside one can be reordered but never put anywhere. Dissolving
+         * is what turns a paper's structure into a workbench — which is the point of having the tray
+         * at all.
+         *
+         * Children are re-parented to the dissolved box's own parent and their positions rewritten
+         * into that frame, so nothing moves on screen. The box itself is **soft**-deleted, like every
+         * other removal in this document: history has to keep replaying, and a hard removal would
+         * make the paper it came from unreconstructable at an earlier playhead.
+         */
+        dissolveBlueprintGroup: (
+            state,
+            action: PayloadAction<{ groupId: string; deletedAt?: string }>,
+        ) => {
+            const { groupId } = action.payload;
+            const group = state.nodes.find((node) => node.id === groupId);
+            if (!group) return;
+            if (nodeLabel(group) !== "blueprint_group") return;
+            if (!isNodeActive(group)) return;
+
+            const deletedAt = normalizeIsoTimestamp(action.payload.deletedAt, new Date().toISOString());
+            const grandParentId = group.parentId;
+
+            for (const node of state.nodes) {
+                if (node.parentId !== groupId) continue;
+
+                node.position = {
+                    x: group.position.x + node.position.x,
+                    y: group.position.y + node.position.y,
+                };
+                if (grandParentId) {
+                    node.parentId = grandParentId;
+                    node.extent = "parent";
+                } else {
+                    delete node.parentId;
+                    delete node.extent;
+                }
+            }
+
+            (group.data as Record<string, unknown>).deletedAt = deletedAt;
+
+            // The box is inactive now, so it drops out of `childrenByParent` and out of the group
+            // list entirely; what this pass is for is the *surviving* ancestor, which just gained
+            // grandchildren and has to grow to hold them.
+            resizeSystemBlueprintGroups(state.nodes);
+        },
     }
 });
 
@@ -787,6 +842,7 @@ export const {
     attachCodebaseFilePathToNode,
     detachCodebaseFilePathFromNode,
     renameNodeTitle,
+    dissolveBlueprintGroup,
 } = flowSlice.actions;
 
 export default flowSlice.reducer;

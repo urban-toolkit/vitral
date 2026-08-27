@@ -24,7 +24,11 @@ export type SessionContextValue = {
     signIn: (input: { username: string; password: string }) => Promise<void>;
     signUp: (input: { username: string; password: string; email?: string }) => Promise<void>;
     signOut: () => Promise<void>;
-    continueAsGuest: () => void;
+    /**
+     * Enters guest mode. Async because it ends any session the browser still carries — a guest
+     * with a live cookie is signed in as far as the server is concerned.
+     */
+    continueAsGuest: () => Promise<void>;
     /** Leaves guest mode without signing in — sends the user back to the login screen. */
     leaveGuestMode: () => void;
 };

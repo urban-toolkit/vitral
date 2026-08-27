@@ -81,8 +81,10 @@ export function LoginPage() {
         }
     }, [submitting, mode, signIn, signUp, username, password, email, navigate]);
 
-    const handleGuest = useCallback(() => {
-        continueAsGuest();
+    const handleGuest = useCallback(async () => {
+        // Awaited: entering guest mode signs the browser out first, and navigating before that
+        // lands on the projects page with a cookie the guest is not supposed to have.
+        await continueAsGuest();
         navigate("/projects", { replace: true });
     }, [continueAsGuest, navigate]);
 
@@ -197,7 +199,7 @@ export function LoginPage() {
                 <button
                     type="button"
                     className={classes.guestButton}
-                    onClick={handleGuest}
+                    onClick={() => void handleGuest()}
                     disabled={submitting}
                 >
                     Continue as a guest

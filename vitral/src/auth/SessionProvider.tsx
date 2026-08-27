@@ -6,6 +6,7 @@ import {
     logoutAccount,
     registerAccount,
 } from "@/api/authApi";
+import { setGuestApiMode } from "@/api/guestMode";
 import { SessionContext, type Session, type SessionContextValue } from "@/auth/sessionContext";
 
 /**
@@ -34,7 +35,21 @@ function writeGuestFlag(value: boolean): void {
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-    const [session, setSession] = useState<Session>({ status: "loading" });
+    const [session, setSessionState] = useState<Session>({ status: "loading" });
+
+    /**
+     * The only way this component changes the session, so the flag `stateApi` reads can never fall
+     * out of step with the one the UI reads (`api/guestMode.ts`).
+     *
+     * Set here rather than in an effect, and that is the whole point: React runs a child's effects
+     * *before* its parent's, so an effect here would land after the page below had already mounted
+     * and issued its first document request — which is exactly the request that must not carry an
+     * account's cookie.
+     */
+    const setSession = useCallback((next: Session) => {
+        setGuestApiMode(next.status === "guest");
+        setSessionState(next);
+    }, []);
 
     // One call on mount decides which screen the app opens on. The cookie is httpOnly, so the
     // client cannot read it — asking the server is the only way to know.
@@ -61,13 +76,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         })();
 
         return () => { cancelled = true; };
-    }, []);
+    }, [setSession]);
 
     const signIn = useCallback(async (input: { username: string; password: string }) => {
         const user = await loginAccount(input);
         writeGuestFlag(false);
         setSession({ status: "user", user });
-    }, []);
+    }, [setSession]);
 
     const signUp = useCallback(async (input: {
         username: string;
@@ -77,7 +92,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const user = await registerAccount(input);
         writeGuestFlag(false);
         setSession({ status: "user", user });
-    }, []);
+    }, [setSession]);
 
     const signOut = useCallback(async () => {
         try {
@@ -88,17 +103,35 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             writeGuestFlag(false);
             setSession({ status: "anonymous" });
         }
-    }, []);
+    }, [setSession]);
 
-    const continueAsGuest = useCallback(() => {
-        writeGuestFlag(true);
-        setSession({ status: "guest" });
-    }, []);
+    /**
+     * Guest means *no account*, so this ends whatever session the browser is carrying.
+     *
+     * Unconditionally, and not only when `session.status === "user"`: the case worth defending
+     * against is the one where the client does not know about the cookie yet. This screen renders
+     * its form while the session lookup is still in flight, and a second tab that signed in after
+     * this one loaded leaves a live cookie behind a UI that says "anonymous". Either way the result
+     * used to be a browser calling itself a guest while every request still carried an account —
+     * which is how somebody's own published project vanished from a guest's Public projects, filed
+     * under `is_owner` for an account the screen claimed not to have.
+     *
+     * The request failing must not block the choice: a guest's work needs no backend at all, so the
+     * flag is written either way.
+     */
+    const continueAsGuest = useCallback(async () => {
+        try {
+            await logoutAccount();
+        } finally {
+            writeGuestFlag(true);
+            setSession({ status: "guest" });
+        }
+    }, [setSession]);
 
     const leaveGuestMode = useCallback(() => {
         writeGuestFlag(false);
         setSession({ status: "anonymous" });
-    }, []);
+    }, [setSession]);
 
     const value = useMemo<SessionContextValue>(() => ({
         session,

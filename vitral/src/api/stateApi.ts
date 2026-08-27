@@ -1,5 +1,6 @@
 import type { filePendingUpload, fileRecord, TimelineStatePayload } from "@/config/types";
 import { resolveApiBaseUrl } from "@/api/baseUrl";
+import { apiCredentials } from "@/api/guestMode";
 import { withDeadline } from "@/utils/abort";
 import type { SimilarityMatch } from "@/pages/projectEditor/similarityDecision";
 import {
@@ -21,7 +22,7 @@ import {
 } from "@/api/localProjectStore";
 
 /**
- * `fetch`, with the session cookie attached.
+ * `fetch`, with the session cookie attached — unless this is a guest.
  *
  * Every document call needs it now that projects have owners — a request without it is anonymous,
  * so the server shows it only the ownerless legacy projects and refuses every write. Three calls in
@@ -29,7 +30,11 @@ import {
  * what makes "did you remember" stop being a question.
  */
 function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(input, { ...init, credentials: "include" });
+    // A guest is nobody, and has to look like nobody to the server. Sending a cookie left behind by
+    // an account — which a second tab signing in is enough to produce — makes the server answer for
+    // *that account*: `can_edit: true` on its projects, and writes accepted. Omitting it is what
+    // makes "a guest cannot change somebody's published project" true at the layer that decides.
+    return fetch(input, { ...init, credentials: apiCredentials() });
 }
 
 /**
@@ -256,9 +261,24 @@ export type SystemPaperQueryCard = {
     content?: string;
 };
 
+/**
+ * Whole papers, or the components inside them.
+ *
+ * `paper` melts every requirement into one query and asks which system in the literature covers the
+ * project. `component` takes the requirements the researcher selected on the canvas and asks which
+ * individual blocks answer them — a different corpus, a different IDF, and a different answer. See
+ * `backend/src/routes/system_papers.ts`.
+ */
+export type SystemPaperGranularity = "paper" | "component";
+
 export type QuerySystemPapersRequest = {
     cards: SystemPaperQueryCard[];
     limit?: number;
+    /** Free text, blended with the cards. Accepted by the server since before it was ever sent. */
+    query?: string;
+    granularity?: SystemPaperGranularity;
+    /** Component mode: how many components one paper may contribute. Server default is 3. */
+    perPaperCap?: number;
 };
 
 export type SystemPaper = {
@@ -300,9 +320,42 @@ export type QuerySystemPapersResult = {
 export type QuerySystemPapersResponse = {
     sourceDir: string;
     totalPapers: number;
+    totalComponents?: number;
     skippedFiles: string[];
+    granularity?: SystemPaperGranularity;
     queryTerms: string[];
     results: QuerySystemPapersResult[];
+};
+
+/**
+ * One component, carrying enough of its paper to become a canvas node on its own.
+ *
+ * Deliberately not a `SystemPaper` slice: the whole point of component search is to take a piece
+ * without the rest of the paper, so everything the tray needs to build a `blueprintComponent` node
+ * — the block path for its description, the file name and title for provenance, and `FeedsInto` so
+ * a multi-component drag can rebuild the wiring between the pieces — travels on the result itself.
+ */
+export type QuerySystemComponentsResult = {
+    fileName: string;
+    paperTitle: string;
+    year: number;
+    highBlockName: string;
+    intermediateBlockName: string;
+    score: number;
+    coverage: number;
+    matchedTerms: string[];
+    granularBlock: GranularBlock;
+};
+
+export type QuerySystemComponentsResponse = {
+    sourceDir: string;
+    totalPapers: number;
+    totalComponents: number;
+    skippedFiles: string[];
+    granularity: "component";
+    queryTerms: string[];
+    perPaperCap: number;
+    results: QuerySystemComponentsResult[];
 };
 
 const API_BASE = resolveApiBaseUrl();
@@ -492,6 +545,20 @@ export async function queryDocumentNodes(
 export async function querySystemPapers(
     payload: QuerySystemPapersRequest,
 ): Promise<QuerySystemPapersResponse> {
+    return postSystemPapersQuery(payload);
+}
+
+/**
+ * The component-granularity twin of `querySystemPapers`. Same route, different corpus and different
+ * result shape, so it is a separate function rather than a union the caller has to narrow.
+ */
+export async function querySystemComponents(
+    payload: Omit<QuerySystemPapersRequest, "granularity">,
+): Promise<QuerySystemComponentsResponse> {
+    return postSystemPapersQuery({ ...payload, granularity: "component" });
+}
+
+async function postSystemPapersQuery<T>(payload: QuerySystemPapersRequest): Promise<T> {
     const res = await apiFetch(`${API_BASE}/system-papers/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -11,11 +11,13 @@ import { CARD_HEIGHT_PX, CARD_WIDTH_PX, nodeSizeOf } from "@/pages/projectEditor
  * while a summary glyph (Threads / Overview) holds its orbit further out — see `hubOrbitRadius`.
  * Where two trees would collide at that pitch they are offset vertically rather than pushed further
  * apart in time, so a project with big trees grows downward and upward instead of only sideways.
- * Cards that reach no activity go into an "unassigned" band underneath, and blueprint
- * groups/components keep their own nested structure and are translated in as one block.
+ * Cards that reach no activity go into an "unassigned" band underneath. A blueprint component
+ * orbits like any other card — it only arrives here once it answers a requirement, and it is then a
+ * card about that requirement in every way that matters to the layout. Blueprint *group* boxes keep
+ * their own nested structure and are translated in as one block.
  *
  * Positions are fully derived here, so stored node positions no longer affect what is rendered
- * (blueprint structure excepted, which is preserved relative to its own roots).
+ * (blueprint groups excepted, which are preserved relative to their own roots).
  */
 
 /** Radial clearance between an activity and its innermost layer: two card half-diagonals (~164 each). */
@@ -54,7 +56,21 @@ const BLUEPRINT_BAND_GAP_PX = 460;
 /** Gap between two blueprint roots (paper groups / standalone components) on the structural grid. */
 const BLUEPRINT_ROOT_GAP_PX = 80;
 
-const STRUCTURAL_LABELS = new Set(["blueprint", "blueprint_group", "blueprint_component"]);
+/**
+ * Blueprint nodes with no place on the time axis.
+ *
+ * `blueprint_component` is deliberately **not** here any more. A component only reaches this layout
+ * once it answers a requirement (`blueprintSurfaces.canvasBlueprintNodes` keeps no other), and a
+ * component that answers a requirement has exactly the same claim to a position as any other card
+ * about that requirement: one hop further out, orbiting the same activity. Exiling it to the band
+ * below is what made blueprint structure read as dislocated from a graph that is otherwise entirely
+ * about when things happened.
+ *
+ * Group boxes stay structural. They describe a paper, not the study, and they never reach the
+ * canvas — so on this surface the band below is now only ever exercised by a legacy `blueprint`
+ * node, and by nothing at all in a project saved after the tray shipped.
+ */
+const STRUCTURAL_LABELS = new Set(["blueprint", "blueprint_group"]);
 
 type NodeKind = "activity" | "satellite" | "structural";
 
@@ -266,9 +282,18 @@ function computeSatellitesToActivities(
         else adjacency.set(from, [to]);
     };
 
+    const labelById = new Map(nodes.map((node) => [node.id, labelOf(node)]));
+
     for (const edge of edges) {
         if (!presentIds.has(edge.source) || !presentIds.has(edge.target)) continue;
         if (!isEdgeActive(edge)) continue;
+        // A `feeds into` relation is a claim about the system, not about the study, and this walk is
+        // measuring how far each card sits from the activity it belongs to. Left in, a chain of
+        // components wired together in the tray becomes a shortcut between two requirements in
+        // different activity trees — and a requirement would change tree, and move on the canvas,
+        // because of something drawn on a different surface entirely.
+        if (labelById.get(edge.source) === "blueprint_component"
+            && labelById.get(edge.target) === "blueprint_component") continue;
         link(edge.source, edge.target);
         link(edge.target, edge.source);
     }
@@ -307,8 +332,9 @@ function computeSatellitesToActivities(
  *
  * Activities map to themselves; every other card maps to the activity it is closest to in the
  * graph, the same claim the orbit layout uses, so what hides together is what is drawn together.
- * Blueprint structure and cards that reach no activity are absent from the map: they belong to no
- * tree and the timeline never gates them.
+ * Blueprint nodes and cards that reach no activity are absent from the map: they belong to no tree
+ * and the timeline never gates them. Components are excluded deliberately even though the orbit
+ * layout does place them — see the comment at the exclusion below.
  */
 export function buildActivityTreeMembership(
     nodes: nodeType[],
@@ -340,6 +366,14 @@ export function buildActivityTreeMembership(
     for (const [nodeId, assignment] of assignments) {
         const node = nodeById.get(nodeId);
         if (!node || kindOf(node) !== "satellite") continue;
+        // A blueprint component is a satellite for the *layout* and nothing else. Membership is what
+        // the playhead gates whole trees by, and a component answering two requirements in two trees
+        // can only be given one of them — so the needle would hide an answer whose own requirement
+        // is still on screen. Which components the canvas draws is `canvasBlueprintNodes`' answer,
+        // asked after the playback filter, and it keeps a component while *any* of its requirements
+        // survives. Membership also feeds `crossTreeDegree`, so leaving components out keeps card
+        // salience — and therefore which cards Threads and Overview promote — exactly as it was.
+        if (labelOf(node) === "blueprint_component") continue;
         membership.set(nodeId, assignment.activityId);
     }
 
@@ -521,7 +555,10 @@ export function buildActivityOrbitLayout(nodes: nodeType[], edges: edgeType[]): 
         contentBottom = bandTop + (rowCount * (CARD_HEIGHT_PX + UNASSIGNED_ITEM_GAP_PX));
     }
 
-    // --- Blueprint structure: each root placed on a deterministic grid, internals untouched. ---
+    // --- Blueprint group boxes: each root placed on a deterministic grid, internals untouched. ---
+    // The canvas no longer sends any (only attached components reach it, and they orbit), so this
+    // runs for a legacy `blueprint` node and for nothing else. Kept because the tray does not use
+    // this layout at all and a document may still hold one.
     if (structural.length > 0) {
         const presentIds = new Set(nodes.map((node) => node.id));
         // Only nodes whose parent is absent from this view are positioned absolutely; the rest are

@@ -13,7 +13,8 @@
     "test:note-classification": "esbuild src/pages/projectEditor/noteClassification.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/noteClassification.test.mjs --log-level=warning && node node_modules/.cache/noteClassification.test.mjs",
     "test:reference-location": "esbuild src/components/files/referenceLocation.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/referenceLocation.test.mjs --log-level=warning && node node_modules/.cache/referenceLocation.test.mjs",
     "test:placement": "esbuild src/pages/projectEditor/activityOrbitLayout.placement.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/placement.test.mjs --log-level=warning && node node_modules/.cache/placement.test.mjs",
-    "test:connection-rule": "esbuild src/pages/projectEditor/graphInvariants.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/graphInvariants.test.mjs --log-level=warning && node node_modules/.cache/graphInvariants.test.mjs"
+    "test:connection-rule": "esbuild src/pages/projectEditor/graphInvariants.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/graphInvariants.test.mjs --log-level=warning && node node_modules/.cache/graphInvariants.test.mjs",
+    "test:blueprint-surfaces": "esbuild src/pages/projectEditor/blueprintSurfaces.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/blueprintSurfaces.test.mjs --log-level=warning && node node_modules/.cache/blueprintSurfaces.test.mjs"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^7.1.0",

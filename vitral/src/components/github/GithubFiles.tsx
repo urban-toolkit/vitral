@@ -25,7 +25,17 @@ import { selectAllGitHubEvents } from "@/store/gitEventsSlice";
 type GithubFilesProps = {
     projectId: string;
     connectionStatus: { connected: boolean; user?: { id: number; login: string } };
+    /**
+     * Snapshot mode: read the codebase out of the document's stored events instead of GitHub. This
+     * is a *data source*, not a permission — an imported review project has no live repo to ask.
+     */
     reviewOnly?: boolean;
+    /**
+     * Whether this session may change the document. Separate from `reviewOnly` on purpose: linking
+     * a repository writes to the project, so it has to be closed to anyone reading somebody else's
+     * published project, who is in no snapshot mode at all.
+     */
+    readOnly?: boolean;
     className?: string;
 };
 
@@ -91,6 +101,7 @@ export const GitHubFiles = memo(function GitHubFiles({
     projectId,
     connectionStatus,
     reviewOnly = false,
+    readOnly = false,
     className,
 }: GithubFilesProps) {
     const dispatch = useDispatch();
@@ -309,6 +320,11 @@ export const GitHubFiles = memo(function GitHubFiles({
                     </div>
                 </>
             ) : !connectionStatus.connected ? (
+                readOnly ? (
+                    <p className={classes.infoLine}>
+                        This project is read-only, so its codebase cannot be linked here.
+                    </p>
+                ) : (
                 <>
                     <p className={classes.infoLine}>
                         Sign in with your GitHub account to integrate files and events.
@@ -325,6 +341,7 @@ export const GitHubFiles = memo(function GitHubFiles({
                         Connect GitHub
                     </button>
                 </>
+                )
             ) : githubDocumentLink.github_repo && githubDocumentLink.github_repo !== "" ? (
                 <>
                     <p className={classes.infoLine}>Signed in as {connectionStatus.user?.login}.</p>
@@ -397,13 +414,19 @@ export const GitHubFiles = memo(function GitHubFiles({
             ) : (
                 <>
                     <p className={classes.infoLine}>Signed in as {connectionStatus.user?.login}.</p>
-                    <button className={classes.linkButton} onClick={() => setModalOpen(true)}>
-                        Link repository
-                    </button>
+                    {readOnly ? (
+                        <p className={classes.infoLine}>
+                            This project is read-only, so its codebase cannot be linked here.
+                        </p>
+                    ) : (
+                        <button className={classes.linkButton} onClick={() => setModalOpen(true)}>
+                            Link repository
+                        </button>
+                    )}
                 </>
             )}
 
-            {!reviewOnly ? (
+            {!reviewOnly && !readOnly ? (
                 <GitRepoModal
                     isOpen={modalOpen}
                     repos={githubRepos}

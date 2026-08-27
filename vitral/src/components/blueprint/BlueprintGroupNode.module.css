@@ -41,3 +41,44 @@
     word-break: break-word;
     pointer-events: none;
 }
+
+/*
+ * Dissolve. Deliberately quiet until the box is hovered: a paper arrives in the tray as three
+ * nested boxes, and three `x` buttons shouting at once reads as three ways to delete something —
+ * which is the opposite of what this does. It frees the contents; nothing is lost.
+ *
+ * `.label` is `pointer-events: none`, so the button sits above it without a stacking fight, but the
+ * label is `right: 10px` and would run under the button on a long title. The label's own right
+ * inset is left alone and the button is drawn over its last few characters only while hovered,
+ * which is when the title is least likely to be what the reader needs.
+ */
+.dissolve {
+    position: absolute;
+    right: 6px;
+    top: 6px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(47, 70, 106, 0.35);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.92);
+    color: #2f466a;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--transition-fast, 120ms) ease;
+}
+
+.root:hover > .dissolve,
+.dissolve:focus-visible {
+    opacity: 1;
+}
+
+.dissolve:hover {
+    background: #fff;
+    border-color: rgba(47, 70, 106, 0.7);
+}

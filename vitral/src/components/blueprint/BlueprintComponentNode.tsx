@@ -19,12 +19,24 @@ import {
     isBlueprintComponentEmphasized,
     subscribe as subscribeHighlight,
 } from "@/store/canvasHighlightStore";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faArrowUpRightFromSquare } from "@fortawesome/free-solid-svg-icons";
+
+import {
+    BLUEPRINT_ATTACH_MIME,
+    buildBlueprintAttachPayload,
+} from "@/components/blueprint/blueprintDnD";
 import classes from "./BlueprintComponentNode.module.css";
 
 type BlueprintComponentNodeProps = NodeProps<nodeType> & {
     onRenameTitle?: (nodeId: string, title: string) => void;
     onAttachCodebaseFilePath?: (nodeId: string, filePath: string) => void;
     onDetachCodebaseFilePath?: (nodeId: string, filePath: string) => void;
+    /**
+     * Renders the grip that is dragged onto a requirement card to say this component answers it.
+     * Tray only: on the canvas the component is already answering something.
+     */
+    attachable?: boolean;
 };
 
 function truncateLabel(text: string, maxChars: number): string {
@@ -139,11 +151,20 @@ function BlueprintComponentNodeImpl(props: BlueprintComponentNodeProps) {
     const isHoveredByFile = normalizedHoveredCodebaseFilePath !== "" &&
         codebaseFilePaths.includes(normalizedHoveredCodebaseFilePath);
     const isHovered = isHoveredSelf || isHoveredByFile;
-    const isDimmed = !isEmphasized && !isHoveredByFile;
+    /**
+     * Whether this component already answers a requirement.
+     *
+     * It used to be a *dimming* of everything that did not, which is how the canvas said "this piece
+     * of the paper is not part of your study". The canvas no longer draws an unattached component at
+     * all, so dimming there would apply to nothing; in the tray, where the whole paper lives, the
+     * useful mark is the positive one — which of these have I already committed to. Same boolean,
+     * read from the same external store, inverted.
+     */
+    const showsAttachmentMark = props.attachable === true && isEmphasized;
 
     return (
         <div
-            className={`${classes.root} ${isDragTarget ? classes.rootDropActive : ""} ${isHovered ? classes.rootHovered : ""} ${isDimmed ? classes.rootDimmed : ""}`}
+            className={`${classes.root} ${isDragTarget ? classes.rootDropActive : ""} ${isHovered ? classes.rootHovered : ""} ${showsAttachmentMark ? classes.rootAttached : ""}`}
             title={titleWithAttachments}
             onMouseEnter={() => {
                 if (!hasBlueprintEvent) return;
@@ -217,6 +238,39 @@ function BlueprintComponentNodeImpl(props: BlueprintComponentNodeProps) {
                     </div>
                 )}
             </div>
+
+            {props.attachable ? (
+                /*
+                 * The attach gesture, as a grip rather than as the whole node.
+                 *
+                 * The tray and the canvas are two React Flow instances, and React Flow's own
+                 * connection drag cannot cross between them — so attaching has to be an HTML5 drag,
+                 * the same mechanism a GitHub file or a search result already travels by. But HTML5
+                 * `draggable` on the node body would swallow the pointer drag that moves the
+                 * component around the tray, and the tray is where arranging happens. A small grip
+                 * keeps both gestures: the body moves it here, the grip takes it there.
+                 *
+                 * `nodrag` stops React Flow reading the grip's own pointer-down as a node drag.
+                 */
+                <div
+                    className={`${classes.attachGrip} nodrag`}
+                    draggable
+                    title={`Drag onto a requirement card to say "${rawTitle}" answers it`}
+                    aria-label={`Attach ${rawTitle} to a requirement`}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onDragStart={(event) => {
+                        event.stopPropagation();
+                        event.dataTransfer.effectAllowed = "link";
+                        event.dataTransfer.setData(
+                            BLUEPRINT_ATTACH_MIME,
+                            JSON.stringify(buildBlueprintAttachPayload(props.id, rawTitle)),
+                        );
+                        event.dataTransfer.setData("text/plain", rawTitle);
+                    }}
+                >
+                    <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                </div>
+            ) : null}
 
             <Handle type="target" position={Position.Left} />
             <Handle type="source" position={Position.Right} />

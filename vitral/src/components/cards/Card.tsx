@@ -52,6 +52,13 @@ export type CardProps = {
     onDetachFile?: (nodeId: string, fileId: string) => void;
     onDataPropertyChange?: (nodeProps: nodeType, value: unknown, propertyName: string) => void;
     onDeleteNode?: (nodeId: string) => void;
+    /**
+     * Whether this session may change the document (review mode, or somebody else's published
+     * project). `onDataPropertyChange` already refuses to write when it is set, so this is about
+     * the *affordance*: a title that opens an editor and then silently reverts on blur reads as an
+     * edit that was accepted and lost, which is worse than one that was never offered.
+     */
+    readOnly?: boolean;
     participantOptions?: string[];
     selected?: boolean;
     dragging?: boolean;
@@ -154,9 +161,12 @@ function CardImpl(props: CardProps) {
         delete cleanProps.onDetachFile;
         delete cleanProps.onDataPropertyChange;
         delete cleanProps.onDeleteNode;
+        delete cleanProps.readOnly;
         delete cleanProps.participantOptions;
         return cleanProps as unknown as nodeType;
     };
+
+    const readOnly = props.readOnly === true;
 
     const [isEditingLabel, setIsEditingLabel] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -274,7 +284,7 @@ function CardImpl(props: CardProps) {
                             ) : (
                                 <p
                                     className={classes.label}
-                                    onClick={() => setIsEditingLabel(true)}
+                                    onClick={readOnly ? undefined : () => setIsEditingLabel(true)}
                                 >
                                     {normalizedLabel[0].toUpperCase() + normalizedLabel.slice(1)}
                                 </p>
@@ -295,6 +305,7 @@ function CardImpl(props: CardProps) {
                             <button
                                 type="button"
                                 className={`${classes.relevantToggle} ${isRelevant ? classes.relevantToggleOn : classes.relevantToggleOff}`}
+                                disabled={readOnly}
                                 onClick={(event) => {
                                     event.stopPropagation();
                                     props.onDataPropertyChange?.(getCleanNodeProps(), !isRelevant, "relevant");
@@ -302,8 +313,9 @@ function CardImpl(props: CardProps) {
                             >
                                 {isRelevant ? "Relevant" : "Not Relevant"}
                             </button>
+                            {/* Flipping reads the other face; it changes nothing, so it stays. */}
                             <FontAwesomeIcon className={classes.flipIcon} icon={faRepeat} onClick={() => flipTo("back")} />
-                            {props.id ? (
+                            {props.id && !readOnly ? (
                                 <button
                                     type="button"
                                     className={classes.headerDeleteButton}
@@ -335,17 +347,22 @@ function CardImpl(props: CardProps) {
 
                         <FileSlot
                             file={attachedFile}
-                            onRemoveFile={(fileId) => {
+                            onRemoveFile={readOnly ? undefined : (fileId) => {
                                 if (!props.id) return;
                                 props.onDetachFile?.(props.id, fileId);
                             }}
                         >
+                            {/* No drop zone at all when locked: `FileSlot` renders its children
+                                only where there is no attachment, so this is the empty slot's
+                                invitation to add one, and there is nothing to invite. */}
+                            {readOnly ? null : (
                             <AttachFileZone
                                 onFileSelected={handleFileSelected}
                                 dropZoneCSS={dropZoneCSS}
                                 loading={false}
                                 accept='.txt, .png, .jpg, .jpeg, .json, .csv, .ipynb, .py, .js, .ts, .tsx, .jsx, .html, .css, .md, .docx, .pdf, .mp4, .webm, .mov, .m4v, .ogg, .ogv, .avi'
                             />
+                            )}
                         </FileSlot>
                     </div>
                     <div className={classes.title}>
@@ -375,7 +392,7 @@ function CardImpl(props: CardProps) {
                         ) : (
                             <p
                                 className={classes.title}
-                                onClick={() => {
+                                onClick={readOnly ? undefined : () => {
                                     setDraftTitle(props.data.title);
                                     setIsEditingTitle(true);
                                 }}
@@ -444,7 +461,7 @@ function CardImpl(props: CardProps) {
                         ) : (
                             <p
                                 className={classes.backText}
-                                onClick={() => {
+                                onClick={readOnly ? undefined : () => {
                                     if(props.data.description == '' || !props.data.description)
                                         setDraftDescription("Empty description.");
                                     else
@@ -501,7 +518,7 @@ function CardImpl(props: CardProps) {
                                 </select>
                             ) : (
                                 <>
-                                    {isActivity ? (
+                                    {isActivity && !readOnly ? (
                                         <p
                                             className={`${classes.footerTimestamp} ${classes.createdAtEditable}`}
                                             title="Edit activity timestamp"
@@ -546,7 +563,7 @@ function CardImpl(props: CardProps) {
                                         )
                                     ) : null}
 
-                                    {isTaskOrRequirement ? (
+                                    {isTaskOrRequirement && !readOnly ? (
                                         <button
                                             type="button"
                                             className={`${classes.footerIconButton} ${assignedTo ? classes.footerIconOn : ""} nodrag`}

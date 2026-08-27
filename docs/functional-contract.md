@@ -129,10 +129,10 @@ Covered areas:
 - Blueprint groups/components keep their nested structure and are translated in as one block.
 - Node positions are fully derived; node dragging is disabled in every view.
 - Relations are drawn between the card borders that face each other rather than between fixed left/right handles, so a connection reads as a near-straight line whichever way the cards sit; the source -> target direction and its arrow are unchanged.
-- System view hides cards and keeps blueprint components (+ needed ancestors).
+- The canvas shows a blueprint component exactly when it answers a requirement that is itself on screen; the rest of the blueprint lives in the floating tray. Group boxes and the `feeds into` wiring between components are tray-only.
 - Card type filtering applies to relevant card labels while preserving non-card scope behavior.
 - Natural-language query and chat are playback-aware and can apply node filters.
-- VA-blueprint recommendations are available via ranking backend.
+- VA-blueprint recommendations are available via ranking backend, at two granularities: whole systems ranked against every requirement, and individual components ranked against the requirement cards selected on the canvas.
 
 ### Contract Details
 - Query/chat retrieval pipeline supports structured + semantic/vector behavior with fallback ranking.
@@ -177,6 +177,13 @@ Covered areas:
 - Requirement-to-blueprint relationships create blueprint timeline events.
 - Blueprint timeline events can be connected following canvas graph relations.
 - If the same GitHub file is attached to blueprint component and codebase subtrack, timeline association is represented.
+
+### Tray Contract
+- The blueprint lives in a floating tray, not on the temporal canvas. Components can be positioned and wired there freely; group boxes can be dissolved so their contents become loose.
+- A component is attached to a requirement by dragging it onto that card. Attaching renders it on the canvas beside the requirement and leaves it in the tray; one component may answer several requirements.
+- Detaching is deleting the relation. The component leaves the canvas and stays in the tray, and re-attaching reuses the original dated blueprint event.
+- The tray is not scoped by the playhead. The canvas rendering of a component is, through the requirement it answers.
+- Existing projects need no migration: the same nodes render in the tray at their stored positions.
 
 ## 9) Codebase Track
 
@@ -240,7 +247,11 @@ Covered areas:
 | Card type filter | Selected labels, node labels/types | Apply label filter; verify matching cards filter while non-card behavior stays consistent with current UX. |
 | Natural-language node query | Query endpoint, optional `at`, structured parser, vector/fallback ranking | Run query at current + historical playback; ensure results are returned in both vector and fallback conditions. |
 | Canvas chat with optional filter application | Chat retrieval pipeline, `applyFilter` flag, matched node IDs | Ask chat question expected to filter; confirm filter applies only when `applyFilter=true`. |
-| VA-blueprint recommendations | System papers index + BM25F ranking inputs | Request recommendations; verify ranked response appears and is stable on reload. |
+| VA-blueprint recommendations (whole systems) | System papers index + BM25F ranking inputs | Request recommendations; verify ranked response appears and is stable on reload. |
+| VA component search | Per-component BM25F index, canvas selection of requirement cards | Select one or more requirement cards; verify the component search enables, returns a blended list drawn from more than one paper, and that each result names its source paper and block path. |
+| Blueprint tray | Blueprint nodes/edges in `flow`, stored positions | Drag a whole paper and single components into the tray; move and wire them; reload and verify positions and wiring persisted. |
+| Dissolve a group box | Group `deletedAt`, child `parentId`/position | Dissolve a box; verify children stay put on screen, become freely placeable, and the box is soft-deleted rather than removed. |
+| Attach / detach a component | `tackled in` edge, blueprint events | Attach a component to a requirement; verify it appears on the canvas orbiting that requirement, stays in the tray, and mints a timeline event. Detach and re-attach; verify the original event is reused. |
 | Soft-delete edge reconnect | Edge `createdAt/deletedAt`, active-edge duplicate checks | Create edge, delete it, reconnect same relation; verify reconnect succeeds and history is preserved. |
 | Blueprint parent box resize | Group/child geometry, active child filtering, compaction logic | Delete/move children in parent group; verify width and height shrink/expand correctly and ignore deleted children. |
 | Knowledge subtracks and event grouping | Knowledge events, `treeId`, subtrack assignments | Create subtrack, drag grouped/standalone events, reload and verify grouping/placement persists. |

@@ -3,6 +3,7 @@ import type { EdgeProps, InternalNode, Node } from '@xyflow/react';
 import { getBezierPath, useInternalNode } from '@xyflow/react';
 
 import { getFloatingEdgePath, type EdgeRect } from "@/components/edges/floatingEdgePath";
+import { isModelDerivedEdgeData } from "@/utils/edgeProvenance";
 
 const CARD_EDGE_LABELS = new Set([
   "person",
@@ -21,6 +22,14 @@ const ITERATION_OF_LABEL = "iteration of";
  * colour — a new colour added only inside `resolveEdgeVisual` would resolve to a missing marker.
  */
 const RELATION_EDGE_STROKES = ["#90b1e9", "#dda788", "#cccccc"] as const;
+
+/** The "AI" pill drawn beside a model-derived relation's label. */
+const AI_BADGE_WIDTH = 24;
+const AI_BADGE_GAP = 4;
+const AI_BADGE_HEIGHT = 16;
+const AI_BADGE_BORDER = "rgba(72, 44, 122, 0.45)";
+const AI_BADGE_BACKGROUND = "rgba(238, 231, 255, 0.95)";
+const AI_BADGE_COLOR = "rgba(72, 44, 122, 0.95)";
 
 function relationMarkerId(stroke: string) {
   return `relation-arrow-${stroke.replace("#", "")}`;
@@ -162,6 +171,19 @@ function RelationEdgeImpl(props: EdgeProps) {
   const displayLabel = label && weight > 1 ? `${label} ×${weight}` : label;
   const labelWidth = displayLabel ? Math.max(56, Math.ceil(displayLabel.length * 8.2 + 16)) : 0;
 
+  // A model proposed this relation; nobody drew it. Same fact, same purple as the "AI" pill on a
+  // model-derived card (`Card.module.css` .modelDerivedBadge), so the two read as one statement
+  // about the graph rather than two unrelated decorations. Both machines that write relations
+  // count — the extraction pass and the similarity pass, which is what puts the badge on
+  // `iteration of` and `referenced by` as well. See `utils/edgeProvenance.ts`.
+  const modelDerived = isModelDerivedEdgeData(data);
+  const badgeWidth = modelDerived && displayLabel ? AI_BADGE_WIDTH : 0;
+  const badgeGap = badgeWidth > 0 ? AI_BADGE_GAP : 0;
+  // The pair is centred on the label anchor as one block, so adding the badge does not shift the
+  // relation text off the edge it belongs to.
+  const labelLeft = labelX - ((labelWidth + badgeGap + badgeWidth) / 2);
+  const labelCenterX = labelLeft + (labelWidth / 2);
+
   return (
     <>
       <path
@@ -175,7 +197,7 @@ function RelationEdgeImpl(props: EdgeProps) {
       {displayLabel ? (
         <>
           <rect
-            x={labelX - (labelWidth / 2)}
+            x={labelLeft}
             y={labelY - 11}
             width={labelWidth}
             height={20}
@@ -185,7 +207,7 @@ function RelationEdgeImpl(props: EdgeProps) {
           >
           </rect>
           <text
-            x={labelX}
+            x={labelCenterX}
             y={labelY}
             textAnchor="middle"
             dominantBaseline="middle"
@@ -199,6 +221,29 @@ function RelationEdgeImpl(props: EdgeProps) {
           >
             {displayLabel}
           </text>
+          {modelDerived ? (
+            <g style={{ pointerEvents: 'none' }}>
+              <title>Proposed by the model, not drawn by hand.</title>
+              <rect
+                x={labelLeft + labelWidth + badgeGap}
+                y={labelY - (AI_BADGE_HEIGHT / 2)}
+                width={badgeWidth}
+                height={AI_BADGE_HEIGHT}
+                rx={999}
+                ry={999}
+                style={{ fill: AI_BADGE_BACKGROUND, stroke: AI_BADGE_BORDER, strokeWidth: 1 }}
+              />
+              <text
+                x={labelLeft + labelWidth + badgeGap + (badgeWidth / 2)}
+                y={labelY}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.02em', fill: AI_BADGE_COLOR }}
+              >
+                AI
+              </text>
+            </g>
+          ) : null}
         </>
       ) : null}
     </>
