@@ -13,8 +13,8 @@ import type {
 } from "@/config/types";
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
+import { requestReportAbstractLLM } from "@/func/LLMRequest";
 import {
-    requestMarkdownReportSectionLLM,
     requestSystemScreenshotZonesLLM,
 } from "@/func/LLMRequest";
 import type { LlmProjectSettingsContext } from "@/func/LLMRequest";
@@ -97,6 +97,24 @@ import {
     canvasBlueprintEdges,
     canvasBlueprintNodes,
 } from "@/pages/projectEditor/blueprintSurfaces";
+import { isModelDerivedNodeData } from "@/utils/edgeProvenance";
+import { resolveRouterBasename } from "@/routing";
+import {
+    buildLocatorIndex,
+    codeToUrl,
+    describeLocatorStatus,
+    locatorGraphScope,
+    parseLocatorCode,
+} from "@/pages/projectEditor/locators";
+import {
+    acceptAbstract,
+    buildAbstractPayload,
+    buildProjectReport,
+    buildReportGraphContext,
+    buildReportModel,
+    type ReportAbstract,
+    type ReportSnapshot,
+} from "@/pages/projectEditor/report/projectReport";
 import { isAllowedConnection, relationLabelFor, relationPartnersFor } from "@/utils/relationships";
 import { buildActivityOrbitLayout, buildActivityTreeMembership } from "@/pages/projectEditor/activityOrbitLayout";
 import {
@@ -274,29 +292,6 @@ type PendingCardSpawnMenu = {
 /** Menu box for the relation question, matching `EdgeConnectMenu.module.css` with a heading. */
 const SPAWN_MENU_WIDTH_PX = 420;
 const SPAWN_MENU_HEIGHT_PX = 76;
-
-type ReportCardSnapshot = {
-    id: string;
-    label: string;
-    title: string;
-    description: string;
-    createdAt: string;
-    reference: string;
-};
-
-type ReportBlueprintComponentSnapshot = {
-    id: string;
-    title: string;
-    paperTitle: string;
-    blueprintFileName: string;
-    highBlockName: string;
-    intermediateBlockName: string;
-    parentBoxes: Array<{
-        title: string;
-        level: string;
-        paperTitle: string;
-    }>;
-};
 
 function normalizePath(path: string): string {
     return path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
@@ -521,96 +516,6 @@ function isKnowledgeCardNode(node: nodeType): boolean {
     return CARD_LABELS.includes(labelValue as cardLabel);
 }
 
-function readNodeString(node: nodeType, key: string): string {
-    const data = node.data as Record<string, unknown>;
-    const value = data[key];
-    return typeof value === "string" ? value : "";
-}
-
-function getCardSnapshots(nodes: nodeType[]): ReportCardSnapshot[] {
-    const snapshots: ReportCardSnapshot[] = [];
-    for (const node of nodes) {
-        if (node.type === "card") {
-            const nodeData = node.data as Record<string, unknown>;
-            if (nodeData.relevant === false) continue;
-        }
-
-        const label = normalizeNodeLabel(readNodeString(node, "label"));
-        if (!label) continue;
-        if (
-            label !== "person" &&
-            label !== "activity" &&
-            label !== "requirement" &&
-            label !== "concept" &&
-            label !== "insight" &&
-            label !== "object"
-        ) {
-            continue;
-        }
-
-        const title = readNodeString(node, "title").trim();
-        const description = readNodeString(node, "description").trim();
-        snapshots.push({
-            id: node.id,
-            label,
-            title: title || "Untitled",
-            description,
-            createdAt: readNodeString(node, "createdAt"),
-            reference: readNodeString(node, "reference"),
-        });
-    }
-    return snapshots;
-}
-
-function getBlueprintComponentSnapshots(nodes: nodeType[]): ReportBlueprintComponentSnapshot[] {
-    const byId = new Map(nodes.map((node) => [node.id, node]));
-    const snapshots: ReportBlueprintComponentSnapshot[] = [];
-
-    for (const node of nodes) {
-        const label = normalizeNodeLabel(readNodeString(node, "label"));
-        if (label !== "blueprint_component") continue;
-
-        const data = node.data as Record<string, unknown>;
-        const blueprintComponent = (
-            data.blueprintComponent &&
-            typeof data.blueprintComponent === "object"
-        )
-            ? data.blueprintComponent as Record<string, unknown>
-            : {};
-
-        const parentBoxes: Array<{ title: string; level: string; paperTitle: string }> = [];
-        let currentParentId = node.parentId;
-        while (typeof currentParentId === "string" && currentParentId.trim() !== "") {
-            const parent = byId.get(currentParentId);
-            if (!parent) break;
-            const parentLabel = normalizeNodeLabel(readNodeString(parent, "label"));
-            if (parentLabel !== "blueprint_group") break;
-            parentBoxes.push({
-                title: readNodeString(parent, "title") || "Blueprint group",
-                level: readNodeString(parent, "blueprintGroupLevel") || "",
-                paperTitle: readNodeString(parent, "blueprintPaperTitle") || "",
-            });
-            currentParentId = parent.parentId;
-        }
-
-        snapshots.push({
-            id: node.id,
-            title: readNodeString(node, "title") || "Blueprint component",
-            paperTitle: readNodeString(node, "blueprintPaperTitle"),
-            blueprintFileName: readNodeString(node, "blueprintFileName"),
-            highBlockName: typeof blueprintComponent.highBlockName === "string"
-                ? blueprintComponent.highBlockName
-                : "",
-            intermediateBlockName: typeof blueprintComponent.intermediateBlockName === "string"
-                ? blueprintComponent.intermediateBlockName
-                : "",
-            parentBoxes,
-        });
-    }
-
-    return snapshots;
-}
-
 
 const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const { status, error, reviewOnly, canEdit, isOwner, published, ownerUsername } =
@@ -628,7 +533,30 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     const [cursorMode, setCursorMode] = useState<CursorMode>("");
     const [fileDragActive, setFileDragActive] = useState(false);
     // A card the user just created, to be brought into view once the layout has placed it.
-    const [pendingFocusNodeId, setPendingFocusNodeId] = useState<string | null>(null);
+    /**
+     * A node the camera should move to once the layout has placed it.
+     *
+     * Two modes, because two gestures want different things. `pan` keeps the current zoom and is for
+     * a card the researcher just created — the layout, not the cursor, decides where it lands, so it
+     * can appear off-screen, but the reader's zoom is theirs and should not be taken. `fit` re-frames,
+     * and is for arriving at a code typed into the reference box: there is no prior viewport worth
+     * preserving, and "zoom to it" is the whole request.
+     *
+     * `deadlineAt` exists because the effect that consumes this waits for the node to appear in
+     * `displayedNodes` and re-runs on every derivation until it does. Without a deadline a target
+     * that never appears — filtered out, folded into a glyph, deleted between request and arrival —
+     * leaves the state set forever, retrying silently on every render and reporting nothing.
+     */
+    const [pendingCanvasFocus, setPendingCanvasFocus] = useState<
+        { nodeId: string; mode: "pan" | "fit"; deadlineAt: number } | null
+    >(null);
+
+    /** How long to keep waiting for a target to be laid out before saying it could not be reached. */
+    const FOCUS_DEADLINE_MS = 4000;
+
+    const requestNodeFocus = useCallback((nodeId: string, mode: "pan" | "fit" = "pan") => {
+        setPendingCanvasFocus({ nodeId, mode, deadlineAt: Date.now() + FOCUS_DEADLINE_MS });
+    }, []);
     const [timelineOpen, setTimelineOpen] = useState(false);
     const [blueprintComponentsVisible, setBlueprintComponentsVisible] = useState(true);
     // Whether the model-derived layer is on the canvas at all. Turning it off leaves the record the
@@ -852,6 +780,39 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         ))),
         [edges],
     );
+
+    /**
+     * The blueprint events whose component still exists — the only ones the track draws.
+     *
+     * A `BlueprintEvent` is minted by the attach gesture and lives in the timeline slice, which knows
+     * nothing about `flow.nodes`. Deleting the component therefore left the event behind, and the
+     * track drew it dimmed and dashed — the styling for "this component answers no requirement",
+     * which is a true and useful thing to say about a component that *exists*. Said about one that
+     * has been deleted it is a ghost: the researcher removed it and the timeline kept a marker for it
+     * with no way to reach, inspect or clear it.
+     *
+     * Filtered rather than deleted from the slice, for two reasons. The record of the event is what
+     * the report and the document are built from, and destroying it on a *soft* delete would be the
+     * one irreversible step in a chain that is otherwise all recoverable. And a filter fixes the
+     * projects that already carry stale events, which deleting-on-delete could only prevent going
+     * forward.
+     *
+     * `liveNodes`, not `timelineContextNodes`: the needle gates whole activity trees and blueprint
+     * structure belongs to none, so a deleted component is gone from this set whatever the playhead
+     * is doing — the same answer the tray and the canvas give.
+     */
+    const liveBlueprintEvents = useMemo(() => {
+        const liveNodeIds = new Set(liveNodes.map((node) => node.id));
+        return blueprintEvents.filter((eventData) => {
+            const componentNodeId = typeof eventData.componentNodeId === "string"
+                ? eventData.componentNodeId.trim()
+                : "";
+            // An event with no component named is not about a component, so there is nothing to
+            // have been deleted. Those are left alone.
+            if (componentNodeId === "") return true;
+            return liveNodeIds.has(componentNodeId);
+        });
+    }, [blueprintEvents, liveNodes]);
     const activityTreeMembership = useMemo(
         () => buildActivityTreeMembership(liveNodes, liveEdges),
         [liveEdges, liveNodes],
@@ -1271,10 +1232,16 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     }, [knowledgeCrossTreeConnections, nodes]);
     const filteredKnowledgeBlueprintLinks = useMemo(() => {
         const existingNodeIdSet = new Set(nodes.map((node) => node.id));
+        // Unlike the blueprint-to-blueprint arcs and the codebase links, the chart binds these
+        // straight to the array without resolving the event first, so a link to an event the track
+        // no longer draws would be a curve ending at an empty spot on the blueprint lane. Dropped
+        // here, where the "does the card still exist" half of the same question already lives.
+        const drawnBlueprintEventIds = new Set(liveBlueprintEvents.map((eventData) => eventData.id));
         return knowledgeBlueprintLinks.filter((connection) => (
             existingNodeIdSet.has(connection.cardNodeId)
+            && drawnBlueprintEventIds.has(connection.blueprintEventId)
         ));
-    }, [knowledgeBlueprintLinks, nodes]);
+    }, [knowledgeBlueprintLinks, liveBlueprintEvents, nodes]);
 
     const {
         onAttachFile,
@@ -1383,8 +1350,35 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             return next;
         });
     }, [resolveActionTimestamp]);
+    /**
+     * The live graph, read through refs rather than closures.
+     *
+     * Anything invoked from a memoised node's props needs this. A node component reads its handlers
+     * from `handlersRef.current` at *its own* render time, and React Flow only re-renders a node when
+     * something about that node changes — so a handler that closed over `nodes` or `edges` can be
+     * arbitrarily old by the time it runs. That is not a hypothetical: it is what left a deleted
+     * blueprint component's `tackled in` edge alive, because the delete handler the node was holding
+     * had been created before the edge existed.
+     *
+     * Also read by `handleNodesChange`'s dev-only dimension check and by `autoLinkNewCards` after its
+     * round trip, both of which must not take the arrays as dependencies — that would give the
+     * callbacks a new identity on every graph change and take the memoised canvas down with them.
+     */
+    const nodesRef = useRef(nodes);
+    useEffect(() => {
+        nodesRef.current = nodes;
+    }, [nodes]);
+
+    const edgesRef = useRef(edges);
+    useEffect(() => {
+        edgesRef.current = edges;
+    }, [edges]);
+
     const softDeleteNode = useCallback((nodeId: string) => {
-        const targetNode = nodes.find((node) => node.id === nodeId);
+        // `nodesRef`/`edgesRef`, never the closure: see the note above them. A stale `edges` here does
+        // not fail loudly — it silently leaves the deleted node's connections alive, which is how a
+        // document came to say a component was deleted and still show a relation pointing at it.
+        const targetNode = nodesRef.current.find((node) => node.id === nodeId);
         if (!targetNode) return;
         const nodeData = (targetNode.data ?? {}) as Record<string, unknown>;
         if (toTimestampMs(nodeData.deletedAt) !== null) return;
@@ -1400,7 +1394,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             } as unknown as nodeType["data"],
         }));
 
-        for (const edge of edges) {
+        for (const edge of edgesRef.current) {
             if (edge.source !== nodeId && edge.target !== nodeId) continue;
             const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
             if (toTimestampMs(edgeData.deletedAt) !== null) continue;
@@ -1412,7 +1406,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 },
             }));
         }
-    }, [dispatch, edges, nodes, rememberDeletedKnowledgeEventFromNode, resolveActionTimestamp]);
+    }, [dispatch, rememberDeletedKnowledgeEventFromNode, resolveActionTimestamp]);
 
     useEffect(() => {
         if (status !== "ready") {
@@ -1834,6 +1828,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         softDeleteNode(nodeId);
     }, [interactionLocked, softDeleteNode]);
 
+    /**
+     * The same soft delete, for a batch — the tray's delete-key handling and its Clear button.
+     *
+     * A batch rather than a loop at the call site so the tray never has to know that deleting is
+     * `deletedAt` on the node plus `deletedAt` on every edge that touched it. That knowledge lives
+     * in `softDeleteNode` and nowhere else, which is what makes a component's deletion mean the same
+     * thing whichever of the two surfaces it was clicked on.
+     */
+    const onDeleteNodes = useCallback((nodeIds: readonly string[]) => {
+        if (interactionLocked) return;
+        for (const nodeId of nodeIds) softDeleteNode(nodeId);
+    }, [interactionLocked, softDeleteNode]);
+
     const onDetachFile = useCallback((nodeId: string, fileId: string) => {
         if (interactionLocked) return;
         dispatch(detachFileIdFromNode({
@@ -1862,21 +1869,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     //
     // Changing the level always drops the focus: a focus path names a phase or an activity in the
     // keyspace of the level it was opened at, and carrying it across would point at nothing.
-    // Read by `handleNodesChange`'s dev-only dimension check, which must not take `nodes` as a
-    // dependency: that would give the callback a new identity on every graph change and take the
-    // memoised canvas down with it.
-    const nodesRef = useRef(nodes);
-    useEffect(() => {
-        nodesRef.current = nodes;
-    }, [nodes]);
-
-    // Read by `autoLinkNewCards` after its round trip, by which point the canvas has already gained
-    // the card being offered — which is the point of reading it through a ref rather than a closure.
-    const edgesRef = useRef(edges);
-    useEffect(() => {
-        edgesRef.current = edges;
-    }, [edges]);
-
     const canvasLevelRef = useRef(canvasLevel);
     const levelFollowsZoomRef = useRef(levelFollowsZoom);
     useEffect(() => {
@@ -1915,6 +1907,133 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         setCanvasLevel(next);
         setCanvasFocus(NO_CANVAS_FOCUS);
     }, [getZoom]);
+
+
+    /**
+     * Go to a code.
+     *
+     * The reader's half of the shared reference system: somebody has `C3` from a paper, a colleague or
+     * the exported report, and wants to see the thing it names. The code carries its own level of
+     * abstraction, so this does not merely centre a node — it puts the canvas at the altitude the code
+     * claims, opens the branch the target sits in, and leaves the rest of the study abstract. That is
+     * Focus+Context arrived at by citation rather than by clicking.
+     *
+     * The index is built on demand rather than memoised. It is O(n log n) over the whole graph and
+     * would otherwise be recomputed on every card edit for a lookup that happens when somebody types
+     * — and it has to be built over the **unfiltered live graph** anyway (`locatorGraphScope`), which
+     * is not what any of the canvas memos hold.
+     *
+     * The reveal order matters, and every step is here because skipping it is a way to fail silently:
+     * a needle gates whole activity trees, a label chip hides the target outright, a provenance chip
+     * does the same, blueprint components are not drawn at all unless their chip is on, and
+     * `levelFollowsZoom` would re-derive the level from the zoom the fit produces and throw the focus
+     * away on arrival. Only after all of that is the camera asked to move.
+     */
+    const handleGoToLocatorCode = useCallback((raw: string): boolean => {
+        const typed = raw.trim();
+        if (typed === "") return false;
+
+        const parsed = parseLocatorCode(typed);
+        if (!parsed) {
+            showCanvasNotice(`"${typed}" is not a code this project uses. Codes look like A3, R7 or C2.`);
+            return false;
+        }
+
+        const nodes = nodesRef.current;
+        const edges = edgesRef.current;
+        const stages = timelineStages.map((stage) => ({
+            name: String(stage.name ?? ""),
+            start: toIsoDateString(stage.start),
+            end: toIsoDateString(stage.end),
+        }));
+        const scope = locatorGraphScope(nodes, edges, stages);
+        const index = buildLocatorIndex({
+            nodes,
+            edges,
+            files: allFiles.map((file) => {
+                const record = file as unknown as Record<string, unknown>;
+                return {
+                    sha256: typeof record.sha256 === "string" ? record.sha256 : file.id,
+                    name: file.name,
+                    createdAt: toIsoDateString(record.createdAt),
+                };
+            }),
+            timeline: {
+                stages: timelineStages.map((stage) => ({
+                    id: stage.id,
+                    name: String(stage.name ?? ""),
+                    start: toIsoDateString(stage.start),
+                    end: toIsoDateString(stage.end),
+                })),
+                designStudyEvents: designStudyEvents.map((eventData) => ({
+                    id: eventData.id,
+                    name: eventData.name,
+                    occurredAt: toIsoDateString(eventData.occurredAt),
+                })),
+            },
+            membership: scope.membership,
+            clusters: scope.clusters,
+            asOf: { version: null, capturedAt: new Date().toISOString() },
+        });
+
+        const target = index.byCode.get(parsed.code);
+        if (!target) {
+            showCanvasNotice(`${parsed.code} does not name anything in this project.`);
+            return false;
+        }
+        // A code the project can name but cannot open says so, and does not move the canvas — the same
+        // rule as the source icon that stays inert when its file is gone.
+        if (target.status !== "live") {
+            showCanvasNotice(describeLocatorStatus(target));
+            return false;
+        }
+
+        // 1. The needle gates whole activity trees, so a scrubbed playhead can hide the target's tree
+        //    with no explanation.
+        setPlaybackAt(null);
+
+        // 2. Clear the search filter and put the target's own label chip back on.
+        const label = normalizeNodeLabel(target.describedAs);
+        resetFiltersForCanvasCreation(
+            CARD_LABELS.includes(label as cardLabel) ? (label as cardLabel) : undefined,
+        );
+
+        // 3. The provenance chips and the blueprint chip hide cards independently of the label chips.
+        const targetNode = nodes.find((node) => node.id === target.targetId);
+        if (targetNode) {
+            if (isModelDerivedNodeData(targetNode.data)) setModelDerivedVisible(true);
+            else setAuthoredVisible(true);
+        }
+        if (label === "blueprint_component" || label === "blueprint_group" || label === "blueprint") {
+            setBlueprintComponentsVisible(true);
+            // A component is only drawn beside a requirement it answers, so that chip has to be on too.
+            setSelectedLabels((previous) => (
+                previous.includes("requirement") ? previous : [...previous, "requirement"]
+            ));
+        }
+
+        // 4. Non-negotiable: with follow-zoom on, the fit below re-derives the level from the zoom it
+        //    produces and resets the focus to nothing, which would undo everything this just set.
+        setLevelFollowsZoom(false);
+
+        // 5. Level and focus in one commit. Deliberately not `handleCanvasLevelChange`, which clears
+        //    the focus — correctly, because that handler is the user clicking a level segment, where
+        //    starting from nowhere is the right behaviour.
+        canvasLevelRef.current = target.viewpoint.level;
+        setCanvasLevel(target.viewpoint.level);
+        setCanvasFocus(target.viewpoint.focus);
+
+        // 6. Finally the camera, once the layout has actually placed the target.
+        if (target.viewpoint.nodeId) requestNodeFocus(target.viewpoint.nodeId, "fit");
+        return true;
+    }, [
+        allFiles,
+        designStudyEvents,
+        requestNodeFocus,
+        resetFiltersForCanvasCreation,
+        showCanvasNotice,
+        timelineStages,
+    ]);
 
     const handleClearCanvasFocus = useCallback(() => {
         setCanvasFocus(NO_CANVAS_FOCUS);
@@ -1979,21 +2098,31 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         onRenameTitle: typeof handleBlueprintComponentTitleChange;
         onAttachCodebaseFilePath: typeof handleBlueprintComponentAttachCodebasePath;
         onDetachCodebaseFilePath: typeof handleBlueprintComponentDetachCodebasePath;
+        onDelete: typeof onDeleteNode;
+        readOnly: boolean;
     }>({
         onRenameTitle: handleBlueprintComponentTitleChange,
         onAttachCodebaseFilePath: handleBlueprintComponentAttachCodebasePath,
         onDetachCodebaseFilePath: handleBlueprintComponentDetachCodebasePath,
+        onDelete: onDeleteNode,
+        // On the same ref as the handlers so `nodeTypes` keeps its identity — a new `nodeTypes`
+        // object remounts every node on the canvas.
+        readOnly: interactionLocked,
     });
     useEffect(() => {
         blueprintComponentHandlersRef.current = {
             onRenameTitle: handleBlueprintComponentTitleChange,
             onAttachCodebaseFilePath: handleBlueprintComponentAttachCodebasePath,
             onDetachCodebaseFilePath: handleBlueprintComponentDetachCodebasePath,
+            onDelete: onDeleteNode,
+            readOnly: interactionLocked,
         };
     }, [
         handleBlueprintComponentAttachCodebasePath,
         handleBlueprintComponentDetachCodebasePath,
         handleBlueprintComponentTitleChange,
+        interactionLocked,
+        onDeleteNode,
     ]);
 
     const nodeTypes = useMemo<NodeTypes>(() => ({
@@ -2030,6 +2159,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     onRenameTitle={handlers.onRenameTitle}
                     onAttachCodebaseFilePath={handlers.onAttachCodebaseFilePath}
                     onDetachCodebaseFilePath={handlers.onDetachCodebaseFilePath}
+                    onDelete={handlers.readOnly ? undefined : handlers.onDelete}
                 />
             );
         },
@@ -2049,7 +2179,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             // Provenance is asked first because it is orthogonal to the label: `autoGenerated` marks
             // a card a model wrote, whatever kind of card it turned out to be. Only the LLM paths
             // set it — a card the user dragged in from a file carries `origin` but not this.
-            const isModelDerived = (node.data as Record<string, unknown> | undefined)?.autoGenerated === true;
+            const isModelDerived = isModelDerivedNodeData(node.data);
             if (!modelDerivedVisible && isModelDerived) return false;
             // The mirror image. Turning this off leaves only what the model proposed, which is what
             // the canvas looked like before anyone touched it.
@@ -2095,7 +2225,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         const nodeById = new Map(nodes.map((node) => [node.id, node]));
         const blueprintEventByComponentNodeId = new Map<string, typeof blueprintEvents[number]>();
 
-        for (const eventData of blueprintEvents) {
+        // The drawn events, not every stored one: a wire whose end is a deleted component has
+        // nothing to join. The chart drops unresolvable arcs anyway, so this is about not asking it
+        // to — the two ends of a connection and the triangles they land on come from one list.
+        for (const eventData of liveBlueprintEvents) {
             const componentNodeId = typeof eventData.componentNodeId === "string"
                 ? eventData.componentNodeId.trim()
                 : "";
@@ -2140,7 +2273,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         return connections;
-    }, [blueprintEvents, edges, nodes]);
+    }, [edges, liveBlueprintEvents, nodes]);
     // Highlight used to be injected here as `node.style`, which cloned node objects and so invalidated
     // salience, clustering, abstraction and the layout on every hover. It now reaches the nodes
     // through `canvasHighlightStore`, leaving this memo to do only what its name says.
@@ -2261,27 +2394,40 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return { displayedNodes: positioned, hasManualNodePositions: moved };
     }, [abstractedNodes, displayedEdges, manualNodePositions]);
 
-    // The layout — not the cursor — decides where a new card lands, so a card created by the card
-    // tool or a file drop can appear anywhere, including off-screen. Pan to it once it is placed,
-    // keeping the current zoom so the move is a pan rather than a jarring re-fit.
+    // The layout — not the cursor — decides where a card lands, so the target may not be on screen or
+    // even drawn yet when the request is made. Wait for it to appear, then move; and give up out loud
+    // rather than retrying for the rest of the session if it never does.
     useEffect(() => {
-        if (!pendingFocusNodeId) return;
+        if (!pendingCanvasFocus) return;
 
-        const target = displayedNodes.find((node) => node.id === pendingFocusNodeId);
-        if (!target) return;
+        const target = displayedNodes.find((node) => node.id === pendingCanvasFocus.nodeId);
+        if (!target) {
+            if (Date.now() < pendingCanvasFocus.deadlineAt) return;
+            setPendingCanvasFocus(null);
+            showCanvasNotice(
+                "That card could not be shown. It may be hidden by a filter, folded into a summary, or"
+                + " no longer part of the study.",
+            );
+            return;
+        }
 
         const size = nodeSizeOf(target);
+        const mode = pendingCanvasFocus.mode;
         const timer = window.setTimeout(() => {
-            void setCenter(
-                target.position.x + (size.width / 2),
-                target.position.y + (size.height / 2),
-                { zoom: getZoom(), duration: 420 },
-            );
-            setPendingFocusNodeId(null);
+            if (mode === "fit") {
+                void fitView({ nodes: [{ id: target.id }], padding: 0.28, duration: 420 });
+            } else {
+                void setCenter(
+                    target.position.x + (size.width / 2),
+                    target.position.y + (size.height / 2),
+                    { zoom: getZoom(), duration: 420 },
+                );
+            }
+            setPendingCanvasFocus(null);
         }, 0);
 
         return () => window.clearTimeout(timer);
-    }, [pendingFocusNodeId, displayedNodes, setCenter, getZoom]);
+    }, [pendingCanvasFocus, displayedNodes, setCenter, getZoom, fitView, showCanvasNotice]);
 
     // Rings are shown while a file is dragged over the canvas and while the card tool is armed,
     // because both actions create a card that gets connected to the activity underneath.
@@ -2413,7 +2559,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             },
         }]));
 
-        setPendingFocusNodeId(nodeId);
+        requestNodeFocus(nodeId);
 
         // A note carries a sentence worth comparing against the rest of the canvas; an `Untitled`
         // card from the card tool has nothing to be similar about yet, and `autoLinkNewCards` would
@@ -2432,7 +2578,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 createdAt,
             });
         }
-    }, [dispatch, interactionLocked, nodes, projectId, resetFiltersForCanvasCreation, resolveActionTimestamp, showCanvasNotice]);
+    }, [dispatch, interactionLocked, nodes, projectId, requestNodeFocus, resetFiltersForCanvasCreation, resolveActionTimestamp, showCanvasNotice]);
 
     const handleCardSpawnSelection = useCallback((option: EdgeConnectOption) => {
         const pending = pendingCardSpawnMenu;
@@ -2509,12 +2655,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     },
                 }]));
             }
-            setPendingFocusNodeId(nodeId);
+            requestNodeFocus(nodeId);
             return;
         }
 
         const activityNodeId = crypto.randomUUID();
-        setPendingFocusNodeId(activityNodeId);
+        requestNodeFocus(activityNodeId);
         dispatch(addNode({
             id: activityNodeId,
             position: { x: position.x - (CARD_WIDTH_PX / 2), y: position.y - (CARD_HEIGHT_PX / 2) },
@@ -2527,7 +2673,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 relevant: true,
             },
         }));
-    }, [canvasIsEditable, cursorMode, dispatch, interactionLocked, placeMenuAbove, resolveActionTimestamp, resetFiltersForCanvasCreation, resolveCreationTarget, screenToFlowPosition]);
+    }, [canvasIsEditable, cursorMode, dispatch, interactionLocked, placeMenuAbove, requestNodeFocus, resetFiltersForCanvasCreation, resolveActionTimestamp, resolveCreationTarget, screenToFlowPosition]);
 
     /**
      * Attach a tray component to the requirement under the cursor, or say why not.
@@ -2598,12 +2744,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             "requirement",
             "blueprint_component",
         );
-        setPendingFocusNodeId(componentNode.id);
+        requestNodeFocus(componentNode.id);
     }, [
         displayedNodes,
         dispatch,
         edges,
         maybeCreateBlueprintEventFromConnection,
+        requestNodeFocus,
         nodes,
         resolveActionTimestamp,
         showCanvasNotice,
@@ -2620,7 +2767,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (!hasFiles && !hasBlueprintAttach && !hasGitHubFile) return;
 
         e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
+        // `dropEffect` has to be one of the operations the *drag source* allowed, or the browser
+        // resolves the operation to "none" and never fires `drop` at all — a silent refusal with no
+        // handler of ours involved. The attach grip starts its drag with `effectAllowed = "copyLink"`
+        // because attaching is a link, not a copy; answering "copy" to it dropped the gesture on the
+        // floor. Every other drag the canvas takes really is a copy.
+        e.dataTransfer.dropEffect = hasBlueprintAttach ? "link" : "copy";
     }, [interactionLocked]);
 
     /**
@@ -2649,7 +2801,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
             // Only the first card pulls the camera; panning once per file in a multi-file drop
             // would yank the canvas around while the uploads finish.
-            if (index === 0 && createdNodeId) setPendingFocusNodeId(createdNodeId);
+            if (index === 0 && createdNodeId) requestNodeFocus(createdNodeId);
 
             // Un-hide the card's label only once the card exists. Clearing a filter re-runs the
             // explore-mode fitView, and doing that up front — before the upload resolves — would
@@ -2657,7 +2809,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             // ended up off-screen with only an unexplained camera move to show for it.
             if (index === 0) resetFiltersForCanvasCreation("object");
         }
-    }, [onAttachFileForCanvas, resetFiltersForCanvasCreation]);
+    }, [onAttachFileForCanvas, requestNodeFocus, resetFiltersForCanvasCreation]);
 
     /** Answer to the drop-ring relation question: create the whole batch with the chosen edge. */
     const handleFileDropConnectSelection = useCallback((option: EdgeConnectOption) => {
@@ -2840,7 +2992,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             }
         }
 
-        setPendingFocusNodeId(nodeId);
+        requestNodeFocus(nodeId);
 
         // A note is a claim about the study, so it belongs against whatever the canvas already says
         // about the same thing. This is the same pass the file drop runs, with the same evidence
@@ -2855,7 +3007,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         });
 
         return true;
-    }, [canvasIsEditable, dispatch, interactionLocked, placeMenuAbove, projectId, resetFiltersForCanvasCreation, resolveActionTimestamp, resolveCreationTarget, screenToFlowPosition, showCanvasNotice]);
+    }, [canvasIsEditable, dispatch, interactionLocked, placeMenuAbove, projectId, requestNodeFocus, resetFiltersForCanvasCreation, resolveActionTimestamp, resolveCreationTarget, screenToFlowPosition, showCanvasNotice]);
 
     const fetchGithubEvents = useCallback(async (connected: boolean) => {
         if (!reviewOnly && !connected) return;
@@ -3379,34 +3531,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     ), [liveNodes]);
 
     /**
-     * Say where the blueprint went, once, on a project that had one before the tray existed.
-     *
-     * Opening such a project after this change, the paper boxes and every component not answering a
-     * requirement leave the canvas. Nothing is deleted and it is all in the tray — but a canvas that
-     * silently loses a block of content reads as data loss, and the count on a closed panel is not
-     * an explanation. Session state, and only for a project that actually has something to explain.
-     */
-    const migrationNoticeShownRef = useRef(false);
-    useEffect(() => {
-        if (status !== "ready") return;
-        if (migrationNoticeShownRef.current) return;
-        if (trayOpen) return;
-
-        const trayOnly = liveNodes.filter((node) => {
-            const label = normalizeNodeLabel(String(node.data?.label ?? ""));
-            if (!BLUEPRINT_NODE_LABELS.has(label)) return false;
-            return label !== "blueprint_component" || !trayAttachedComponentIds.has(node.id);
-        }).length;
-        if (trayOnly === 0) return;
-
-        migrationNoticeShownRef.current = true;
-        showCanvasNotice(
-            `${trayOnly} blueprint ${trayOnly === 1 ? "item is" : "items are"} in the blueprint tray.`
-            + " The canvas shows a component once it answers a requirement — open the tray to see the rest.",
-        );
-    }, [liveNodes, showCanvasNotice, status, trayAttachedComponentIds, trayOpen]);
-
-    /**
      * How many components are waiting in the tray, shown on the chip that reopens it.
      *
      * Without it a closed tray is indistinguishable from an empty one, and a researcher who has
@@ -3436,261 +3560,229 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             }))
     ), [liveNodes]);
 
+    /**
+     * The exported report.
+     *
+     * Almost all of this used to live here: 260 lines that made two semantic searches over hardcoded
+     * English strings, asked a model to write seven sections of prose, and stitched them under fixed
+     * headings with a base64 screenshot inlined at the top. The reviewers' verdict — brief,
+     * superficial, and not doing justice to the project's provenance — was a fair reading of a
+     * document whose factual content was three lines and whose prompts were forbidden from citing
+     * anything.
+     *
+     * What is left is the impure half, which is all this layer should ever have owned: read the store,
+     * stamp the instant, number the artifacts, hand it to a pure function, save the file.
+     * `buildProjectReport` is deterministic and tested (`npm run test:report`), so what the document
+     * says can be checked against the canvas rather than taken on trust.
+     *
+     * Deliberately **not** gated on `interactionLocked`. Exporting writes nothing, and somebody
+     * reading a published study is exactly the reader this document is for; the gate belongs on the
+     * abstract's model call, not on the export.
+     */
     const handleExportMarkdown = useCallback(() => {
         if (exportingMarkdown) return;
         setExportingMarkdown(true);
 
         void (async () => {
-            try {
-                const projectTitle = title?.trim() || "Untitled";
-                const allCards = getCardSnapshots(nodes);
-                const cardById = new Map(allCards.map((card) => [card.id, card]));
-                const cardsByLabel = (label: string) => allCards.filter((card) => card.label === label);
-                const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
-                    const seen = new Set<string>();
-                    const result: T[] = [];
-                    for (const item of items) {
-                        if (seen.has(item.id)) continue;
-                        seen.add(item.id);
-                        result.push(item);
-                    }
-                    return result;
-                };
-                const toIsoDate = (value: unknown): string => {
-                    if (typeof value === "string") {
-                        const parsed = new Date(value);
-                        if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-                        return value;
-                    }
-                    if (value instanceof Date && !Number.isNaN(value.getTime())) {
-                        return value.toISOString();
-                    }
-                    return "";
-                };
+        try {
+            const generatedAtIso = new Date().toISOString();
+            const capturedAtIso = latestCanvasChangeTime !== null
+                ? new Date(latestCanvasChangeTime).toISOString()
+                : generatedAtIso;
 
-                const authors = Array.from(new Set(
-                    cardsByLabel("person")
-                        .map((card) => card.title.trim())
-                        .filter(Boolean)
-                ));
+            const reportStages = timelineStages.map((stage) => ({
+                id: stage.id,
+                name: String(stage.name ?? ""),
+                startIso: toIsoDateString(stage.start),
+                endIso: toIsoDateString(stage.end),
+            }));
 
-                const blueprintComponentsWithParents = getBlueprintComponentSnapshots(nodes);
-                const latestScreenshotDataUrl = mostRecentSystemScreenshotMarker?.imageDataUrl?.trim() || "";
-
-                const settingsInfo = {
-                    llmModel,
-                    projectTitle,
-                    projectGoal: projectGoal?.trim() || "",
-                    participants: participants.map((participant) => ({
-                        name: String(participant.name ?? "").trim() || "Participant",
-                        role: String(participant.role ?? "").trim() || "Researcher",
-                    })),
-                    timeline: {
-                        start: toIsoDate(timelineStartEnd.start),
-                        end: toIsoDate(timelineStartEnd.end),
-                        stages: timelineStages.map((stage) => ({
-                            name: stage.name,
-                            start: toIsoDate(stage.start),
-                            end: toIsoDate(stage.end),
-                        })),
-                        defaultStages: [...defaultStages],
-                    },
-                };
-
-                const assetsMetadata = allFiles.map((file) => ({
+            const reportFiles = allFiles.map((file) => {
+                const record = file as unknown as Record<string, unknown>;
+                return {
                     id: file.id,
+                    // Content-addressed, so a file's code survives a `.vi` round trip, which rewrites
+                    // file ids but never the bytes.
+                    sha256: typeof record.sha256 === "string" ? record.sha256 : file.id,
                     name: file.name,
-                    ext: file.ext,
-                    mimeType: file.mimeType,
-                    sizeBytes: file.sizeBytes,
-                    createdAt: file.createdAt,
-                }));
+                    ext: typeof record.ext === "string" ? record.ext : "",
+                    mimeType: typeof record.mimeType === "string" ? record.mimeType : "",
+                    sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : 0,
+                    createdAtIso: toIsoDateString(record.createdAt),
+                };
+            });
 
-                const matchedLiteratureCardIds = new Set<string>();
-                const queryResults = await Promise.allSettled([
-                    queryDocumentNodes(projectId, { query: "literature review", limit: 40, minScore: 0.2 }),
-                    queryDocumentNodes(projectId, { query: "paper", limit: 40, minScore: 0.2 }),
-                ]);
-                for (const result of queryResults) {
-                    if (result.status !== "fulfilled") continue;
-                    for (const nodeId of result.value.matchedNodeIds) {
-                        matchedLiteratureCardIds.add(nodeId);
-                    }
-                }
+            const snapshot: ReportSnapshot = {
+                generatedAtIso,
+                projectId,
+                projectTitle: title?.trim() || "Untitled",
+                projectGoal: projectGoal?.trim() ?? "",
+                // The same fingerprint the knowledge-provenance request is keyed on, so two exports of
+                // one graph are recognisably of one graph.
+                contentVersion: knowledgeProvenanceTriggerKey,
+                asOf: { version: null, capturedAtIso },
+                // Full arrays, tombstones included: the removal log needs them, and the numbering
+                // needs their slots so nothing after a deletion is renumbered.
+                nodes,
+                edges,
+                timeline: {
+                    startIso: timelineStartEnd.start ? toIsoDateString(timelineStartEnd.start) : null,
+                    endIso: timelineStartEnd.end ? toIsoDateString(timelineStartEnd.end) : null,
+                    stages: reportStages,
+                    participants: participants.map((participant) => ({
+                        id: participant.id,
+                        name: participant.name,
+                        role: participant.role,
+                    })),
+                    designStudyEvents: designStudyEvents.map((eventData) => ({
+                        id: eventData.id,
+                        name: eventData.name,
+                        occurredAtIso: toIsoDateString(eventData.occurredAt),
+                        generatedBy: eventData.generatedBy === "llm"
+                            ? "llm" as const
+                            : eventData.generatedBy === "manual" ? "manual" as const : null,
+                    })),
+                    // `liveBlueprintEvents`, not the raw slice: an event whose component was deleted is
+                    // no longer part of the study, which is the rule the timeline track uses too.
+                    blueprintEvents: liveBlueprintEvents.map((eventData) => ({
+                        id: eventData.id,
+                        name: eventData.name,
+                        occurredAtIso: toIsoDateString(eventData.occurredAt),
+                        componentNodeId: typeof eventData.componentNodeId === "string"
+                            ? eventData.componentNodeId
+                            : null,
+                        paperTitle: eventData.paperTitle ?? null,
+                        referenceCitation: eventData.referenceCitation ?? null,
+                    })),
+                    codebaseSubtracks: codebaseSubtracks.map((subtrack) => ({
+                        id: subtrack.id,
+                        name: subtrack.name,
+                        filePaths: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
+                        // Carried, because a finished subtrack narrated as live is a small lie.
+                        inactive: subtrack.inactive === true,
+                    })),
+                    // Instants only. A marker's image is a multi-megabyte data URL, and inlining one is
+                    // what made the old export unreadable by every other markdown tool.
+                    screenshotMarkers: systemScreenshotMarkers.map((marker) => ({
+                        id: marker.id,
+                        occurredAtIso: toIsoDateString(marker.occurredAt),
+                        zoneCount: Array.isArray(marker.zones) ? marker.zones.length : 0,
+                    })),
+                    llmModel: llmModel ?? null,
+                },
+                files: reportFiles,
+            };
 
-                const activityIds = new Set<string>();
-                for (const nodeId of matchedLiteratureCardIds) {
-                    const card = cardById.get(nodeId);
-                    if (card?.label === "activity") {
-                        activityIds.add(nodeId);
-                    }
-                }
+            // One derivation of the report's graph, shared by the numbering and the document. Computed
+            // twice, the index could cluster one graph and the prose another, and `P1` would name two
+            // different phases in one file.
+            const reportContext = buildReportGraphContext(snapshot);
 
-                const activityConnectedCardIds = new Set<string>();
-                for (const edge of edges) {
-                    if (activityIds.has(edge.source) && cardById.has(edge.target)) {
-                        activityConnectedCardIds.add(edge.target);
-                    }
-                    if (activityIds.has(edge.target) && cardById.has(edge.source)) {
-                        activityConnectedCardIds.add(edge.source);
-                    }
-                }
+            const codes = buildLocatorIndex({
+                nodes,
+                edges,
+                files: reportFiles.map((file) => ({
+                    sha256: file.sha256,
+                    name: file.name,
+                    createdAt: file.createdAtIso,
+                })),
+                timeline: {
+                    stages: reportStages.map((stage) => ({
+                        id: stage.id,
+                        name: stage.name,
+                        start: stage.startIso,
+                        end: stage.endIso,
+                    })),
+                    designStudyEvents: snapshot.timeline.designStudyEvents.map((eventData) => ({
+                        id: eventData.id,
+                        name: eventData.name,
+                        occurredAt: eventData.occurredAtIso,
+                    })),
+                },
+                // Both of these are computed over the whole live graph with no label chip, no query and
+                // no playhead applied. Phase codes are only meaningful under exactly those conditions —
+                // see `LOCATOR_PHASE_CONTRACT` — so the report reproduces them rather than reusing the
+                // canvas memos, which are scoped to whatever the researcher last clicked.
+                membership: reportContext.membership,
+                clusters: reportContext.clusters,
+                asOf: { version: null, capturedAt: capturedAtIso },
+            });
 
-                const literatureCards = dedupeById([
-                    ...Array.from(matchedLiteratureCardIds).map((id) => cardById.get(id)).filter((card): card is ReportCardSnapshot => Boolean(card)),
-                    ...Array.from(activityConnectedCardIds).map((id) => cardById.get(id)).filter((card): card is ReportCardSnapshot => Boolean(card)),
-                ]);
-
-                const abstract = await requestMarkdownReportSectionLLM("MarkdownReportAbstract", {
-                    projectTitle,
-                    settings: settingsInfo,
-                    cards: {
-                        insights: cardsByLabel("insight"),
-                        concepts: cardsByLabel("concept"),
-                        requirements: cardsByLabel("requirement"),
-                    },
-                    blueprintComponents: blueprintComponentsWithParents,
-                    assets: assetsMetadata,
-                }, llmModel);
-
-                const abstractFallback = abstract || "This project explores the problem space, design constraints, and implementation strategy using the available artifacts and timeline context.";
-
-                const [introduction, literatureReview, designGoals, timelineNarrative, methods, conclusion] = await Promise.all([
-                    requestMarkdownReportSectionLLM("MarkdownReportIntroduction", {
-                        projectTitle,
-                        settings: settingsInfo,
-                        abstract: abstractFallback,
-                    }, llmModel),
-                    requestMarkdownReportSectionLLM("MarkdownReportLiteratureReview", {
-                        projectTitle,
-                        abstract: abstractFallback,
-                        literatureCards,
-                        blueprintComponentsWithParents,
-                    }, llmModel),
-                    requestMarkdownReportSectionLLM("MarkdownReportDesignGoals", {
-                        projectTitle,
-                        abstract: abstractFallback,
-                        requirementCards: cardsByLabel("requirement"),
-                    }, llmModel),
-                    requestMarkdownReportSectionLLM("MarkdownReportTimeline", {
-                        projectTitle,
-                        abstract: abstractFallback,
-                        settings: settingsInfo,
-                        timelineEvents: {
-                            designStudy: designStudyEvents.map((eventData) => ({
-                                name: eventData.name,
-                                occurredAt: toIsoDate(eventData.occurredAt),
-                                generatedBy: eventData.generatedBy === "llm" ? "llm" : "manual",
-                            })),
-                            knowledgeBase: [],
-                            blueprint: blueprintEvents.map((eventData) => ({
-                                name: eventData.name,
-                                occurredAt: toIsoDate(eventData.occurredAt),
-                                componentNodeId: eventData.componentNodeId ?? "",
-                                paperTitle: eventData.paperTitle ?? "",
-                            })),
-                        },
-                        codebaseSubtracks: codebaseSubtracks.map((subtrack) => ({
-                            title: subtrack.name,
-                            attachedFiles: Array.isArray(subtrack.filePaths) ? subtrack.filePaths : [],
-                        })),
-                    }, llmModel),
-                    requestMarkdownReportSectionLLM("MarkdownReportMethods", {
-                        projectTitle,
-                        abstract: abstractFallback,
-                        blueprintComponents: blueprintComponentsWithParents,
-                        cards: {
-                            objects: cardsByLabel("object"),
-                            concepts: cardsByLabel("concept"),
-                            insights: cardsByLabel("insight"),
-                            requirements: cardsByLabel("requirement"),
-                        },
-                    }, llmModel),
-                    requestMarkdownReportSectionLLM("MarkdownReportConclusion", {
-                        projectTitle,
-                        abstract: abstractFallback,
-                        insightCards: cardsByLabel("insight"),
-                    }, llmModel),
-                ]);
-
-                const markdownParts: string[] = [];
-                markdownParts.push(`# ${projectTitle}`);
-                markdownParts.push("");
-                markdownParts.push("## Suggested authors");
-                if (authors.length > 0) {
-                    for (const author of authors) {
-                        markdownParts.push(`- ${author}`);
-                    }
+            /**
+             * The abstract, written from the requirements and the concepts.
+             *
+             * Requested every time, and never allowed to block: the deterministic document is already
+             * complete when this runs, so a refused or unavailable paragraph costs one italic line
+             * rather than an export. `acceptAbstract` throws the whole paragraph away if it cites a
+             * code the payload never contained, because a fabricated citation is the one failure a
+             * reader cannot check for themselves.
+             */
+            let abstract: ReportAbstract | null = null;
+            try {
+                const model = buildReportModel(snapshot, codes, reportContext);
+                const payload = buildAbstractPayload(model);
+                const raw = await requestReportAbstractLLM(payload, llmModel ?? undefined);
+                const prose = acceptAbstract(raw, new Set(codes.entries.map((entry) => entry.code)));
+                if (prose !== null) {
+                    abstract = { prose, model: llmModel ?? "unknown", prompt: "ReportAbstract" };
                 } else {
-                    markdownParts.push("- _No person cards available_");
+                    showCanvasNotice(
+                        "The report was exported without a written abstract: the model's paragraph"
+                        + " referred to something this project does not contain.",
+                    );
                 }
-                markdownParts.push("");
-                markdownParts.push("## Teaser");
-                if (latestScreenshotDataUrl) {
-                    markdownParts.push(`![Teaser system screenshot](${latestScreenshotDataUrl})`);
-                } else {
-                    markdownParts.push("_No system screenshot uploaded._");
-                }
-                markdownParts.push("");
-                markdownParts.push("## Abstract");
-                markdownParts.push(abstractFallback);
-                markdownParts.push("");
-                markdownParts.push("## Introduction");
-                markdownParts.push(introduction || "_No introduction generated._");
-                markdownParts.push("");
-                markdownParts.push("## Literature review");
-                markdownParts.push(literatureReview || "_No literature review generated._");
-                markdownParts.push("");
-                markdownParts.push("## Design goals");
-                markdownParts.push(designGoals || "_No design goals generated._");
-                markdownParts.push("");
-                markdownParts.push("## Timeline");
-                markdownParts.push(timelineNarrative || "_No timeline narrative generated._");
-                markdownParts.push("");
-                markdownParts.push("## Methods");
-                markdownParts.push(methods || "_No methods generated._");
-                markdownParts.push("");
-                markdownParts.push("## Conclusion");
-                markdownParts.push(conclusion || "_No conclusion generated._");
-                markdownParts.push("");
-
-                const markdown = markdownParts.join("\n");
-                const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
-                const url = URL.createObjectURL(blob);
-                const safeName = projectTitle
-                    .toLowerCase()
-                    .replace(/[^a-z0-9]+/g, "-")
-                    .replace(/^-+|-+$/g, "") || "project-report";
-                const anchor = document.createElement("a");
-                anchor.href = url;
-                anchor.download = `${safeName}.md`;
-                document.body.appendChild(anchor);
-                anchor.click();
-                anchor.remove();
-                URL.revokeObjectURL(url);
-            } catch (error) {
-                const message = error instanceof Error
-                    ? error.message
-                    : "Failed to export markdown report.";
-                window.alert(message);
-            } finally {
-                setExportingMarkdown(false);
+            } catch (caught) {
+                const reason = caught instanceof Error ? caught.message : "the request failed";
+                showCanvasNotice(`The report was exported without a written abstract (${reason}).`);
             }
+
+            const report = buildProjectReport(snapshot, {
+                codes,
+                canvasUrlForCode: (code) => codeToUrl(codes, code, {
+                    projectId,
+                    basename: resolveRouterBasename(),
+                    origin: window.location.origin,
+                    // Pinned, so a citation keeps showing what was cited.
+                    at: capturedAtIso,
+                }),
+                abstract,
+                includeAppendices: true,
+            });
+
+            const blob = new Blob([report.markdown], { type: "text/markdown;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = report.fileName;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+        } catch (caught) {
+            // A notice rather than `window.alert`: this is a canvas action and the canvas has a place
+            // to say so. The old handler's alert was the only signal that anything had gone wrong.
+            const message = caught instanceof Error ? caught.message : "Could not build the report.";
+            showCanvasNotice(`The report could not be exported. ${message}`);
+        } finally {
+            setExportingMarkdown(false);
+        }
         })();
     }, [
         allFiles,
-        blueprintEvents,
         codebaseSubtracks,
-        defaultStages,
         designStudyEvents,
         edges,
         exportingMarkdown,
-        mostRecentSystemScreenshotMarker?.imageDataUrl,
+        knowledgeProvenanceTriggerKey,
+        latestCanvasChangeTime,
+        liveBlueprintEvents,
+        llmModel,
         nodes,
         participants,
         projectGoal,
         projectId,
-        llmModel,
+        showCanvasNotice,
+        systemScreenshotMarkers,
         timelineStages,
         timelineStartEnd.end,
         timelineStartEnd.start,
@@ -4372,6 +4464,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             onFollowZoomChange={handleLevelFollowsZoomChange}
             focusLabel={canvasFocusLabel}
             onClearFocus={handleClearCanvasFocus}
+            onGoToCode={handleGoToLocatorCode}
             shifted={timelineOpen}
             chatOpen={chatOpen}
             onOpenChat={handleOpenChat}
@@ -4383,6 +4476,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         handleLevelFollowsZoomChange,
         canvasFocusLabel,
         handleClearCanvasFocus,
+        handleGoToLocatorCode,
         timelineOpen,
         chatOpen,
         handleOpenChat,
@@ -4513,6 +4607,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 requirementCards={requirementSearchCards}
                 selectedRequirementCards={selectedRequirementCards}
                 resolveActionTimestamp={resolveActionTimestamp}
+                onDeleteNodes={onDeleteNodes}
             />
 
             {!trayOpen ? (
@@ -4524,7 +4619,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     title="Open the blueprint tray"
                 >
                     <FontAwesomeIcon icon={faDiagramProject} />
-                    <span>Blueprint tray</span>
+                    <span>Blueprint</span>
                     {trayComponentCount > 0 ? (
                         <span className={trayStyles.reopenCount}>{trayComponentCount}</span>
                     ) : null}
@@ -4717,7 +4812,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onClearKnowledgePreviousEdits={handleClearKnowledgePreviousEdits}
                 onClearKnowledgeNextEdits={handleClearKnowledgeNextEdits}
                 designStudyEvents={designStudyEvents}
-                blueprintEvents={blueprintEvents}
+                blueprintEvents={liveBlueprintEvents}
                 blueprintEventConnections={blueprintEventConnections}
                 connectedBlueprintComponentNodeIds={connectedBlueprintComponentNodeIds}
                 stages={timelineStages}

@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react";
 import { useDispatch, useSelector } from "react-redux";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronDown, faCircle, faDiagramProject } from "@fortawesome/free-solid-svg-icons";
+import { faChevronDown, faCircle, faDiagramProject, faTrashCan } from "@fortawesome/free-solid-svg-icons";
 
 import type { SystemPaperQueryCard } from "@/api/stateApi";
 import type { edgeType, nodeType } from "@/config/types";
@@ -25,10 +25,15 @@ import {
 } from "@/store/flowSlice";
 import { BlueprintComponentNode } from "@/components/blueprint/BlueprintComponentNode";
 import { BlueprintGroupNode } from "@/components/blueprint/BlueprintGroupNode";
-import { BlueprintSearchPanel } from "@/components/blueprint/BlueprintSearchPanel";
+import {
+    BlueprintSearchActions,
+    BlueprintSearchResults,
+} from "@/components/blueprint/BlueprintSearchPanel";
+import { useBlueprintSearch } from "@/components/blueprint/useBlueprintSearch";
 import {
     BLUEPRINT_COMPONENTS_DRAG_MIME,
     BLUEPRINT_DRAG_MIME,
+    BLUEPRINT_NEW_COMPONENT_MIME,
     parseBlueprintComponentsDragPayload,
     parseBlueprintDragPayload,
 } from "@/components/blueprint/blueprintDnD";
@@ -37,7 +42,7 @@ import {
     buildLooseComponentNodes,
 } from "@/components/blueprint/buildBlueprintGraph";
 import { RelationEdge } from "@/components/edges/RelationEdge";
-import { isBlueprintNode } from "@/pages/projectEditor/blueprintSurfaces";
+import { isBlueprintComponent, isBlueprintNode } from "@/pages/projectEditor/blueprintSurfaces";
 import { isEdgeActive, isNodeActive } from "@/pages/projectEditor/graphSemantics";
 import { relationLabelFor } from "@/utils/relationships";
 import styles from "./BlueprintTray.module.css";
@@ -64,6 +69,22 @@ const MIN_HEIGHT_PX = 240;
 const DEFAULT_WIDTH_PX = 460;
 const DEFAULT_HEIGHT_PX = 460;
 
+/**
+ * What an open result list adds to the tray's width.
+ *
+ * Added rather than subtracted: the results are a column beside the graph, and taking their width
+ * out of the graph's would mean every search shrank the surface the results are dragged onto. So
+ * `size.width` stays the width of the graph half, whatever the researcher dragged it to, and the
+ * panel grows to the right when a search opens.
+ *
+ * `243` is `.results` — a 232px column plus its 10px gutter and 1px rule — and `10` is `.body`'s
+ * gap. Both live in `BlueprintTray.module.css` / `BlueprintSearchPanel.module.css`.
+ */
+const RESULTS_COLUMN_TOTAL_PX = 253;
+
+/** Clearance kept above the tray at full height, so it never swallows the left sidebar's header. */
+const TOP_CLEARANCE_PX = 96;
+
 type BlueprintTrayProps = {
     open: boolean;
     onToggleOpen: () => void;
@@ -82,14 +103,25 @@ type BlueprintTrayProps = {
     selectedRequirementCards: SystemPaperQueryCard[];
     /** The timestamp a new node or edge should carry, resolved against the playhead. */
     resolveActionTimestamp: () => string;
+    /**
+     * The page's own soft delete, for the tray's delete buttons, its delete key and Clear.
+     *
+     * Handed down rather than reimplemented here. Deleting a component is `deletedAt` on the node
+     * *and* on every edge that touched it — including the `tackled in` edge that was putting it on
+     * the main canvas — and a second copy of that rule in the tray is a second chance for the two
+     * surfaces to disagree about what a deleted component is.
+     */
+    onDeleteNodes: (nodeIds: readonly string[]) => void;
 };
 
 function TrayCanvas({
     interactionLocked,
     resolveActionTimestamp,
+    onDeleteNodes,
 }: {
     interactionLocked: boolean;
     resolveActionTimestamp: () => string;
+    onDeleteNodes: (nodeIds: readonly string[]) => void;
 }) {
     const dispatch = useDispatch<AppDispatch>();
     const { screenToFlowPosition, getViewport } = useReactFlow();
@@ -132,9 +164,34 @@ function TrayCanvas({
         setLocalNodes(trayNodes);
     }
 
+    /**
+     * Local for everything except a removal, which has to reach the document.
+     *
+     * `localNodes` exists only to keep a drag off the revision log, and it is *reset from the store*
+     * whenever `flow.nodes` changes identity (see the derived-state reset above). A delete applied
+     * here alone therefore survived exactly until the next store write — touching a card on the main
+     * canvas was enough — and then the node came back, because the store had never been told. So a
+     * `remove` change is routed to the page's soft delete and deliberately **not** applied locally:
+     * the node leaves the tray when the store says it has, which is the same moment it leaves
+     * everywhere else.
+     */
     const handleNodesChange = useCallback((changes: NodeChange<nodeType>[]) => {
-        setLocalNodes((previous) => applyNodeChanges(changes, previous));
-    }, []);
+        const removedIds: string[] = [];
+        const rest: NodeChange<nodeType>[] = [];
+        for (const change of changes) {
+            if (change.type === "remove") removedIds.push(change.id);
+            else rest.push(change);
+        }
+
+        // Guarded here rather than by an early return, so selection still works in review mode.
+        if (removedIds.length > 0 && !interactionLocked) onDeleteNodes(removedIds);
+        if (rest.length > 0) setLocalNodes((previous) => applyNodeChanges(rest, previous));
+    }, [interactionLocked, onDeleteNodes]);
+
+    const handleDeleteComponent = useCallback((nodeId: string) => {
+        if (interactionLocked) return;
+        onDeleteNodes([nodeId]);
+    }, [interactionLocked, onDeleteNodes]);
 
     const handleNodeDragStop = useCallback((_event: unknown, node: nodeType) => {
         if (interactionLocked) return;
@@ -190,12 +247,47 @@ function TrayCanvas({
         }]));
     }, [dispatch, interactionLocked, resolveActionTimestamp, storeEdges]);
 
+    /**
+     * A component of the researcher's own, at a position they chose.
+     *
+     * Shared by the drag off the Component button and by clicking it, which is the only difference
+     * between the two gestures: the drag knows where it landed, the click has to guess the middle of
+     * what is on screen.
+     */
+    const createComponentAt = useCallback((position: { x: number; y: number }) => {
+        const createdAt = resolveActionTimestamp();
+        dispatch(addNodes([{
+            id: crypto.randomUUID(),
+            position,
+            type: "blueprintComponent",
+            data: {
+                label: "blueprint_component",
+                type: "technical",
+                title: "New component",
+                codebaseFilePaths: [],
+                manualCreated: true,
+                description: "Manual / Manual",
+                createdAt,
+                blueprintComponent: {
+                    id: Math.floor(Date.now() + Math.random() * 1000),
+                    name: "New component",
+                    feedsInto: [],
+                    highBlockName: "Manual",
+                    intermediateBlockName: "Manual",
+                },
+                blueprintPaperTitle: "Manual component",
+                blueprintFileName: "",
+            },
+        } as nodeType]));
+    }, [dispatch, resolveActionTimestamp]);
+
     const handleDragOver = useCallback((event: React.DragEvent) => {
         if (interactionLocked) return;
         const types = Array.from(event.dataTransfer?.types ?? []);
-        if (!types.includes(BLUEPRINT_DRAG_MIME) && !types.includes(BLUEPRINT_COMPONENTS_DRAG_MIME)) {
-            return;
-        }
+        const accepted = types.includes(BLUEPRINT_DRAG_MIME)
+            || types.includes(BLUEPRINT_COMPONENTS_DRAG_MIME)
+            || types.includes(BLUEPRINT_NEW_COMPONENT_MIME);
+        if (!accepted) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
     }, [interactionLocked]);
@@ -230,53 +322,65 @@ function TrayCanvas({
             );
             if (graph.nodes.length > 0) dispatch(addNodes(graph.nodes));
             if (graph.edges.length > 0) dispatch(connectEdges(graph.edges));
+            return;
         }
-    }, [dispatch, interactionLocked, resolveActionTimestamp, screenToFlowPosition]);
+
+        // The blank component carries no payload, so its presence in `types` is the whole message.
+        if (Array.from(event.dataTransfer?.types ?? []).includes(BLUEPRINT_NEW_COMPONENT_MIME)) {
+            event.preventDefault();
+            createComponentAt(screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+        }
+    }, [createComponentAt, dispatch, interactionLocked, resolveActionTimestamp, screenToFlowPosition]);
 
     const handleAddComponent = useCallback(() => {
         if (interactionLocked) return;
         const viewport = getViewport();
-        const createdAt = resolveActionTimestamp();
         // The middle of what the researcher is looking at. A fixed coordinate would stack every new
         // component on top of the last one once the tray has been panned.
-        const position = {
+        createComponentAt({
             x: (-viewport.x + 160) / viewport.zoom,
             y: (-viewport.y + 120) / viewport.zoom,
-        };
+        });
+    }, [createComponentAt, getViewport, interactionLocked]);
 
-        dispatch(addNodes([{
-            id: crypto.randomUUID(),
-            position,
-            type: "blueprintComponent",
-            data: {
-                label: "blueprint_component",
-                type: "technical",
-                title: "New component",
-                codebaseFilePaths: [],
-                manualCreated: true,
-                description: "Manual / Manual",
-                createdAt,
-                blueprintComponent: {
-                    id: Math.floor(Date.now() + Math.random() * 1000),
-                    name: "New component",
-                    feedsInto: [],
-                    highBlockName: "Manual",
-                    intermediateBlockName: "Manual",
-                },
-                blueprintPaperTitle: "Manual component",
-                blueprintFileName: "",
-            },
-        } as nodeType]));
-    }, [dispatch, getViewport, interactionLocked, resolveActionTimestamp]);
+    /**
+     * Empty the tray, after saying what that costs.
+     *
+     * Confirmed with `window.confirm`, which is what this app already uses for the destructive
+     * project-level actions (`ProjectsPage`, the export prompts). The wording names the two things
+     * a researcher cannot see from here: that clearing is not tray-only — a component answering a
+     * requirement leaves the main canvas with it — and that it is a soft delete, so the timeline
+     * still holds everything before this moment.
+     */
+    const handleClear = useCallback(() => {
+        if (interactionLocked) return;
+        if (trayNodes.length === 0) return;
+
+        const componentCount = trayNodes.filter((node) => isBlueprintComponent(node)).length;
+        const paperCount = trayNodes.length - componentCount;
+        const parts = [
+            `${componentCount} component${componentCount === 1 ? "" : "s"}`,
+            ...(paperCount > 0 ? [`${paperCount} paper box${paperCount === 1 ? "" : "es"}`] : []),
+        ];
+
+        const confirmed = window.confirm(
+            `Clear the blueprint tray? This removes ${parts.join(" and ")} from the study,`
+            + " and any component answering a requirement leaves the canvas with it."
+            + " Scrub the timeline back to see them again.",
+        );
+        if (!confirmed) return;
+
+        onDeleteNodes(trayNodes.map((node) => node.id));
+    }, [interactionLocked, onDeleteNodes, trayNodes]);
 
     /**
      * Handlers reach the node types through a ref, so `nodeTypes` can be memoised with no
      * dependencies. React Flow rebuilds every node when that object's identity changes.
      */
-    const handlersRef = useRef({ handleDissolve, interactionLocked });
+    const handlersRef = useRef({ handleDissolve, handleDeleteComponent, interactionLocked });
     useEffect(() => {
-        handlersRef.current = { handleDissolve, interactionLocked };
-    }, [handleDissolve, interactionLocked]);
+        handlersRef.current = { handleDissolve, handleDeleteComponent, interactionLocked };
+    }, [handleDissolve, handleDeleteComponent, interactionLocked]);
 
     const nodeTypes = useMemo<NodeTypes>(() => ({
         blueprintGroup: (nodeProps: NodeProps) => (
@@ -291,6 +395,9 @@ function TrayCanvas({
             <BlueprintComponentNode
                 {...(nodeProps as NodeProps<nodeType>)}
                 attachable={!handlersRef.current.interactionLocked}
+                onDelete={handlersRef.current.interactionLocked
+                    ? undefined
+                    : handlersRef.current.handleDeleteComponent}
             />
         ),
     }), []);
@@ -328,15 +435,49 @@ function TrayCanvas({
             ) : null}
 
             {!interactionLocked ? (
-                <button
-                    type="button"
-                    className={styles.addComponent}
-                    onClick={handleAddComponent}
-                    title="Add a component of your own"
-                >
-                    <FontAwesomeIcon icon={faCircle} />
-                    <span>Component</span>
-                </button>
+                <div className={styles.canvasActions}>
+                    {/*
+                      * A component of the researcher's own, dragged in rather than clicked into
+                      * being.
+                      *
+                      * Every other way a component arrives in the tray is a drag that lands where it
+                      * was dropped — a paper, a search result, a whole system. Making this one a
+                      * click meant the one component the researcher authored themselves was the one
+                      * they could not place; it appeared in the middle of the viewport and then had
+                      * to be moved. The click is kept as the keyboard-reachable path, and now spawns
+                      * the same node.
+                      */}
+                    <button
+                        type="button"
+                        className={styles.addComponent}
+                        draggable
+                        onClick={handleAddComponent}
+                        onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = "copy";
+                            event.dataTransfer.setData(BLUEPRINT_NEW_COMPONENT_MIME, "new-component");
+                            event.dataTransfer.setData("text/plain", "New component");
+                        }}
+                        title="Drag onto the tray to place a component of your own"
+                    >
+                        <FontAwesomeIcon icon={faCircle} />
+                        <span>Component</span>
+                    </button>
+
+                    {/* Disabled rather than hidden on an empty tray, so the control does not appear
+                        and disappear as components come and go. */}
+                    <button
+                        type="button"
+                        className={styles.clearTray}
+                        onClick={handleClear}
+                        disabled={isEmpty}
+                        title={isEmpty
+                            ? "The tray is already empty"
+                            : "Remove every blueprint item from the study"}
+                    >
+                        <FontAwesomeIcon icon={faTrashCan} />
+                        <span>Clear</span>
+                    </button>
+                </div>
             ) : null}
         </div>
     );
@@ -350,15 +491,26 @@ export const BlueprintTray = memo(function BlueprintTray({
     requirementCards,
     selectedRequirementCards,
     resolveActionTimestamp,
+    onDeleteNodes,
 }: BlueprintTrayProps) {
     const [size, setSize] = useState({ width: DEFAULT_WIDTH_PX, height: DEFAULT_HEIGHT_PX });
     const resizeRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+    const search = useBlueprintSearch({ requirementCards, selectedRequirementCards });
+
+    const resultsOpen = search.mode !== null;
+    const resultsWidthPx = resultsOpen ? RESULTS_COLUMN_TOTAL_PX : 0;
 
     /**
      * Resize by pointer capture rather than by a library — the project has no drag or resize
      * dependency and this is the only place that wants one. Capture on the grip means the pointer
-     * keeps reporting to it even when it leaves the 12px target, which is what stops a fast drag
+     * keeps reporting to it even when it leaves the 16px target, which is what stops a fast drag
      * dropping the gesture halfway.
+     *
+     * The grip is the **top right** corner because the panel is anchored bottom left: the two edges
+     * that actually move when it is resized are the top one and the right one, so those are the ones
+     * the pointer should be holding. On the bottom-right corner it was pinned against the edge the
+     * panel grows away from, and dragging *down* made the panel taller by pushing its top up — the
+     * grip and the panel moving in opposite directions.
      */
     const handleResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         event.preventDefault();
@@ -369,12 +521,16 @@ export const BlueprintTray = memo(function BlueprintTray({
     const handleResizePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         const start = resizeRef.current;
         if (!start) return;
-        const maxHeight = window.innerHeight - bottomOffsetPx - 96;
+        const maxHeight = window.innerHeight - bottomOffsetPx - TOP_CLEARANCE_PX;
+        // The results column is already part of the rendered width, so the cap on the graph half has
+        // to leave room for it — otherwise a search could push the panel off the right of the screen.
+        const maxWidth = Math.max(MIN_WIDTH_PX, window.innerWidth - 80 - resultsWidthPx);
         setSize({
-            width: Math.max(MIN_WIDTH_PX, Math.min(start.width + (event.clientX - start.x), window.innerWidth - 80)),
-            height: Math.max(MIN_HEIGHT_PX, Math.min(start.height + (event.clientY - start.y), Math.max(MIN_HEIGHT_PX, maxHeight))),
+            width: Math.max(MIN_WIDTH_PX, Math.min(start.width + (event.clientX - start.x), maxWidth)),
+            // Upward: the bottom edge is pinned, so dragging the top grip up is what makes it taller.
+            height: Math.max(MIN_HEIGHT_PX, Math.min(start.height - (event.clientY - start.y), Math.max(MIN_HEIGHT_PX, maxHeight))),
         });
-    }, [bottomOffsetPx]);
+    }, [bottomOffsetPx, resultsWidthPx]);
 
     const handleResizePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         resizeRef.current = null;
@@ -388,8 +544,12 @@ export const BlueprintTray = memo(function BlueprintTray({
             className={`${styles.root} ${open ? "" : styles.rootClosed}`}
             style={{
                 bottom: bottomOffsetPx + 12,
-                width: size.width,
+                width: size.width + resultsWidthPx,
                 height: size.height,
+                // The resize gesture clamps against the viewport it happened in; shrinking the window
+                // afterwards leaves `size.height` stale, so the ceiling is restated here where the
+                // browser re-evaluates it on every resize.
+                maxHeight: `calc(100vh - ${bottomOffsetPx + 12 + TOP_CLEARANCE_PX}px)`,
                 // Closed, it is translated away rather than unmounted, so the tray's viewport and the
                 // search results survive a close/open cycle. `content-visibility` keeps that free:
                 // the whole subtree is skipped for layout, style and paint while it is off-screen.
@@ -399,7 +559,7 @@ export const BlueprintTray = memo(function BlueprintTray({
         >
             <header className={styles.header}>
                 <FontAwesomeIcon icon={faDiagramProject} className={styles.headerIcon} />
-                <h2 className={styles.title}>Blueprint tray</h2>
+                <h2 className={styles.title}>Blueprint</h2>
                 <button
                     type="button"
                     className={styles.collapse}
@@ -411,18 +571,21 @@ export const BlueprintTray = memo(function BlueprintTray({
                 </button>
             </header>
 
-            <BlueprintSearchPanel
-                requirementCards={requirementCards}
-                selectedRequirementCards={selectedRequirementCards}
-                disabled={interactionLocked}
-            />
+            <div className={styles.body}>
+                <div className={styles.main}>
+                    <BlueprintSearchActions search={search} disabled={interactionLocked} />
 
-            <ReactFlowProvider>
-                <TrayCanvas
-                    interactionLocked={interactionLocked}
-                    resolveActionTimestamp={resolveActionTimestamp}
-                />
-            </ReactFlowProvider>
+                    <ReactFlowProvider>
+                        <TrayCanvas
+                            interactionLocked={interactionLocked}
+                            resolveActionTimestamp={resolveActionTimestamp}
+                            onDeleteNodes={onDeleteNodes}
+                        />
+                    </ReactFlowProvider>
+                </div>
+
+                <BlueprintSearchResults search={search} />
+            </div>
 
             <div
                 className={styles.resizeGrip}
@@ -436,4 +599,3 @@ export const BlueprintTray = memo(function BlueprintTray({
         </aside>
     );
 });
-

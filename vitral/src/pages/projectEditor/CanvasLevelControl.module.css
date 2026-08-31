@@ -160,3 +160,60 @@
 	font-size: 12px;
 	opacity: 0.75;
 }
+
+/*
+ * The reference box. Styled as the panel's other pills are, so it reads as a control on the level
+ * panel rather than as a search field that wandered in from somewhere else.
+ */
+.codeInput {
+	flex: 1;
+	min-width: 0;
+	border: 1px solid #e0e0e0;
+	background: #f4f4f4;
+	border-radius: 999px;
+	padding: 6px 10px;
+	font-size: 12px;
+	font-weight: 600;
+	color: #3a3a3a;
+	/* Codes are short and upper-case; a monospaced field makes O and 0 tellable apart, which is the
+	   whole reason `parseLocatorCode` repairs the digit twins in the first place. */
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	text-transform: uppercase;
+	outline: none;
+}
+
+.codeInput::placeholder {
+	color: #9a9a9a;
+	font-family: inherit;
+	text-transform: none;
+	font-weight: 500;
+}
+
+.codeInput:focus {
+	border-color: #5bbad6;
+	background: #ffffff;
+}
+
+.codeGo {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: none;
+	background: #f4f4f4;
+	border-radius: 999px;
+	width: 28px;
+	padding: 0;
+	font-size: 11px;
+	color: #5a5a5a;
+	cursor: pointer;
+}
+
+.codeGo:hover:not(:disabled) {
+	background: #e8e8e8;
+	color: #2f2f2f;
+}
+
+.codeGo:disabled {
+	opacity: 0.4;
+	cursor: default;
+}

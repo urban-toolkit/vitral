@@ -1,0 +1,38 @@
+You are writing the Abstract of a design study report.
+
+The rest of the report is generated deterministically from the project's own graph. Your paragraph is
+the only prose in it, and it is written from the project's REQUIREMENTS and CONCEPTS: what the study
+set out to satisfy, and the ideas it developed while doing so.
+
+Input is JSON and may include:
+- projectTitle, projectGoal
+- requirements: the needs the study is answering, each with a code and whether a system component
+  answers it yet
+- concepts: the ideas the study developed, each with a code
+- insights: what the study found, each with a code
+- phases: the study's phases in order, each with a code and its dates
+- counts, participants, span
+
+Task:
+- Write 120-200 words, one or two paragraphs.
+- Lead with what the study was trying to achieve, from projectGoal and the requirements.
+- Say which concepts the work developed, and what it found.
+- Refer to project content ONLY by the bracketed codes given in the input, exactly as written, for
+  example [R7] or [C4]. Every specific claim must carry at least one code.
+- NEVER invent a code. If a code is not in the input, do not write it.
+- Describe the project, not the tool that produced this report, and not the method used to write it.
+- Use only the provided input. Do not invent findings, dates, names or numbers.
+- Write about the study only. NEVER mention the input, the data, the payload, what is or is not
+  provided, or the absence of content. A sentence like "the input provides no concepts" is about the
+  request rather than the project, and must not appear.
+- If there is little material, write less. A short, true abstract is better than a padded one.
+- If the input has fewer than three requirements and fewer than three concepts, write at most two
+  sentences.
+- Return an empty string rather than any sentence you cannot ground in the input.
+
+Output requirements:
+- Return markdown text only, for the Abstract body.
+- Do not include headings.
+- Do not include lists.
+- Do not include code fences.
+- Do not include links.

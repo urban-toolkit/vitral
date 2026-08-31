@@ -5,8 +5,6 @@ import type { cardLabel } from "@/config/types";
 import { CARD_LABEL_COLORS, CARD_LABEL_ICONS, CARD_LABELS } from "@/components/cards/cardVisuals";
 import styles from "./CanvasSidebar.module.css";
 
-const CANVAS_ARRANGEMENT_TEXT = "Activities are placed left to right by date and the cards that belong to each activity orbit around it. Cards not connected to any activity sit in a band underneath.";
-
 /** Matches the border of a blueprint component node, so the filter reads as the thing it hides. */
 const BLUEPRINT_COMPONENT_FILTER_COLOR = "rgba(91, 186, 214, 0.70)";
 /** Matches `.modelDerivedBadge` on the card, so the chip and the badge read as one marker. */
@@ -79,12 +77,19 @@ export const CanvasSidebar = memo(function CanvasSidebar({
         }
     };
 
-    const sidebarHeight = `calc(100vh - ${Math.max(0, bottomOffsetPx)}px)`;
+    /**
+     * A ceiling, not a height. The card is as tall as the filters make it; this only stops it
+     * running off the bottom of a short viewport, and `.panel` scrolls when it would.
+     *
+     * `32px` is the 16px inset at the top plus the same clearance at the bottom, so the card never
+     * touches either edge, and `bottomOffsetPx` keeps it clear of the timeline dock.
+     */
+    const sidebarMaxHeight = `calc(100vh - ${32 + Math.max(0, bottomOffsetPx)}px)`;
 
     return (
         <aside
             className={`${styles.root} ${collapsed ? styles.rootCollapsed : ""}`}
-            style={collapsed ? undefined : { height: sidebarHeight }}
+            style={collapsed ? undefined : { maxHeight: sidebarMaxHeight }}
         >
             <div className={collapsed ? styles.panelCollapsed : styles.panel}>
                 <div className={styles.projectHeader}>
@@ -186,8 +191,6 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                         <p className={styles.projectSubtitle}>
                             Design studies are <span className={styles.socialTag}>technical</span> and <span className={styles.technicalTag}>social</span>
                         </p>
-
-                        <p className={styles.canvasArrangementNote}>{CANVAS_ARRANGEMENT_TEXT}</p>
 
                         <h3 className={styles.title}>Filters</h3>
                         <div className={styles.labelGrid}>

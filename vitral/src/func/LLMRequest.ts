@@ -964,39 +964,7 @@ export async function requestGoalMilestonesLLM(context: GoalMilestonesContext): 
     return requestMilestonesByPrompt("GoalMilestones", context, fallbackIso, context.llmModel);
 }
 
-function normalizeMarkdownSection(rawOutput: string): string {
-    const trimmed = String(rawOutput ?? "").trim();
-    if (!trimmed) return "";
 
-    const fenced = trimmed.match(/^```(?:markdown|md)?\s*([\s\S]*?)\s*```$/i);
-    if (fenced?.[1]) return fenced[1].trim();
-    return trimmed;
-}
-
-export async function requestMarkdownReportSectionLLM(
-    prompt: string,
-    payload: unknown,
-    llmModel?: string
-): Promise<string> {
-    const response = await fetch(API_BASE_URL + "/llm/chat", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            input: JSON.stringify(payload),
-            prompt,
-            model: resolveLlmModel(llmModel),
-        }),
-    });
-
-    if (!response.ok) {
-        return "";
-    }
-
-    const data = await response.json();
-    return normalizeMarkdownSection(String(data.output ?? ""));
-}
 
 type RepoTreeNode = {
     name: string;
@@ -1494,4 +1462,42 @@ export async function requestSystemScreenshotZonesLLM(
         context.imageHeight,
         new Set(repoTree.filePaths)
     );
+}
+
+/**
+ * The report's one model call: a paragraph of framing over figures the document already contains.
+ *
+ * Everything else in the exported report is computed from the project graph, which is the whole point
+ * — a reviewer objected that handing a provenance report to a model is fraught, and they were right
+ * about the version where seven sections of prose *were* the document. What survives is this, written
+ * from the requirements and concepts and validated before it is spliced in: `acceptAbstract` refuses
+ * the whole paragraph if it cites a code the payload never contained, because a fabricated citation is
+ * the one failure a reader cannot check.
+ *
+ * Throws rather than returning `""`. The caller decides what an unavailable abstract means, and the
+ * old report's habit of turning every failure into an empty string is how a silent placeholder ended
+ * up standing in for seven sections at once.
+ */
+export async function requestReportAbstractLLM(
+    payload: unknown,
+    llmModel?: string,
+    signal?: AbortSignal,
+): Promise<string> {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            input: JSON.stringify(payload),
+            prompt: "ReportAbstract",
+            model: resolveLlmModel(llmModel),
+        }),
+        signal: withDeadline(signal, LLM_REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+        throw new Error(await readLlmErrorMessage(response));
+    }
+
+    const data = await response.json();
+    return String(data.output ?? "");
 }

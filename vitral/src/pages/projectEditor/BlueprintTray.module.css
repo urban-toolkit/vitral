@@ -25,6 +25,10 @@
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-radius: var(--radius-lg, 12px);
     box-shadow: var(--shadow-lg, 0 10px 26px rgba(0, 0, 0, 0.16));
+    /* A narrow window still gets a whole tray: opening a search adds the result column's width, and
+       on a small screen that sum can exceed the viewport. `.main` carries `min-width: 0`, so the
+       graph half gives up the difference rather than the panel running off the right edge. */
+    max-width: calc(100vw - 24px);
 }
 
 /*
@@ -41,6 +45,31 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    /* Clearance for the resize grip, which owns the top-right corner. */
+    padding-right: 16px;
+}
+
+/*
+ * The graph and the result list, side by side.
+ *
+ * A row rather than a column so a search never shortens the surface its results are about to be
+ * dragged into. The panel widens by the column's width instead — see `RESULTS_COLUMN_TOTAL_PX`.
+ */
+.body {
+    display: flex;
+    flex: 1;
+    gap: 10px;
+    min-height: 0;
+}
+
+/* The search buttons and the graph. `min-*: 0` so the graph shrinks rather than pushing the column. */
+.main {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
 }
 
 .headerIcon {
@@ -66,7 +95,7 @@
     cursor: pointer;
 }
 
-/* The graph takes whatever the search panel above it does not. */
+/* The graph takes whatever the search buttons above it do not. */
 .canvasWrap {
     position: relative;
     flex: 1;
@@ -104,10 +133,18 @@
     color: #5a6477;
 }
 
-.addComponent {
+/* The tray's own controls, over the bottom-left of the graph where they cover least of it. */
+.canvasActions {
     position: absolute;
     left: 8px;
     bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.addComponent,
+.clearTray {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -120,31 +157,66 @@
     cursor: pointer;
 }
 
+/* It is dragged onto the spot the component should occupy, so it reads as a handle. */
+.addComponent {
+    cursor: grab;
+}
+
 .addComponent:hover {
     border-color: #5bbad6;
 }
 
+.addComponent:active {
+    cursor: grabbing;
+}
+
+/* Destructive, so it borrows the delete colour rather than the tray's accent on hover. */
+.clearTray:hover:not(:disabled) {
+    border-color: #c0392b;
+    color: #c0392b;
+}
+
+.clearTray:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
 /*
- * Resize grip. Hand-rolled on pointer capture — this is the only resizable panel in the app, and
- * adding a drag library for it would be the project's first.
+ * Resize grip, on the top-right corner. Hand-rolled on pointer capture — this is the only resizable
+ * panel in the app, and adding a drag library for it would be the project's first.
+ *
+ * Top right, not bottom right: the panel is anchored to the bottom-left corner, so those are the two
+ * edges that move when it is resized. On the bottom corner the grip sat on the edge the panel grows
+ * away from, and dragging down made it taller — grip and panel travelling opposite ways.
  */
 .resizeGrip {
     position: absolute;
     right: 0;
-    bottom: 0;
-    width: 16px;
-    height: 16px;
-    cursor: nwse-resize;
+    top: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nesw-resize;
     touch-action: none;
     background: linear-gradient(
-        135deg,
+        45deg,
         transparent 0 50%,
         rgba(47, 70, 106, 0.35) 50% 60%,
         transparent 60% 72%,
         rgba(47, 70, 106, 0.35) 72% 82%,
         transparent 82%
     );
-    border-bottom-right-radius: var(--radius-lg, 12px);
+    border-top-right-radius: var(--radius-lg, 12px);
+}
+
+.resizeGrip:hover {
+    background: linear-gradient(
+        45deg,
+        transparent 0 50%,
+        rgba(47, 70, 106, 0.65) 50% 60%,
+        transparent 60% 72%,
+        rgba(47, 70, 106, 0.65) 72% 82%,
+        transparent 82%
+    );
 }
 
 /* The toggle that brings the tray back, where the tray's own header sits. */

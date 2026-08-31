@@ -1,32 +1,40 @@
+/*
+ * A floating card, not a full-height rail.
+ *
+ * It used to be flush to the left edge and `calc(100vh - dock)` tall, which made it a wall the
+ * canvas ended at rather than a panel over it: the filters are a dozen chips and the rest of that
+ * height was empty white. So it sits inset from the corner like its own collapsed state and takes
+ * only the height its content needs, capped by `max-height` so a short viewport scrolls the panel
+ * instead of running the card off the bottom of the screen.
+ */
 .root {
     position: fixed;
-    left: 0;
-    top: 0;
+    left: 16px;
+    top: 16px;
     z-index: 12;
     display: flex;
     align-items: stretch;
     /* Opaque, and no `backdrop-filter`: this panel is fixed over the canvas, so a blur here made
-       the browser read back and re-blur a full-height strip on every pan and zoom frame. Over the
+       the browser read back and re-blur the whole card on every pan and zoom frame. Over the
        flat white canvas at 0.92 alpha the blur was invisible anyway. */
     background: #ffffff;
     border: 1px solid rgba(0, 0, 0, 0.08);
-    border-left: none;
-    border-radius: 0 12px 12px 0;
+    border-radius: 12px;
     box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
     overflow: visible;
 }
 
+/* Collapsed it is a handful of buttons — never tall enough to need the cap or the scroll. */
 .rootCollapsed {
-    left: 16px;
-    top: 16px;
-    height: auto;
-    border-left: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 12px;
+    max-height: none;
 }
 
 .panel {
     width: 320px;
     min-width: 320px;
+    /* `min-height: 0` is what lets the panel scroll rather than stretch the card past its cap:
+       a flex item's default `min-height: auto` refuses to shrink below its content. */
+    min-height: 0;
     padding: 14px 12px;
     display: flex;
     flex-direction: column;
@@ -156,13 +164,6 @@
 .projectSubtitle {
     margin: 4px 0 4px;
     font-size: var(--font-size-sm);
-    color: var(--subtitle-color);
-}
-
-.canvasArrangementNote {
-    margin: 10px 0 0;
-    font-size: var(--font-size-xs);
-    line-height: 1.45;
     color: var(--subtitle-color);
 }
 

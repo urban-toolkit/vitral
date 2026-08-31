@@ -18,9 +18,29 @@ import { jaccardOverlap, tokenize } from "@/utils/textTokens";
 export type ActivityCluster = {
     /** Stable across renders: keyed to the earliest member, which only changes if that member does. */
     id: string;
+    /**
+     * The activity this phase is named by, as a **persisted node id**.
+     *
+     * `id` is `vz:c:<this>`, so the two have always carried the same fact — but only one of them is
+     * safe to hand out. `id` is a synthetic id the lens invents, and `isSyntheticCanvasId` exists to
+     * keep those out of the store; anything outside the lens that wants to *name* a phase needs the
+     * node id on its own. A phase reference is defined as "the phase containing this activity", and
+     * that definition is only writable down because this field exists.
+     *
+     * What it does not promise: which *other* activities are in the phase. The segmentation is
+     * recomputed from time gaps against content affinity, so adding one card can move every
+     * boundary. The anchor survives that; the extent does not.
+     */
+    anchorActivityId: string;
     label: string;
     /** The timeline stage covering this phase, if exactly one phase falls inside it. */
     stageLabel: string | null;
+    /**
+     * Where `label` came from. Recorded rather than inferred: a reader of a phase name deserves to
+     * know whether the project said it or the app counted, and the alternative is downstream code
+     * matching `/^Phase \d+$/` against a label the user could legitimately have typed themselves.
+     */
+    labelSource: "stage" | "activity" | "ordinal";
     memberActivityIds: string[];
     startAt: string | null;
     endAt: string | null;
@@ -229,11 +249,13 @@ export function buildActivityClusters(params: {
 
         clusters.push({
             id: `vz:c:${members[0].id}`,
+            anchorActivityId: members[0].id,
             // Provisional. Both candidate labels are kept so the pass below can reject a stage name
             // that would end up on more than one phase. An ordinal is the last resort rather than
             // "Untitled": with nothing to borrow, two phases must at least be told apart, and the
             // glyph already shows the date range that says which is which.
             label: borrowedTitle !== "" ? borrowedTitle : `Phase ${clusters.length + 1}`,
+            labelSource: borrowedTitle !== "" ? "activity" : "ordinal",
             stageLabel: stageLabelFor(stages, startAt, endAt),
             memberActivityIds: members.map((activity) => activity.id),
             startAt,
@@ -262,6 +284,7 @@ export function buildActivityClusters(params: {
     for (const cluster of clusters) {
         if (cluster.stageLabel && stageUse.get(cluster.stageLabel) === 1) {
             cluster.label = cluster.stageLabel;
+            cluster.labelSource = "stage";
         }
     }
 

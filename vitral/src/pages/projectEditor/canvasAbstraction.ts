@@ -54,8 +54,8 @@ const PHASE_GLYPH_SIZE = { width: 360, height: 300 };
 const ACTIVITY_GLYPH_SIZE = { width: 240, height: 210 };
 
 /** How many cards a glyph gives up to the canvas rather than swallowing. */
-const PHASE_PROMOTED_PER_LABEL = 2;
-const ACTIVITY_PROMOTED_MAX = 3;
+export const PHASE_PROMOTED_PER_LABEL = 2;
+export const ACTIVITY_PROMOTED_MAX = 3;
 
 /** Below this a collapsed band of loose cards saves nothing and costs a glyph. */
 const UNASSIGNED_GLYPH_MIN = 3;
@@ -72,15 +72,21 @@ const BLUEPRINT_LABELS = new Set(["blueprint", "blueprint_group", "blueprint_com
  * where the reader is looking for what the work was about. So it is stripped out of the label
  * counts, out of the promotion pool and out of the body, and collected into one `participants`
  * footnote instead — which is what a name actually answers.
+ *
+ * This rule, and the promotion rule below it, are **exported** because the deterministic report asks
+ * the same questions of the same graph. A document has no zoom, so it never calls
+ * `buildAbstractedGraph` — its glyph counts describe the folded remainder and would undercount every
+ * phase — but it must promote exactly what Overview and Threads promote, or the two would disagree
+ * about what the study is organised around. One copy of the rule, two readers of it.
  */
-const PERSON_LABEL = "person";
+export const PERSON_LABEL = "person";
 
-function isPerson(node: nodeType): boolean {
+export function isPerson(node: nodeType): boolean {
     return nodeLabelOf(node) === PERSON_LABEL;
 }
 
 /** Distinct participant names among the cards a glyph swallowed, in a stable order. */
-function collectParticipants(nodes: nodeType[]): string[] {
+export function collectParticipants(nodes: nodeType[]): string[] {
     const names = new Set<string>();
     for (const node of nodes) {
         if (!isPerson(node)) continue;
@@ -152,7 +158,7 @@ function effectiveLevelForActivity(
     return level;
 }
 
-function countLabels(nodes: nodeType[]): Array<{ label: string; count: number }> {
+export function countLabels(nodes: nodeType[]): Array<{ label: string; count: number }> {
     const counts = new Map<string, number>();
     for (const node of nodes) {
         const label = nodeLabelOf(node);
@@ -166,7 +172,7 @@ function countLabels(nodes: nodeType[]): Array<{ label: string; count: number }>
 }
 
 /** The strongest cards of the given labels, best first. People are never candidates. */
-function pickTop(
+export function pickTop(
     candidates: nodeType[],
     score: Map<string, number>,
     labels: Set<string> | null,

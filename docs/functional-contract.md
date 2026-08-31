@@ -212,7 +212,11 @@ Covered areas:
 ### Contract
 - Export/import project as `.vi` binary.
 - Imported `.vi` opens in review-only mode.
-- Export project as markdown report (LLM generated sections).
+- Export project as a **deterministic** markdown report, generated from the Focus+Context
+  aggregations. Machine-written prose is limited to an optional abstract and is visibly marked.
+- Every artifact the report names carries a short code (`P1` phase, `A3` thread, `R7`/`I2`/`C4`/`O5`/`H1`
+  card, `B1` component, `F2` file, `S1` stage, `E1` milestone). The letter fixes the level of
+  abstraction; the code resolves to an anchor in the document and to a canvas viewpoint.
 - Export/import project setup/settings as JSON.
 
 ### `.vi` Payload Contract (Current)
@@ -265,7 +269,8 @@ Covered areas:
 | Panoramic visual evolution | Screenshot timeline series, zone/subtrack selection state | Open panoramic mode for whole system and subtrack focus; verify expected frame filtering and overlays. |
 | `.vi` export | Document state, revisions, files, embeddings, GitHub events | Export `.vi`, inspect size sanity, re-import, and verify project opens in review mode with expected data. |
 | `.vi` import review-only | Imported doc metadata (`review_only`) + editor gating | Import `.vi`; confirm editing actions are disabled and review badge/banner appears. |
-| Markdown export | LLM report prompts, section generation, download | Export markdown and verify required sections are present and non-empty. |
+| Markdown export | Focus+Context aggregations, locator codes, provenance tallies, download | Export markdown twice and verify the bytes are identical; verify Provenance names removed and set-aside cards; verify every cited code resolves to a heading. |
+| Locator codes | Node/edge ids, `__history`, clustering anchors | Add a card while the playhead is scrubbed back, correct a card's date, and soft-delete a card; verify no existing code changes what it points at. |
 | JSON settings import/export | Setup config schema (participants/timeline/etc.) | Export JSON, import into new setup, and verify functional equivalence. |
 | Playback visibility over time | Node/edge created/deleted timestamps, projection logic | Move playhead across key timestamps; verify entities appear/disappear exactly at boundaries. |
 | Search/chat resilience without vectors | Embeddings table presence/error fallback path | Simulate missing/failing embeddings and confirm query/chat still return ranked results. |

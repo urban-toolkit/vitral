@@ -7,21 +7,11 @@ import { ProjectSetupPage } from "@/pages/ProjectSetupPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SessionProvider } from "@/auth/SessionProvider";
 import { RequireSession } from "@/auth/RequireSession";
+import { resolveRouterBasename } from "@/routing";
 
 /** Every project screen sits behind the session gate; `/login` is the only way in without one. */
 function guarded(element: React.ReactNode) {
   return <RequireSession>{element}</RequireSession>;
-}
-
-function resolveRouterBasename(): string {
-  const baseUrl = String(import.meta.env.BASE_URL ?? "/").trim();
-  if (baseUrl === "" || baseUrl === "/") return "/";
-  const withoutTrailingSlash = baseUrl.endsWith("/")
-    ? baseUrl.slice(0, -1)
-    : baseUrl;
-  return withoutTrailingSlash.startsWith("/")
-    ? withoutTrailingSlash
-    : `/${withoutTrailingSlash}`;
 }
 
 const router = createBrowserRouter([

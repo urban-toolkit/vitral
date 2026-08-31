@@ -20,7 +20,7 @@ import {
     subscribe as subscribeHighlight,
 } from "@/store/canvasHighlightStore";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faArrowUpRightFromSquare } from "@fortawesome/free-solid-svg-icons";
+import { faArrowUpRightFromSquare, faXmark } from "@fortawesome/free-solid-svg-icons";
 
 import {
     BLUEPRINT_ATTACH_MIME,
@@ -32,6 +32,15 @@ type BlueprintComponentNodeProps = NodeProps<nodeType> & {
     onRenameTitle?: (nodeId: string, title: string) => void;
     onAttachCodebaseFilePath?: (nodeId: string, filePath: string) => void;
     onDetachCodebaseFilePath?: (nodeId: string, filePath: string) => void;
+    /**
+     * Removes the component from the study, on whichever surface it was clicked.
+     *
+     * One callback for both canvases, and it is the page's `softDeleteNode` on each — a component
+     * exists once in `flow.nodes`, so "delete on the canvas" and "delete in the tray" are not two
+     * operations to reconcile. Absent, the button is not drawn: that is how review mode, guests and
+     * the published-project view opt out.
+     */
+    onDelete?: (nodeId: string) => void;
     /**
      * Renders the grip that is dragged onto a requirement card to say this component answers it.
      * Tray only: on the canvas the component is already answering something.
@@ -239,6 +248,31 @@ function BlueprintComponentNodeImpl(props: BlueprintComponentNodeProps) {
                 )}
             </div>
 
+            {props.onDelete ? (
+                /*
+                 * Delete, opposite the attach grip and revealed the same way.
+                 *
+                 * Hidden until the component is hovered, for the reason the attach grip and the
+                 * group's dissolve button are: a tray holding forty components should read as a
+                 * diagram, not as forty controls. `nodrag` keeps React Flow from reading the
+                 * pointer-down as the start of a node drag, and `stopPropagation` keeps the click
+                 * off the circle's rename handler.
+                 */
+                <button
+                    type="button"
+                    className={`${classes.deleteButton} nodrag`}
+                    title={`Delete "${rawTitle}"`}
+                    aria-label={`Delete ${rawTitle}`}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        props.onDelete?.(props.id);
+                    }}
+                >
+                    <FontAwesomeIcon icon={faXmark} />
+                </button>
+            ) : null}
+
             {props.attachable ? (
                 /*
                  * The attach gesture, as a grip rather than as the whole node.
@@ -260,7 +294,10 @@ function BlueprintComponentNodeImpl(props: BlueprintComponentNodeProps) {
                     onMouseDown={(event) => event.stopPropagation()}
                     onDragStart={(event) => {
                         event.stopPropagation();
-                        event.dataTransfer.effectAllowed = "link";
+                        // `copyLink`, not `link`: a target that answers `dropEffect = "copy"` — which
+                        // is what every other drop target in the app answers — would otherwise
+                        // resolve the operation to "none" and the browser would never fire `drop`.
+                        event.dataTransfer.effectAllowed = "copyLink";
                         event.dataTransfer.setData(
                             BLUEPRINT_ATTACH_MIME,
                             JSON.stringify(buildBlueprintAttachPayload(props.id, rawTitle)),

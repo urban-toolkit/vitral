@@ -1,14 +1,11 @@
-import { useCallback, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronDown, faChevronRight, faCircleInfo } from "@fortawesome/free-solid-svg-icons";
-
 import {
-    querySystemComponents,
-    querySystemPapers,
-    type QuerySystemComponentsResult,
-    type QuerySystemPapersResult,
-    type SystemPaperQueryCard,
-} from "@/api/stateApi";
+    faChevronDown,
+    faChevronRight,
+    faCircleInfo,
+    faXmark,
+} from "@fortawesome/free-solid-svg-icons";
+
 import {
     BLUEPRINT_COMPONENTS_DRAG_MIME,
     BLUEPRINT_DRAG_MIME,
@@ -17,31 +14,17 @@ import {
 } from "@/components/blueprint/blueprintDnD";
 import { SystemPaperHoverPreview } from "@/components/blueprint/SystemPaperThumbnail";
 import { useSystemPaperPreview } from "@/components/blueprint/useSystemPaperPreview";
+import type { BlueprintSearch } from "@/components/blueprint/useBlueprintSearch";
 import styles from "./BlueprintSearchPanel.module.css";
 
 /**
- * Searching the Visual Analytics literature, at two granularities.
+ * The two halves of the literature search, as two components over one `useBlueprintSearch`.
  *
- * The two modes answer different questions and are deliberately two buttons rather than a toggle,
- * because the input differs as much as the output:
- *
- * - **Blueprints** takes *every* requirement in the project and asks which published system covers
- *   them. The answer is a whole paper, and what you do with it is drag its structure into the tray.
- * - **Components** takes the requirements the researcher **selected on the canvas** and asks which
- *   individual blocks, from anywhere in the corpus, answer those. The answer is a blended list from
- *   several papers, and what you do with it is take the pieces.
- *
- * A toggle would imply one search with a display option. It is two searches, over two corpora, with
- * two different scopes — and the selection requirement is only meaningful for one of them.
+ * They were one panel stacked above the tray's graph, which meant every search shortened the
+ * surface the results were about to be dragged into — the list and the canvas competing for the
+ * same height budget. Splitting them lets the tray keep the buttons where the graph starts and put
+ * the results in a column beside it, so a search widens the tray instead of squeezing it.
  */
-
-type BlueprintSearchPanelProps = {
-    /** Every live, relevant requirement card. Scopes the blueprint search. */
-    requirementCards: SystemPaperQueryCard[];
-    /** The requirement cards selected on the canvas. Scopes the component search. */
-    selectedRequirementCards: SystemPaperQueryCard[];
-    disabled?: boolean;
-};
 
 function truncate(text: string, maxChars: number): string {
     if (!text) return "";
@@ -49,106 +32,86 @@ function truncate(text: string, maxChars: number): string {
     return `${text.slice(0, Math.max(1, maxChars - 1))}...`;
 }
 
-type Mode = "paper" | "component";
-
-export function BlueprintSearchPanel({
-    requirementCards,
-    selectedRequirementCards,
+/** The two search buttons. Sits above the tray canvas, at its full width. */
+export function BlueprintSearchActions({
+    search,
     disabled = false,
-}: BlueprintSearchPanelProps) {
-    const [mode, setMode] = useState<Mode | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [paperResults, setPaperResults] = useState<QuerySystemPapersResult[]>([]);
-    const [componentResults, setComponentResults] = useState<QuerySystemComponentsResult[]>([]);
-    const [expanded, setExpanded] = useState<string | null>(null);
-    const { preview, track, clearPreview } = useSystemPaperPreview();
-
-    const selectedCount = selectedRequirementCards.length;
-
-    const runBlueprintSearch = useCallback(() => {
-        if (requirementCards.length === 0) {
-            setMode("paper");
-            setPaperResults([]);
-            setError("Add at least one requirement card first.");
-            return;
-        }
-
-        setMode("paper");
-        setLoading(true);
-        setError(null);
-        void (async () => {
-            try {
-                const response = await querySystemPapers({ cards: requirementCards, limit: 5 });
-                setPaperResults(response.results);
-                if (response.results.length === 0) {
-                    setError("No system in the corpus matched these requirements.");
-                }
-            } catch (caught) {
-                setError(caught instanceof Error ? caught.message : "Search failed.");
-                setPaperResults([]);
-            } finally {
-                setLoading(false);
-            }
-        })();
-    }, [requirementCards]);
-
-    const runComponentSearch = useCallback(() => {
-        if (selectedRequirementCards.length === 0) return;
-
-        setMode("component");
-        setLoading(true);
-        setError(null);
-        void (async () => {
-            try {
-                const response = await querySystemComponents({
-                    cards: selectedRequirementCards,
-                    limit: 12,
-                });
-                setComponentResults(response.results);
-                if (response.results.length === 0) {
-                    setError("No component in the corpus matched the selected requirements.");
-                }
-            } catch (caught) {
-                setError(caught instanceof Error ? caught.message : "Search failed.");
-                setComponentResults([]);
-            } finally {
-                setLoading(false);
-            }
-        })();
-    }, [selectedRequirementCards]);
+}: {
+    search: BlueprintSearch;
+    disabled?: boolean;
+}) {
+    const { loading, mode, selectedCount, runBlueprintSearch, runComponentSearch } = search;
 
     return (
-        <div className={styles.root}>
-            <div className={styles.actions}>
-                <button
-                    type="button"
-                    className={`${styles.searchButton} ${mode === "paper" ? styles.searchButtonActive : ""}`}
-                    onClick={runBlueprintSearch}
-                    disabled={disabled || loading}
-                    title="Rank whole systems from the literature against every requirement in the project"
-                >
-                    Find blueprints
-                </button>
-                <button
-                    type="button"
-                    className={`${styles.searchButton} ${mode === "component" ? styles.searchButtonActive : ""}`}
-                    onClick={runComponentSearch}
-                    disabled={disabled || loading || selectedCount === 0}
-                    title={selectedCount === 0
-                        ? "Select one or more requirement cards on the canvas first"
-                        : `Find individual components answering the ${selectedCount} selected requirement${selectedCount === 1 ? "" : "s"}`}
-                >
-                    {selectedCount > 0 ? `Find components (${selectedCount})` : "Find components"}
-                </button>
-                <span className={styles.info}>
-                    <FontAwesomeIcon icon={faCircleInfo} />
-                    <span className={styles.infoTooltip}>
-                        Blueprints rank whole systems against every requirement. Components search the
-                        blocks inside every system, scoped to the requirement cards you have selected
-                        on the canvas. Drag either into the tray.
-                    </span>
+        <div className={styles.actions}>
+            <button
+                type="button"
+                className={`${styles.searchButton} ${mode === "paper" ? styles.searchButtonActive : ""}`}
+                onClick={runBlueprintSearch}
+                disabled={disabled || loading}
+                title="Rank whole systems from the literature against every requirement in the project"
+            >
+                Find blueprints
+            </button>
+            <button
+                type="button"
+                className={`${styles.searchButton} ${mode === "component" ? styles.searchButtonActive : ""}`}
+                onClick={runComponentSearch}
+                disabled={disabled || loading || selectedCount === 0}
+                title={selectedCount === 0
+                    ? "Select one or more requirement cards on the canvas first"
+                    : `Find individual components answering the ${selectedCount} selected requirement${selectedCount === 1 ? "" : "s"}`}
+            >
+                {selectedCount > 0 ? `Find components (${selectedCount})` : "Find components"}
+            </button>
+            <span className={styles.info}>
+                <FontAwesomeIcon icon={faCircleInfo} />
+                <span className={styles.infoTooltip}>
+                    Blueprints rank whole systems against every requirement. Components search the
+                    blocks inside every system, scoped to the requirement cards you have selected
+                    on the canvas. Drag either into the tray.
                 </span>
+            </span>
+        </div>
+    );
+}
+
+/**
+ * The result list, as its own column to the right of the tray canvas.
+ *
+ * Renders nothing at all until a search has been run, so the tray is only as wide as the graph
+ * until there is something to put beside it.
+ */
+export function BlueprintSearchResults({ search }: { search: BlueprintSearch }) {
+    const {
+        mode,
+        loading,
+        error,
+        paperResults,
+        componentResults,
+        expanded,
+        setExpanded,
+        dismiss,
+    } = search;
+    const { preview, track, clearPreview } = useSystemPaperPreview();
+
+    if (mode === null) return null;
+
+    return (
+        <div className={styles.results}>
+            <div className={styles.resultsHeader}>
+                <span className={styles.resultsTitle}>
+                    {mode === "paper" ? "Blueprints" : "Components"}
+                </span>
+                <button
+                    type="button"
+                    className={styles.resultsClose}
+                    onClick={dismiss}
+                    title="Close the results"
+                    aria-label="Close the results"
+                >
+                    <FontAwesomeIcon icon={faXmark} />
+                </button>
             </div>
 
             {loading ? <p className={styles.hint}>Searching...</p> : null}

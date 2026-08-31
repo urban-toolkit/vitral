@@ -5,13 +5,14 @@ import type {
 } from "@/api/stateApi";
 
 /**
- * The three drags blueprint content takes part in, each with its own MIME type.
+ * The four drags blueprint content takes part in, each with its own MIME type.
  *
  * They are separate types rather than one payload with a discriminator because the *drop targets*
  * differ, and a drop target decides whether to accept a drag by looking at `dataTransfer.types`
- * before it can read anything. The tray takes a whole paper or a handful of components; the canvas
- * takes only the attach gesture. One shared type would mean every target accepting every drag and
- * then refusing it after the fact, which is exactly the silent refusal contract 24 exists to stop.
+ * before it can read anything. The tray takes a whole paper, a handful of components, or a blank
+ * one; the canvas takes only the attach gesture. One shared type would mean every target accepting
+ * every drag and then refusing it after the fact, which is exactly the silent refusal contract 24
+ * exists to stop.
  */
 
 /** A whole system paper, dragged from search results into the tray. */
@@ -20,6 +21,12 @@ export const BLUEPRINT_DRAG_MIME = "application/x-vitral-blueprint";
 export const BLUEPRINT_COMPONENTS_DRAG_MIME = "application/x-vitral-blueprint-components";
 /** A component already in the tray, dragged onto a requirement card on the canvas. */
 export const BLUEPRINT_ATTACH_MIME = "application/x-vitral-blueprint-attach";
+/**
+ * A component of the researcher's own, dragged off the tray's Component button onto the spot in the
+ * tray it should occupy. It carries no payload — the drop position *is* the whole message — so the
+ * only thing a target reads is the presence of this type.
+ */
+export const BLUEPRINT_NEW_COMPONENT_MIME = "application/x-vitral-blueprint-new-component";
 
 export type BlueprintDragPayload = {
     fileName: string;

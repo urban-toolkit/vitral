@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { AuthError, type CredentialProblem } from "@/api/authApi";
 import { useSession } from "@/auth/sessionContext";
+import { isSafeInternalPath } from "@/routing";
 // Imported rather than referenced from `public/`, so Vite fingerprints it and resolves it against
 // whatever base path the app is served under — `/vitral/` in production, `/` in dev.
 import logoUrl from "@/assets/logo.png";
@@ -21,7 +22,24 @@ type Mode = "login" | "register";
  */
 export function LoginPage() {
     const navigate = useNavigate();
+    const location = useLocation();
     const { session, signIn, signUp, continueAsGuest } = useSession();
+
+    /**
+     * Where to send them once they are through, which is not always the projects list.
+     *
+     * `RequireSession` records the guarded path it turned away, and until now this screen threw that
+     * away and went to `/projects` regardless — so a link to a particular study, or to one artifact
+     * inside it, died here. That is the whole point of a shared reference: somebody follows a code
+     * from a paper, meets the login screen once, and lands on the thing the code named.
+     *
+     * Checked by `isSafeInternalPath` rather than trusted. Nothing writes `state.from` from a URL
+     * today, but the moment this value became a navigation target it became worth guarding.
+     */
+    const destination = useMemo(() => {
+        const from = (location.state as { from?: unknown } | null)?.from;
+        return isSafeInternalPath(from) ? from : "/projects";
+    }, [location.state]);
 
     const [mode, setMode] = useState<Mode>("login");
     const [username, setUsername] = useState("");
@@ -32,12 +50,14 @@ export function LoginPage() {
     const [problems, setProblems] = useState<CredentialProblem[]>([]);
 
     // Anyone who already has a session has no business on this screen — including someone who
-    // reaches it with the back button after signing in.
+    // reaches it with the back button after signing in. This has to honour `destination` too: a
+    // signed-in reader following a reference link is bounced here for one frame while the session
+    // request settles, and sending them to `/projects` would lose the link they clicked.
     useEffect(() => {
         if (session.status === "user" || session.status === "guest") {
-            navigate("/projects", { replace: true });
+            navigate(destination, { replace: true });
         }
-    }, [session.status, navigate]);
+    }, [session.status, navigate, destination]);
 
     const problemFor = useCallback((field: CredentialProblem["field"]) => (
         problems.find((problem) => problem.field === field)?.message ?? null
@@ -67,7 +87,7 @@ export function LoginPage() {
             } else {
                 await signUp({ username, password, email });
             }
-            navigate("/projects", { replace: true });
+            navigate(destination, { replace: true });
         } catch (caught) {
             if (caught instanceof AuthError) {
                 setError(caught.message);
@@ -79,14 +99,14 @@ export function LoginPage() {
             }
             setSubmitting(false);
         }
-    }, [submitting, mode, signIn, signUp, username, password, email, navigate]);
+    }, [submitting, mode, signIn, signUp, username, password, email, navigate, destination]);
 
     const handleGuest = useCallback(async () => {
         // Awaited: entering guest mode signs the browser out first, and navigating before that
         // lands on the projects page with a cookie the guest is not supposed to have.
         await continueAsGuest();
-        navigate("/projects", { replace: true });
-    }, [continueAsGuest, navigate]);
+        navigate(destination, { replace: true });
+    }, [continueAsGuest, navigate, destination]);
 
     const submitLabel = mode === "login"
         ? (submitting ? "Signing in..." : "Sign in")

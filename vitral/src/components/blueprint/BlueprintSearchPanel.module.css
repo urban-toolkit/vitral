@@ -1,8 +1,48 @@
-.root {
+/*
+ * The results, as a column beside the tray canvas rather than a block above it.
+ *
+ * Fixed width and its own scroll: the tray adds this column's width to its own when a search is
+ * open, so the graph keeps every pixel the researcher resized it to and a long result list scrolls
+ * here instead of shortening the surface it is about to be dragged onto.
+ */
+.results {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    width: 232px;
+    min-width: 232px;
     min-height: 0;
+    padding-left: 10px;
+    border-left: 1px solid var(--color-border, #e2e5ec);
+}
+
+.resultsHeader {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.resultsTitle {
+    flex: 1;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #5a6477;
+}
+
+.resultsClose {
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 3px;
+    cursor: pointer;
+}
+
+.resultsClose:hover {
+    color: #14213d;
 }
 
 .actions {
@@ -77,7 +117,7 @@
     color: #b91c1c;
 }
 
-/* The results share the tray's height budget with the graph, so they scroll rather than push it. */
+/* Takes whatever height the column has left, and scrolls inside it. */
 .list {
     margin: 0;
     padding: 0 4px 0 0;
@@ -85,7 +125,8 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    max-height: 34vh;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
 }
 

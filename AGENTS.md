@@ -252,7 +252,7 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   - **The canvas** draws a `blueprint_component` exactly when it holds an active `tackled in` edge to a requirement that is *itself still on screen*. No group boxes, and no `feeds into` edges: the wiring between components describes the system, not the study.
 - **Why.** The canvas is a temporal graph — activities left to right by `createdAt`, everything else orbiting the activity it belongs to — and a system design has no place on that axis. `activityOrbitLayout` had to exile the whole block to a band 460px below everything, which is exactly what made it read as dislocated. An attached component *does* have a place, beside the requirement it answers, and it now orbits there like any other card (`STRUCTURAL_LABELS` no longer contains `blueprint_component`).
 - **Attach is the edge, and nothing else.** Dragging the grip on a tray component onto a requirement card creates the `tackled in` relation, which is what puts it on the canvas, what mints the dated `BlueprintEvent`, and what removing detaches. One component may answer several requirements; it is one node with several edges, drawn once in the tray and once beside each requirement it answers.
-- **The attach edge is written `requirement -> blueprint_component`, always.** `routes/state.ts` builds the report's blueprint links from card→component rows only ("Enforce directional links only"), so an edge drawn the other way is accepted by the canvas, the timeline and provenance and then silently missing from the markdown report. The relation table is unordered and this gesture always knows which end is which, so it writes the direction that survives. The duplicate check is unordered for the same reason.
+- **The attach edge is written `requirement -> blueprint_component`, always.** `routes/state.ts` builds the *provenance* endpoint's blueprint links from card→component rows only ("Enforce directional links only"), so an edge drawn the other way is accepted by the canvas, the timeline and provenance and then silently missing from the knowledge track. The markdown report reads the graph directly and accepts either direction (`attachedComponentIds`), so it is not affected — an earlier version of this note claimed otherwise. The relation table is unordered and this gesture always knows which end is which, so it writes the direction that survives. The duplicate check is unordered for the same reason.
 - **The split runs last**, after the needle, the label chips and the chat query. `filteredEdges` drops any edge with a filtered-out endpoint, so judging attachment earlier leaves a component stranded on the canvas with its requirement filtered away — orbiting nothing, back in the unassigned band. Switching the `requirement` chip off is enough to reach that. Running it last is also what gives playback scoping for free, with no second mechanism, and it handles multiple attachment correctly: the component survives while *any* of its requirements does.
 - **A component is deliberately not a member of an activity tree.** `kindOf` calls it a satellite so the layout places it, but `buildActivityTreeMembership` skips it. Membership is what the playhead gates whole trees by and what `crossTreeDegree` reads: a component answering two requirements in two trees can only be given one of them, so the needle would hide an answer whose own requirement is still on screen — and card salience, which decides what Threads and Overview promote, would shift for reasons that have nothing to do with the cards. The BFS also skips edges with a component at **both** ends, or a chain wired in the tray becomes a shortcut between two requirements and a card changes tree because of something drawn on the other surface.
 - **An attached component reaches the canvas detached.** `canvasBlueprintNodes` hands back a clone with `parentId`, `extent` and `zIndex` removed: React Flow cannot place a node whose parent it cannot find (the box is tray-only), and the `zIndex: 3` it was built with records a nesting order that stopped existing — the layout strips a stale `zIndex` only from `type === "card"` nodes (contract 16), so nothing downstream would catch it and the component would paint over the cards. The clone is cached in a `WeakMap` keyed on the source node, or a fresh object each pass would drop React Flow's cached internals. The identity shortcut compares *what changed*, never lengths: this filter can replace a node without removing one.
@@ -273,6 +273,95 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 - The two searches are **two buttons, not a toggle**, because the input differs as much as the output: blueprints take every requirement in the project, components take the ones **selected on the canvas**. Selection is React Flow's own — `flowSlice.onNodesChange` has always written `selected` onto the store nodes and nothing read it until now. `FlowCanvas.module.css` draws the ring, because a custom node had no selection feedback at all.
 - The frontend's requirement filter reads `liveNodes` and skips `relevant: false`. It used to read the raw store, so soft-deleted cards and ones explicitly marked noise both still shaped the query.
 - **`GranularBlock.ID` is unique only within a paper.** `buildLooseComponentNodes` resolves `FeedsInto` by `(fileName, ID)`; keying on the integer alone would wire a component to a stranger from another paper that happened to share its number.
+
+30. One code system for the exported report and the canvas
+- The reviewers' two objections to the old export were the same objection twice: a document whose
+  factual content was three lines and seven sections of model prose "doesn't do justice to the
+  provenance of the whole project", and a downloaded file nobody can navigate is no way to share a
+  study. So the body of the report is now **deterministic**, generated from the Focus+Context
+  aggregations, and every artifact it names carries a **code** that resolves in both places.
+- **The letter is the altitude.** `LOCATOR_KIND_LEVEL` (`projectEditor/locators.ts`) is a total map
+  from kind to `CanvasLevel` and it *is* the feature: `P1` is a claim at Overview, `A3` at Threads,
+  `R7`/`I2`/`C4`/`O5`/`H1`/`B1` at Detail. `P` takes phase, so person is `H` for human. Resolution
+  keeps the base level at 1 and puts the altitude in the *focus path depth*, so several levels are on
+  screen at once — `effectiveLevelForActivity` already does that in three lines and nothing was added
+  to the lens.
+- **Ordinals come from position in `flow.nodes`, not from time.** Every time-based key fails to be
+  append-only: `createdAt` is user-editable, and even the first `__history` entry is stamped from
+  `resolveActionTimestamp()`, which returns the *playhead* — so a card created while scrubbed into the
+  past is born with a past instant and renumbers everything after it. `addNode`/`addNodes` append,
+  the two sorts in `flowSlice` copy, `applyNodeChanges` maps in place, and soft delete keeps the
+  element, so array position is the document's insertion log. `planLocatorAssignments` persists a code
+  (`data.locatorCode`) for the two cases derivation cannot absorb: a hard `removeNode`, and a label
+  change, which moves a node between two kind namespaces and renumbers both.
+- **A phase code promises its anchor activity and nothing else.** `ActivityCluster.anchorActivityId`
+  is a persisted node id; the *extent*, the *label* and the *chronological position* are all
+  recomputed from time gaps against content affinity, so one added card can move every boundary.
+  `LOCATOR_PHASE_CONTRACT` is the sentence the report prints, and the test deliberately asserts
+  nothing about membership — that omission **is** the contract. Phase codes are also only meaningful
+  over the **unfiltered live graph at the latest playhead**, because `canvasClusters` is otherwise
+  computed only at level 1 and only over `filteredNodes`.
+- **Never reference a `vz:` id.** Cluster ids are `vz:c:<earliest member>` and are re-decided on every
+  segmentation; a synthetic id in a URL is a bug that only reproduces on the author's machine. Files
+  key on `document_files.sha256`, not `file.id`, which import and duplication rewrite.
+- **The report does not call `buildAbstractedGraph`.** It returns React Flow nodes with positions and
+  synthetic ids, and its `cardCount`/`labelCounts` describe the *folded remainder* — they exclude the
+  promoted cards by design, so a report using them would undercount every phase by four cards.
+  Instead `countLabels`, `pickTop`, `collectParticipants` and the promotion constants are **exported**
+  from `canvasAbstraction.ts` and called over the complete member set, and `buildAbstractedGraph` is
+  used in `npm run test:report` as the **oracle**: the report's headline codes must equal what levels
+  1 and 2 promote. That check is what stops the document and the canvas drifting apart.
+- **Abstraction decides emphasis and ordering; it never decides inclusion.** The canvas hides because
+  it has one zoom; a document has none. Every live card appears once in a thread section or under
+  "Unconnected cards", and again in the appendix. Nothing is truncated — the old report was
+  superficial *because* it summarised, and length belongs in appendices.
+- Inputs are the whole live graph, **unfiltered**. `buildSalienceIndex` normalises its degree terms
+  against whatever set it is handed, so passing the filtered canvas would rescale every card's
+  emphasis to whatever the researcher last clicked. The report states this about itself.
+- **One LLM call, for the abstract only, and it is refused rather than trusted.** `acceptAbstract`
+  rejects the whole paragraph if it cites a code the payload never contained; a fabricated citation is
+  the one failure a reader cannot check. It is written from the **requirements and concepts** — the
+  two card kinds that describe intent rather than incident, which is what an abstract is for; a
+  summary assembled from activities would read as a diary, and the Timeline section already is one.
+  The call is made every export and never blocks: the deterministic document is complete before it
+  runs, so a refused or unreachable paragraph costs one italic line. The export itself is **not**
+  gated on `interactionLocked` — it writes nothing, and a reader of a published study is exactly who
+  the document is for.
+- **Typing a code is a third way of driving the level control**, which is why the reference box lives
+  in `CanvasLevelControl` beside the segments and follow-zoom rather than with the search tools. The
+  reveal order in `handleGoToLocatorCode` is load-bearing and every step is there because skipping it
+  fails *silently*: the playhead gates whole activity trees, a label chip or a provenance chip hides
+  the target outright, a blueprint component is not drawn at all unless its chip is on and a
+  requirement it answers is on screen, and `levelFollowsZoom` would re-derive the level from the zoom
+  the fit produces and clear the focus on arrival. Level and focus are then set directly rather than
+  through `handleCanvasLevelChange`, which clears the focus — correctly, because that handler is the
+  user clicking a segment. The locator index is built **on demand**: it is O(n log n) over the whole
+  graph, it must be built over the unfiltered live graph (`locatorGraphScope`) which no canvas memo
+  holds, and it is needed only when somebody types.
+- **`pendingCanvasFocus` carries a mode and a deadline.** `pan` keeps the zoom, for a card the
+  researcher just created; `fit` re-frames, for arriving at a typed code, where there is no prior
+  viewport worth keeping. The deadline exists because the effect waits for the target to appear in
+  `displayedNodes` and re-runs on every derivation — without one, a target that never appears retries
+  for the rest of the session and reports nothing.
+- **A relation is only live when both of its ends are.** `isEdgeActive` alone is not enough: the
+  node-delete cascade is editor behaviour, not a data invariant, and a document that renders
+  `R1 —tackled in→ B1` three lines from "B1 was deleted" is worse than one that drops the dangling
+  half. The tray applies the same rule to its own edge set.
+- **`softDeleteNode` reads `nodesRef`/`edgesRef`, never its closure.** A node component reads its
+  handlers from `handlersRef.current` at *its own* render time, and React Flow only re-renders a node
+  when something about that node changes — so a handler that closed over `edges` can be arbitrarily
+  old. That is what left a deleted component's `tackled in` edge alive: the delete handler the node
+  was holding had been created before the edge existed. Any handler reached through a memoised node's
+  props has the same exposure.
+- Dates in the report are formatted UTC-only (`reportFormat.formatIsoDay`). `toLocaleDateString` is
+  fine in `ClusterGlyph`, which one person reads on one screen, and wrong here: a document that
+  changes with the exporter's timezone cannot be diffed or checked.
+- Anchors are heading slugs, because `react-markdown` renders no raw HTML without `rehype-raw`. Every
+  appendix heading is **the code alone** (`### R7` → `#r7`), an activity is never given a second
+  heading there because its thread section already owns that slug, and `headingSlug` is called by the
+  same pass that emits the heading so the two cannot disagree. A cited code with no heading renders as
+  plain code text, never as a broken link — the same rule as the inert source icon in `Card.tsx`.
+- `npm run test:locators` and `npm run test:report` pin all of the above.
 
 ## Key Areas and Files
 

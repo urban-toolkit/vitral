@@ -1,5 +1,6 @@
+import { useCallback, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faWandMagicSparkles } from "@fortawesome/free-solid-svg-icons";
+import { faArrowRight, faWandMagicSparkles } from "@fortawesome/free-solid-svg-icons";
 
 import classes from "./CanvasLevelControl.module.css";
 import type { CanvasLevel } from "@/pages/projectEditor/canvasAbstraction";
@@ -15,6 +16,10 @@ import type { CanvasLevel } from "@/pages/projectEditor/canvasAbstraction";
  * The assistant button rides in the same panel rather than floating on its own: both answer "what
  * am I looking at", and one thing in the bottom-right corner beats two competing for it. Two short
  * rows rather than one long bar, so the panel stays clear of the bottom-centre tool bar.
+ *
+ * The reference box belongs here for the same reason. A code carries its own level of abstraction, so
+ * typing one is a *third* way of driving this control — not "find me a card" but "put the canvas where
+ * this reference points", which is exactly what the segments and follow-zoom do by other means.
  */
 
 const LEVELS: Array<{ value: CanvasLevel; label: string; hint: string }> = [
@@ -31,6 +36,11 @@ export type CanvasLevelControlProps = {
     /** Name of whatever is currently opened out, or null when nothing is. */
     focusLabel?: string | null;
     onClearFocus?: () => void;
+    /**
+     * Jump to a reference code. Returns whether it resolved, so the box can keep a bad code on screen
+     * for correction instead of clearing it and leaving the reader to retype from memory.
+     */
+    onGoToCode?: (code: string) => boolean;
     /** Lifted clear of the timeline dock, the same way the toolbar is. */
     shifted?: boolean;
     /** Trailing assistant button. Omitted when there is no chat to open. */
@@ -45,10 +55,21 @@ export function CanvasLevelControl({
     onFollowZoomChange,
     focusLabel = null,
     onClearFocus,
+    onGoToCode,
     shifted = false,
     chatOpen = false,
     onOpenChat,
 }: CanvasLevelControlProps) {
+    const [codeDraft, setCodeDraft] = useState("");
+
+    const submitCode = useCallback(() => {
+        const typed = codeDraft.trim();
+        if (typed === "" || !onGoToCode) return;
+        // Cleared only on success. A code that did not resolve is usually a typo, and clearing the
+        // field would make the reader fetch the paper again to retype it.
+        if (onGoToCode(typed)) setCodeDraft("");
+    }, [codeDraft, onGoToCode]);
+
     return (
         <div className={classes.container} style={{ marginBottom: shifted ? 380 : 0 }}>
             {focusLabel ? (
@@ -80,6 +101,44 @@ export function CanvasLevelControl({
                     </button>
                 ))}
             </div>
+
+            {onGoToCode ? (
+                <div className={classes.row}>
+                    <input
+                        className={classes.codeInput}
+                        type="text"
+                        value={codeDraft}
+                        onChange={(event) => setCodeDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                                event.preventDefault();
+                                submitCode();
+                            }
+                            if (event.key === "Escape") setCodeDraft("");
+                            // The canvas listens for Backspace as delete and for Space as pan; a code
+                            // being typed must not reach either.
+                            event.stopPropagation();
+                        }}
+                        placeholder="Go to code"
+                        title="A reference code from a report or a paper — A3, R7, C2 — takes the canvas to what it names"
+                        aria-label="Go to a reference code"
+                        spellCheck={false}
+                        autoCapitalize="characters"
+                        autoCorrect="off"
+                        size={9}
+                    />
+                    <button
+                        type="button"
+                        className={classes.codeGo}
+                        title="Go to this code"
+                        aria-label="Go to this code"
+                        disabled={codeDraft.trim() === ""}
+                        onClick={submitCode}
+                    >
+                        <FontAwesomeIcon icon={faArrowRight} />
+                    </button>
+                </div>
+            ) : null}
 
             <div className={classes.row}>
                 <button
