@@ -1,0 +1,133 @@
+/* Zero-sized, so its children position against the viewport origin exactly as they did before it
+   existed. It is here only to carry `--canvas-zoom`, which `useCanvasLod` writes every frame while
+   the halos are showing: scoping the custom property to this subtree keeps the recalculation to a
+   handful of divs instead of the whole React Flow tree.
+
+   Deliberately **no `z-index`**, so it does not open a stacking context. React Flow's
+   `.react-flow__viewport-portal` is a sibling of `.react-flow__nodes` and comes first in the DOM, so
+   without a stacking order of their own everything in here paints under the cards. The two halves of
+   a halo want opposite answers to that (see `.disc` and `.labelBox`), and they can only sort
+   themselves against the nodes if this wrapper stays out of the way. */
+.layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+}
+
+/* Both halves are hidden until the zoom crosses `ZOOM_CLUSTER_HALO_MAX`. The attribute is written
+   onto the React Flow root by `useCanvasLod`, from the pan/zoom animation frame, so showing and
+   hiding the whole overlay costs one style recalculation and no React render. Opacity rather than
+   `display: none`, so the halos fade in with the gesture instead of appearing mid-zoom. */
+.disc,
+.labelBox {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 180ms ease-out;
+}
+
+:global([data-cluster-halo="on"]) .disc,
+:global([data-cluster-halo="on"]) .labelBox {
+    opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .disc,
+    .labelBox {
+        transition: none;
+    }
+}
+
+/* **Behind the cards.** The disc is a background for a group of things, so it belongs under the
+   things — a ring drawn over a summary card would read as an object in front of it rather than as an
+   area containing it, and the fill would tint the card it is trying to group. `-1` sorts it behind
+   `.react-flow__nodes` and `.react-flow__edges` inside the viewport's own stacking context, and no
+   further back than that: the viewport carries `z-index: 2`, so this cannot fall behind the canvas. */
+.disc {
+    z-index: -1;
+    border-radius: 50%;
+}
+
+/* A phase is the larger claim, so it gets the stronger ring; a thread sits inside one and reads as
+   a subdivision of it. Both are deliberately pale: the halo is a label for something already drawn,
+   not a new object competing with the glyphs inside it. */
+.phase {
+    border: 3px solid rgba(45, 125, 210, 0.28);
+    background: radial-gradient(circle, rgba(45, 125, 210, 0.09) 0%, rgba(45, 125, 210, 0.02) 70%, rgba(45, 125, 210, 0) 100%);
+}
+
+.thread {
+    border: 3px solid rgba(0, 0, 0, 0.16);
+    background: radial-gradient(circle, rgba(0, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0.015) 70%, rgba(0, 0, 0, 0) 100%);
+}
+
+/* **In front of the cards**, and the reason the disc and the title are two elements rather than one.
+   The title is centred on the disc, which is exactly where the glyph it names sits, so nested inside
+   the disc it would spend its whole life hidden behind that card — the one thing this overlay exists
+   to prevent. It occupies the same box as the disc purely to centre against it.
+
+   Centred rather than sitting on the rim: at this zoom the middle of a cluster is empty (the glyph is
+   a few screen pixels across) and the rim is where the neighbouring halos are.
+
+   The size is the point of the whole overlay, and it is a `min` of two things. `--canvas-zoom` is the
+   live viewport scale, so `22px / zoom` is however many *flow* units it takes to land on 22 *screen*
+   pixels — the title therefore stays the same size on screen however far the reader zooms out, which
+   is the one thing a title written in flow units cannot do. `--halo-max-font` is this halo's own
+   ceiling (`canvasClusterHalos.ts`), past which three lines would burst the circle. The fallbacks
+   matter: before the first pan or zoom the property has not been written yet, and the ceiling is then
+   the whole answer. */
+.labelBox {
+    /* Above every node, including a selected one: React Flow adds 1000 to a node's own `zIndex` while
+       it is selected (`elevateNodesOnSelect`), and a card's own is 0 — the layout strips the stale
+       values older documents carry, and `glyphNode` now does the same for the glyphs it invents. One
+       past that band is the whole requirement; going higher would start competing with the panels
+       React Flow draws over the canvas. */
+    z-index: 1001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: min(
+        calc(22px / var(--canvas-zoom, 0.3)),
+        var(--halo-max-font, 120px)
+    );
+}
+
+.label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.18em;
+    /* Inside the inscribed square of the circle, so a long title cannot spill past the ring. */
+    max-width: 68%;
+    text-align: center;
+    line-height: 1.1;
+}
+
+.kind {
+    font-size: 0.42em;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(0, 0, 0, 0.42);
+}
+
+.title {
+    font-weight: 700;
+    color: rgba(0, 0, 0, 0.62);
+    /* Three lines is enough for any cluster label the segmenter produces, and past that the ring
+       matters more than the rest of the words. */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.phaseTitle {
+    color: rgba(23, 78, 132, 0.72);
+}

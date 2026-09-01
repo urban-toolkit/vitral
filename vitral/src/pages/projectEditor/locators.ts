@@ -32,12 +32,58 @@ import { toTimestampMs } from "@/pages/projectEditor/nodeHistory";
  * with the code having chosen which branch got which. `effectiveLevelForActivity` already does that
  * in three lines; nothing is added to the lens.
  *
- * ## Not "reference"
+ * ## The suffix is the *reader's* altitude
  *
- * `cardData.reference` already means the verbatim excerpt a card was extracted from — the thing
- * `files/referenceLocation.ts` searches for and `useReferenceHighlight.ts` paints. `referenceCitation`
- * is the blueprint paper's prose excerpt. So the domain noun here is **locator**, and the word shown
- * to a person is **code**.
+ * The letter says what altitude an artifact is *cited* at. A reader often wants a different one:
+ * having read about `R7` they want the thread it came out of, or the phase, or the file it was
+ * extracted from. That is a second axis, and it is a **suffix on the ordinal** —
+ * `parseLocatorReference` — so one artifact has one number and six ways of being looked at rather
+ * than six numbers:
+ *
+ *   `R7` / `R7D`  the card itself, at Detail
+ *   `R7P`         the phase it belongs to, as an Overview summary
+ *   `R7A`         the root activity card of its thread, at Detail
+ *   `R7T`         the thread (activity) it belongs to, as a Threads summary
+ *   `R7F`         the file attached to the card, opened
+ *   `R7AF`        the file attached to that root activity, opened
+ *
+ * Each of the first four is a `{level, focus, nodeId}` triple the canvas already knows how to take,
+ * differing only in **how deep the focus path is cut** — which is the same mechanism as above, now
+ * exposed to the reader instead of being fixed by the letter. Nothing new is added to the lens for
+ * these either.
+ *
+ * ### Why exactly six
+ *
+ * The views are a containment ladder — a phase holds threads, a thread holds an activity and its
+ * cards, a card may carry a file — so a suffix is *a step up the ladder, then optionally `F` to open
+ * what is attached where you landed*. That product is `{nothing, A} x {D, P, T, F}`, and the three
+ * cells the six do not occupy are aliases rather than destinations: the thread of R7's activity is
+ * R7's thread and its phase is R7's phase, so `R7AT` and `R7AP` would be `R7T` and `R7P` said twice,
+ * and `R7AD` is `R7A`. The set is closed. A reader who guesses one of the aliases is refused rather
+ * than quietly answered, on the same grounds as any other unknown suffix.
+ *
+ * ### The suffix alphabet is disjoint from the digit twins
+ *
+ * `P` took the phase lens from `O`, which was the wrong letter twice over: `O` is already the kind
+ * letter for object cards, and `R10` and `R1O` differ by one glyph in most fonts. Parsing was never
+ * ambiguous — digits then letters, always — but a human retyping a code off a printed page had a
+ * real way to ask for the first requirement's phase and be handed the tenth requirement.
+ *
+ * With `O` retired the suffixes are `{D, P, A, T, F}` and the digit twins are `{O, I, S, B}`
+ * (`DIGIT_TWIN`), and the two sets do not meet. So no valid reference can be turned into a
+ * *different valid reference* by a retyping slip, and what used to be a caution the report had to
+ * print is now an invariant to keep: a new lens letter must stay out of `DIGIT_TWIN`.
+ * `npm run test:locators` asserts it.
+ *
+ * ## "Locator" in the source, "reference" on screen
+ *
+ * The bare noun `reference` is already taken twice over: `cardData.reference` is the verbatim excerpt
+ * a card was extracted from — the thing `files/referenceLocation.ts` searches for and
+ * `useReferenceHighlight.ts` paints — and `referenceCitation` is the blueprint paper's prose excerpt.
+ * So the domain noun here stays **locator**, and anything to do with codes carries that prefix:
+ * `LocatorReference`, `parseLocatorReference`, `resolveLocatorReference`. What is *shown* to a person
+ * is "reference" — the canvas box says **Go to reference** — because somebody meeting `R7T` in a paper
+ * is not meeting a locator, and "code" stopped covering it once a code could carry a lens.
  *
  * ## What is safe to point at
  *
@@ -239,26 +285,133 @@ export type CodeToUrlOptions = {
     at?: string;
 };
 
-const CODE_PATTERN = /^([A-Za-z]+)(\d+)$/;
+const CODE_PATTERN = /^([A-Za-z]+)(\d+)([A-Za-z]*)$/;
 
 /**
  * Characters a printed code loses to a reader retyping it. Applied to the **first** character only,
  * which is unambiguous because a code never begins with a digit — so `03` can only have meant `O3`.
+ *
+ * Never applied to the suffix, and since the `O` lens was retired for `P` there is nothing left in
+ * the suffix alphabet for it to repair — the two sets are disjoint, which is the invariant the
+ * module docblock asks the next lens letter to preserve. Exported so the test can assert it.
  */
-const DIGIT_TWIN: Readonly<Record<string, string>> = { "0": "O", "1": "I", "5": "S", "8": "B" };
+export const DIGIT_TWIN: Readonly<Record<string, string>> = { "0": "O", "1": "I", "5": "S", "8": "B" };
+
+/**
+ * How a reader wants to look at the artifact a code names.
+ *
+ * Orthogonal to `LocatorKind`: the kind says what the thing is and what altitude it is cited at, the
+ * lens says which of the six views of it to open. `detail` is what a bare code has always meant, so
+ * every existing citation keeps its meaning exactly.
+ */
+export type LocatorLens =
+    /** The artifact itself, at Detail. The default, and what a bare code means. */
+    | "detail"
+    /** The thread (activity) it belongs to, summarised. */
+    | "thread"
+    /**
+     * The phase it belongs to, summarised.
+     *
+     * Spelled `P` to the reader, because a suffix names the thing landed on. The name here stays
+     * `overview` because that is what the viewpoint does — level 1 with the focus path uncut — and
+     * because `phase` is already taken, by a `LocatorKind`.
+     */
+    | "overview"
+    /** The root activity card of its thread, at Detail. */
+    | "activity"
+    /** Its own attached file, opened. */
+    | "file"
+    /** The root activity's attached file, opened. */
+    | "activityFile";
+
+/** Suffix spellings, as typed. `detail` has two: the empty string and `D`. */
+const LENS_BY_SUFFIX: Readonly<Record<string, LocatorLens>> = {
+    "": "detail",
+    D: "detail",
+    P: "overview",
+    A: "activity",
+    T: "thread",
+    F: "file",
+    AF: "activityFile",
+};
+
+/**
+ * Suffixes that meant something once, and what to say instead.
+ *
+ * `O` was the phase lens until `P` took it. A code carrying it is refused like any other unknown
+ * suffix — nothing is silently reinterpreted — but the refusal names the replacement, because the
+ * old spelling is printed in every document exported before the change, and somebody retyping one
+ * has no way to guess what happened to it.
+ */
+const RETIRED_LENS_SUFFIX: Readonly<Record<string, string>> = { O: "P" };
+
+/** Canonical spelling for each lens. `detail` writes nothing, so a bare code stays bare. */
+export const LOCATOR_LENS_SUFFIX: Readonly<Record<LocatorLens, string>> = {
+    detail: "",
+    thread: "T",
+    overview: "P",
+    activity: "A",
+    file: "F",
+    activityFile: "AF",
+};
+
+/**
+ * One line per lens, for the report's explanation and for the canvas box's tooltip.
+ *
+ * Ordered as the report's index prints its next-step links, so a reader meets the letters once in
+ * one sequence rather than in two orders on two surfaces.
+ */
+export const LOCATOR_LENS_HELP: ReadonlyArray<{ suffix: string; means: string }> = [
+    { suffix: "", means: "the artifact itself, at Detail" },
+    { suffix: "D", means: "the same thing, said explicitly" },
+    { suffix: "P", means: "the phase it belongs to, as an Overview summary" },
+    { suffix: "A", means: "the root activity card of its thread" },
+    { suffix: "T", means: "the thread it belongs to, as a Threads summary" },
+    { suffix: "F", means: "the file attached to it, opened" },
+    { suffix: "AF", means: "the file attached to that root activity, opened" },
+];
+
+/**
+ * The lenses the exported report offers beside a code as next steps, in the order it prints them.
+ *
+ * Here rather than in the renderer, so a document cannot come to advertise a grammar the canvas does
+ * not take. `detail` is absent because the bare code already is it, and `activityFile` because five
+ * letters in a row stops being something a reader takes in at a glance — it stays typeable, and the
+ * document's explanation names it.
+ */
+export const LOCATOR_NEXT_STEP_LENSES: readonly LocatorLens[] = [
+    "overview",
+    "activity",
+    "thread",
+    "file",
+];
 
 export function formatLocatorCode(kind: LocatorKind, ordinal: number): string {
     return `${LOCATOR_KIND_LETTER[kind]}${ordinal}`;
 }
 
+export function formatLocatorReference(kind: LocatorKind, ordinal: number, lens: LocatorLens): string {
+    return `${formatLocatorCode(kind, ordinal)}${LOCATOR_LENS_SUFFIX[lens]}`;
+}
+
+/** A code and the lens the reader asked for. */
+export type LocatorReference = {
+    /** The artifact, with its canonical bare code. */
+    locator: Locator;
+    lens: LocatorLens;
+    /** Canonical spelling including the suffix: `R1`, `R1T`, `R1AF`. */
+    reference: string;
+};
+
 /**
- * A code out of a URL, a footnote, or something somebody typed.
+ * A reference out of a URL, a footnote, or something somebody typed.
  *
- * Tolerant on the way in and strict on the way out: case is folded, surrounding space is dropped,
- * leading zeros on the ordinal are accepted, and a first-character digit twin is repaired. What comes
- * back is always the canonical spelling `formatLocatorCode` would have produced.
+ * Same tolerances as `parseLocatorCode` on the way in — case folded, space trimmed, leading zeros
+ * accepted, first-character digit twin repaired — plus the optional lens suffix. An unrecognised
+ * suffix is refused rather than ignored: silently dropping the `X` in `R1X` would answer a question
+ * nobody asked, and the reader would never learn the suffix was wrong.
  */
-export function parseLocatorCode(raw: unknown): Locator | null {
+export function parseLocatorReference(raw: unknown): LocatorReference | null {
     if (typeof raw !== "string") return null;
     let text = raw.trim();
     if (text === "") return null;
@@ -275,7 +428,29 @@ export function parseLocatorCode(raw: unknown): Locator | null {
     const ordinal = Number.parseInt(match[2], 10);
     if (!Number.isSafeInteger(ordinal) || ordinal < 1) return null;
 
-    return { kind, ordinal, code: formatLocatorCode(kind, ordinal) };
+    const lens = LENS_BY_SUFFIX[match[3].toUpperCase()];
+    if (lens === undefined) return null;
+
+    return {
+        locator: { kind, ordinal, code: formatLocatorCode(kind, ordinal) },
+        lens,
+        reference: formatLocatorReference(kind, ordinal, lens),
+    };
+}
+
+/**
+ * A code out of a URL, a footnote, or something somebody typed.
+ *
+ * Tolerant on the way in and strict on the way out: case is folded, surrounding space is dropped,
+ * leading zeros on the ordinal are accepted, and a first-character digit twin is repaired. What comes
+ * back is always the canonical spelling `formatLocatorCode` would have produced.
+ *
+ * The **artifact** half of `parseLocatorReference`, and it deliberately answers for a reference that
+ * carries a lens: `R1T` names R1. Every caller here — the index, the URL builder, the persisted
+ * `locatorCode` on a node — is asking "which artifact", and the lens is a question about the view.
+ */
+export function parseLocatorCode(raw: unknown): Locator | null {
+    return parseLocatorReference(raw)?.locator ?? null;
 }
 
 /**
@@ -299,25 +474,33 @@ function basePathOf(basename: string | undefined): string {
 }
 
 /**
- * The canvas URL for a code.
+ * The canvas URL for a reference.
  *
- * Carries the code **and** the target id: the code is the half a person can read in a footnote and
- * retype, and the id is the half that is still right if the numbering ever drifted. `at` pins the
- * link to the snapshot the document described, so a citation in a submitted paper keeps showing what
- * was cited.
+ * Carries the reference **and** the target id: the reference is the half a person can read in a
+ * footnote and retype, and the id is the half that is still right if the numbering ever drifted.
+ * `at` pins the link to the snapshot the document described.
+ *
+ * Two details that are easy to get backwards:
+ *
+ * - `ref` is the **whole reference, lens included**. A link built for `R7P` has to ask for the
+ *   phase; writing the bare code there — which this did, by parsing with `parseLocatorCode` —
+ *   silently turned every lensed link in the document back into a link to the card.
+ * - `n` is the **artifact's** node, not the lens's landing node. A lens is a view of R7, so the
+ *   thing worth verifying on arrival is that R7 still names this node; that is what lets the reader
+ *   be told the code was renumbered since the document was written.
  */
 export function codeToUrl(
     index: LocatorIndex,
     code: string,
     options: CodeToUrlOptions,
 ): string | null {
-    const parsed = parseLocatorCode(code);
+    const parsed = parseLocatorReference(code);
     if (!parsed) return null;
-    const target = index.byCode.get(parsed.code);
+    const target = index.byCode.get(parsed.locator.code);
     if (!target) return null;
 
     const params = new URLSearchParams();
-    params.set("ref", target.code);
+    params.set("ref", parsed.reference);
     params.set("n", target.targetId);
     if (options.at) params.set("at", options.at);
 
@@ -353,6 +536,192 @@ export function describeLocatorStatus(target: LocatorTarget): string {
                 : `${target.code} has been renumbered.`;
         case "unknown":
             return `${target.code} does not name anything in this project.`;
+    }
+}
+
+/**
+ * A reference, resolved against an index into something a surface can act on.
+ *
+ * `ok: false` carries a sentence rather than a code, for the same reason `describeLocatorStatus`
+ * does: a reference the project can parse but cannot open has to say why, in words, on whichever
+ * surface asked.
+ */
+export type LocatorResolution =
+    | {
+        ok: true;
+        target: LocatorTarget;
+        lens: LocatorLens;
+        /** Canonical spelling of what was asked for, suffix included. */
+        reference: string;
+        /** Where to put the canvas. Already carries the lens's altitude. */
+        viewpoint: LocatorViewpoint;
+        /**
+         * Set by the two file lenses: the card whose attachment should be opened once the canvas
+         * has arrived. Null for every other lens.
+         *
+         * Whether that card actually *has* an attachment is not answerable here — this module never
+         * reads node data — so the caller checks, and says so when there is none.
+         */
+        openAttachmentOf: string | null;
+        /**
+         * The code the caller asked with, when an `expectedTargetId` overrode it. Null in the
+         * ordinary case, which is every reference a person types.
+         *
+         * A surface handed a code here has to say so out loud: the reader is looking at `R9` while
+         * the document in their other hand says `R7`, and only one of the two can explain that.
+         */
+        renumberedFrom: string | null;
+    }
+    | { ok: false; reference: string | null; reason: string };
+
+/**
+ * Why a reference did not parse, in words.
+ *
+ * Split out for the retired suffixes, which deserve their own sentence: `R1O` is not a typo, it is
+ * the spelling every document exported before `P` took the phase lens still prints, and the generic
+ * "not a reference this project uses" tells its reader nothing they can act on. The hint is only
+ * offered when the rest of the code is well formed, so a wholly unrecognised `Z1O` does not get a
+ * confident answer about a letter that was never its problem.
+ */
+function describeUnparsedReference(raw: unknown): string {
+    const typed = typeof raw === "string" ? raw.trim() : "";
+    if (typed === "") return "Type a reference such as A3, R7 or C2.";
+
+    const match = CODE_PATTERN.exec(typed);
+    if (match && LOCATOR_LETTER_KIND[match[1].toUpperCase()] !== undefined) {
+        const replacement = RETIRED_LENS_SUFFIX[match[3].toUpperCase()];
+        const ordinal = Number.parseInt(match[2], 10);
+        if (replacement !== undefined && Number.isSafeInteger(ordinal) && ordinal >= 1) {
+            const suggestion = `${match[1].toUpperCase()}${ordinal}${replacement}`;
+            return `${typed.toUpperCase()} — that view is spelled ${replacement} now. Try ${suggestion}.`;
+        }
+    }
+
+    return `"${typed}" is not a reference this project uses. References look like A3, R7 or C2,`
+        + " optionally followed by D, P, A, T, F or AF.";
+}
+
+/**
+ * What a reference means, as a viewpoint.
+ *
+ * The four navigating lenses differ only in **how deep the focus path is cut**, which is the whole
+ * of the Focus+Context mechanism described at the top of this file:
+ *
+ *   overview  no focus            the phase stays a glyph, and that glyph is the thing to centre
+ *   thread    {cluster}           the phase opens into its threads; centre the thread's glyph
+ *   detail    {cluster, activity} the thread opens into its cards; centre the card
+ *   activity  {cluster, activity} the same cut, centred on the activity's own card instead
+ *
+ * The two file lenses borrow `detail` and `activity` respectively and name a card to open — the
+ * canvas still has to arrive somewhere, and it should arrive at the card the file belongs to.
+ *
+ * ## `expectedTargetId`, and why the id beats the code
+ *
+ * A link out of an exported document carries both halves of a citation (`codeToUrl`): the code,
+ * which a person can read in a footnote and retype, and the target id, which is still right if the
+ * numbering ever drifted. Drift is rare by construction — ordinals are positions in `flow.nodes`,
+ * which only grows at the end — but a hard `removeNode` or a label change renumbers a whole letter,
+ * and then `R7` names somebody else's card.
+ *
+ * When the two disagree, **the id wins**. A paper that cites `R7` means the card its author was
+ * looking at, not whatever holds that number today; following the number instead would show the
+ * reader different material under the right label, which is the one failure they cannot detect,
+ * because the canvas would look entirely normal. The lens is re-applied to whatever code that node
+ * answers to now, so `R7P` still asks for a phase. The caller is handed `renumberedFrom` and has to
+ * say what happened.
+ *
+ * Not supplied by the reference box, where a typed code is the only claim there is to check.
+ */
+export function resolveLocatorReference(
+    index: LocatorIndex,
+    raw: unknown,
+    expectedTargetId?: string | null,
+): LocatorResolution {
+    const parsed = parseLocatorReference(raw);
+    if (!parsed) {
+        return { ok: false, reference: null, reason: describeUnparsedReference(raw) };
+    }
+
+    // A claim naming a node the index no longer holds is dropped rather than obeyed: there would be
+    // nothing to redirect to, and the code is then the only surviving half of the citation.
+    const claimed = expectedTargetId !== undefined && expectedTargetId !== null && expectedTargetId !== ""
+        ? index.byTargetId.get(expectedTargetId) ?? null
+        : null;
+    const renumberedFrom = claimed !== null && claimed.code !== parsed.locator.code
+        ? parsed.locator.code
+        : null;
+
+    const target = index.byCode.get(renumberedFrom !== null && claimed !== null
+        ? claimed.code
+        : parsed.locator.code);
+    if (!target) {
+        return {
+            ok: false,
+            reference: parsed.reference,
+            reason: `${parsed.locator.code} does not name anything in this project.`,
+        };
+    }
+    if (target.status !== "live") {
+        return { ok: false, reference: parsed.reference, reason: describeLocatorStatus(target) };
+    }
+
+    const clusterId = target.viewpoint.focus.clusterId;
+    // A phase's own focus names the cluster but no activity; its anchor is the activity to fall back
+    // on, and it is the one thing about a phase code that is guaranteed stable.
+    const activityId = target.viewpoint.focus.activityId
+        ?? (target.locator.kind === "phase" ? target.targetId : null);
+
+    const refuse = (reason: string): LocatorResolution => (
+        { ok: false, reference: parsed.reference, reason }
+    );
+    const resolved = (
+        viewpoint: LocatorViewpoint,
+        openAttachmentOf: string | null,
+    ): LocatorResolution => ({
+        ok: true,
+        target,
+        lens: parsed.lens,
+        // What was *asked for*, so a surface can quote the reader back to themselves. What it
+        // resolved to is `target.code`, and the two differ exactly when `renumberedFrom` is set.
+        reference: parsed.reference,
+        viewpoint,
+        openAttachmentOf,
+        renumberedFrom,
+    });
+
+    switch (parsed.lens) {
+        case "detail":
+            return resolved(target.viewpoint, null);
+
+        case "file":
+            if (target.viewpoint.nodeId === null) {
+                return refuse(`${parsed.reference} — ${target.code} is not a card, so nothing is attached to it.`);
+            }
+            return resolved(target.viewpoint, target.viewpoint.nodeId);
+
+        case "overview":
+            if (clusterId === null) {
+                return refuse(`${parsed.reference} — ${target.code} belongs to no phase, so it has no Overview summary.`);
+            }
+            return resolved({ level: 1, focus: NO_CANVAS_FOCUS, nodeId: clusterId }, null);
+
+        case "thread":
+            if (activityId === null) {
+                return refuse(`${parsed.reference} — ${target.code} reaches no activity, so it belongs to no thread.`);
+            }
+            return resolved({ level: 1, focus: { clusterId, activityId: null }, nodeId: activityId }, null);
+
+        case "activity":
+            if (activityId === null) {
+                return refuse(`${parsed.reference} — ${target.code} reaches no activity.`);
+            }
+            return resolved({ level: 1, focus: { clusterId, activityId }, nodeId: activityId }, null);
+
+        case "activityFile":
+            if (activityId === null) {
+                return refuse(`${parsed.reference} — ${target.code} reaches no activity.`);
+            }
+            return resolved({ level: 1, focus: { clusterId, activityId }, nodeId: activityId }, activityId);
     }
 }
 

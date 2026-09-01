@@ -15,6 +15,8 @@ type FileSlotProps = {
     file: fileRecord | null;
     children?: React.ReactNode;
     onRemoveFile?: (fileId: string) => void;
+    /** Passed straight through to `FilePreview`, which uses it to recognise an `R7F` request. */
+    ownerNodeId?: string;
 };
 
 /**
@@ -25,6 +27,7 @@ type FileSlotProps = {
  */
 function areFileSlotPropsEqual(prev: FileSlotProps, next: FileSlotProps) {
     if (prev.file !== next.file || prev.onRemoveFile !== next.onRemoveFile) return false;
+    if (prev.ownerNodeId !== next.ownerNodeId) return false;
     if (next.file) return true;
     return prev.children === next.children;
 }
@@ -33,6 +36,7 @@ function FileSlotImpl({
     file,
     children,
     onRemoveFile,
+    ownerNodeId,
 }: FileSlotProps) {
     if (!file) {
         return <div className={classes.slot}>{children}</div>;
@@ -54,7 +58,7 @@ function FileSlotImpl({
                     x
                 </button>
             ) : null}
-            <FilePreview file={file} />
+            <FilePreview file={file} ownerNodeId={ownerNodeId} />
         </div>
     );
 }

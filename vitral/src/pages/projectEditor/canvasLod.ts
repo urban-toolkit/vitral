@@ -39,3 +39,34 @@ export function lodForZoom(zoom: number, current: CanvasLod): CanvasLod {
     if (zoom < ZOOM_LOD_NEAR_MIN) return "mid";
     return "near";
 }
+
+/**
+ * Where the cluster halos and their oversized titles come in (`canvasClusterHalos.ts`).
+ *
+ * A third boundary on the same axis, and it belongs in this file rather than in
+ * `canvasAbstraction.ts` for the same reason the two above do: it changes only *how the canvas
+ * paints*, never what is on it. It is written to the wrapper as an attribute from the same animation
+ * frame, so crossing it costs one style recalculation and no React work at all.
+ *
+ * The full ladder, zoom descending, now reads:
+ *
+ *   0.850  Detail <-> Threads          (`levelForZoom`)
+ *   0.550  cards drop to title only    (`lodForZoom`)
+ *   0.420  Threads <-> Overview        (`levelForZoom`)
+ *   0.300  cluster halos and titles    (here)
+ *   0.180  cards become plain boxes    (`lodForZoom`)
+ *
+ * 0.300 sits *below* the Overview boundary on purpose. Arriving at Overview should show the glyphs
+ * themselves — they are still readable at 0.42, and the halo would be answering a question the reader
+ * has not asked yet. A further step out is where a glyph's own 16px title falls under 5px and the
+ * halo becomes the only thing that can still say what the reader is looking at.
+ *
+ * Symmetric, like the other two: the same zoom in both directions, so a gesture that crosses the
+ * boundary and comes straight back lands exactly where it started. See the hysteresis note above.
+ */
+export const ZOOM_CLUSTER_HALO_MAX = 0.3;
+
+export function showsClusterHalos(zoom: number): boolean {
+    if (!Number.isFinite(zoom) || zoom <= 0) return false;
+    return zoom <= ZOOM_CLUSTER_HALO_MAX;
+}

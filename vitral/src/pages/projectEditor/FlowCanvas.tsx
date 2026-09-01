@@ -5,6 +5,8 @@ import type { edgeType, nodeType } from "@/config/types";
 import type { CursorMode } from "@/pages/projectEditor/types";
 import { ActivityDropRings, type ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
 import { CardSpawnBoxes } from "@/pages/projectEditor/CardSpawnBoxes";
+import { ClusterHalos } from "@/pages/projectEditor/ClusterHalos";
+import type { ClusterHaloTarget } from "@/pages/projectEditor/canvasClusterHalos";
 import type { ActivityDropTarget, CardSpawnTarget } from "@/pages/projectEditor/canvasGeometry";
 import { RelationEdgeMarkerDefs } from "@/components/edges/RelationEdge";
 import { useCanvasLod } from "@/pages/projectEditor/useCanvasLod";
@@ -25,6 +27,17 @@ export const CANVAS_MOVING_CLASS = "canvas-moving";
 
 /** How long after a gesture stops before full-fidelity painting comes back. */
 const CANVAS_REST_DELAY_MS = 140;
+
+/**
+ * The viewport's zoom bounds, exported because anything that computes a zoom of its own has to clamp
+ * to the same pair or it will ask for a viewport React Flow silently refuses.
+ *
+ * `CANVAS_MIN_ZOOM` has to stay below the Threads -> Overview boundary (0.420, see
+ * `canvasAbstraction.ts`) or that level can never be reached. `CANVAS_MAX_ZOOM` is React Flow's own
+ * default, stated here rather than left implicit.
+ */
+export const CANVAS_MIN_ZOOM = 0.03;
+export const CANVAS_MAX_ZOOM = 2;
 
 type FlowCanvasProps = {
     projectId: string;
@@ -52,6 +65,12 @@ type FlowCanvasProps = {
     /** Spawn boxes on the handles of every non-activity card. Shares `activityDropReason`. */
     cardSpawnTargets?: CardSpawnTarget[] | null;
     activityDropReason?: ActivityDropRingsReason;
+    /**
+     * One disc per phase or thread, for the zoomed-out titles. Empty at Detail, where there are no
+     * clusters to name. Whether they are *visible* is a CSS question keyed off the zoom tier, not a
+     * React one — see `ClusterHalos`.
+     */
+    clusterHalos?: ClusterHaloTarget[] | null;
     /** Provided only while at least one node sits away from its derived position. */
     onResetNodePositions?: (() => void) | null;
     miniMapBottomOffsetPx?: number;
@@ -107,6 +126,7 @@ export const FlowCanvas = memo(function FlowCanvas({
     activityDropTargets = null,
     cardSpawnTargets = null,
     activityDropReason = "drag",
+    clusterHalos = null,
     onResetNodePositions = null,
     miniMapBottomOffsetPx = 0,
     miniMapRightOffsetPx = 0,
@@ -120,7 +140,7 @@ export const FlowCanvas = memo(function FlowCanvas({
             ? styles.cursorNode
             : styles.cursorPointer;
 
-    const { wrapperRef, handleLodMove, handleLodInit } = useCanvasLod();
+    const { wrapperRef, haloScaleRef, handleLodMove, handleLodInit } = useCanvasLod();
     const restTimerRef = useRef<number | null>(null);
 
     // One handler, two consumers, both frame-rate callbacks that only read refs: the level of detail
@@ -173,6 +193,7 @@ export const FlowCanvas = memo(function FlowCanvas({
             ref={wrapperRef}
             className={`${styles.flowCanvas} ${cursorClassName}`}
             data-lod="near"
+            data-cluster-halo="off"
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
@@ -189,13 +210,17 @@ export const FlowCanvas = memo(function FlowCanvas({
             onMove={handleMove}
             onMoveStart={handleMoveStart}
             onMoveEnd={handleMoveEnd}
-            /* Has to stay below the Threads -> Overview boundary (0.420, see `canvasAbstraction.ts`)
-               or that level can never be reached. Cheap to allow this far out now that the far tier
-               draws a card as a single box. */
-            minZoom={0.03}
+            /* Cheap to allow this far out now that the far tier draws a card as a single box. See
+               the constant for why the ceiling on this number is not negotiable. */
+            minZoom={CANVAS_MIN_ZOOM}
+            maxZoom={CANVAS_MAX_ZOOM}
             fitView
         >
             <RelationEdgeMarkerDefs />
+
+            {clusterHalos && clusterHalos.length > 0 ? (
+                <ClusterHalos targets={clusterHalos} scaleRef={haloScaleRef} />
+            ) : null}
 
             {activityDropTargets && activityDropTargets.length > 0 ? (
                 <ActivityDropRings targets={activityDropTargets} reason={activityDropReason} />

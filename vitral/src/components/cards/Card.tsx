@@ -348,6 +348,9 @@ function CardImpl(props: CardProps) {
 
                         <FileSlot
                             file={attachedFile}
+                            // So a reference like `R7F` can name this exact panel. See
+                            // `store/cardPreviewStore.ts`.
+                            ownerNodeId={props.id}
                             onRemoveFile={readOnly ? undefined : (fileId) => {
                                 if (!props.id) return;
                                 props.onDetachFile?.(props.id, fileId);

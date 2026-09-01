@@ -174,14 +174,16 @@ Covered areas:
 ## 8) Blueprint Track
 
 ### Contract
-- Requirement-to-blueprint relationships create blueprint timeline events.
+- **Every live blueprint component has a timeline marker, from the moment it is created.** It is dated from the component's own `createdAt`, so the marker sits where the component sits on the canvas time axis. A component that answers no requirement yet is drawn dashed and dimmed rather than omitted.
+- **Markers are derived from the graph, never written into the document.** Opening a project must not change it: back-filling markers would alter the save hash and append a revision snapshot to the provenance record. A derived marker also means guests and readers of a published project see the same track the owner does.
+- Requirement-to-blueprint relationships are what the track *emphasises*, not what brings a component onto it.
 - Blueprint timeline events can be connected following canvas graph relations.
 - If the same GitHub file is attached to blueprint component and codebase subtrack, timeline association is represented.
 
 ### Tray Contract
 - The blueprint lives in a floating tray, not on the temporal canvas. Components can be positioned and wired there freely; group boxes can be dissolved so their contents become loose.
 - A component is attached to a requirement by dragging it onto that card. Attaching renders it on the canvas beside the requirement and leaves it in the tray; one component may answer several requirements.
-- Detaching is deleting the relation. The component leaves the canvas and stays in the tray, and re-attaching reuses the original dated blueprint event.
+- Detaching is deleting the relation. The component leaves the canvas and stays in the tray, and its timeline marker goes back to the dashed "answers nothing yet" state rather than disappearing.
 - The tray is not scoped by the playhead. The canvas rendering of a component is, through the requirement it answers.
 - Existing projects need no migration: the same nodes render in the tray at their stored positions.
 
@@ -213,10 +215,20 @@ Covered areas:
 - Export/import project as `.vi` binary.
 - Imported `.vi` opens in review-only mode.
 - Export project as a **deterministic** markdown report, generated from the Focus+Context
-  aggregations. Machine-written prose is limited to an optional abstract and is visibly marked.
+  aggregations. Machine-written prose is limited to an optional abstract, fenced by
+  `vitral:abstract:begin` / `:end` comments so it stays findable and removable by a script.
+- Cards the researcher marked **not relevant** are excluded from the report body. They are named once,
+  under "Set aside", because the judgement is part of the record; nothing else in the document
+  reproduces their content.
 - Every artifact the report names carries a short code (`P1` phase, `A3` thread, `R7`/`I2`/`C4`/`O5`/`H1`
   card, `B1` component, `F2` file, `S1` stage, `E1` milestone). The letter fixes the level of
-  abstraction; the code resolves to an anchor in the document and to a canvas viewpoint.
+  abstraction; the code resolves to an anchor in the document and to a canvas viewpoint. An optional
+  suffix chooses a different view of the same artifact — `R7P` its phase, `R7A` its root activity,
+  `R7T` its thread, `R7F` its attached file, `R7AF` that activity's attached file — and a **How to
+  read a reference** section explains the whole grammar. Each entry in the card index carries its
+  further views as links, written `R1 (P / A / T / F)`, with any view the artifact does not have left
+  out. The canvas takes the same references in its **Go to reference** box, and following a link from
+  an exported document opens the canvas at what the reference names.
 - Export/import project setup/settings as JSON.
 
 ### `.vi` Payload Contract (Current)
@@ -255,7 +267,8 @@ Covered areas:
 | VA component search | Per-component BM25F index, canvas selection of requirement cards | Select one or more requirement cards; verify the component search enables, returns a blended list drawn from more than one paper, and that each result names its source paper and block path. |
 | Blueprint tray | Blueprint nodes/edges in `flow`, stored positions | Drag a whole paper and single components into the tray; move and wire them; reload and verify positions and wiring persisted. |
 | Dissolve a group box | Group `deletedAt`, child `parentId`/position | Dissolve a box; verify children stay put on screen, become freely placeable, and the box is soft-deleted rather than removed. |
-| Attach / detach a component | `tackled in` edge, blueprint events | Attach a component to a requirement; verify it appears on the canvas orbiting that requirement, stays in the tray, and mints a timeline event. Detach and re-attach; verify the original event is reused. |
+| Create a component | Blueprint component node, blueprint events | Make a component in the tray and attach nothing to it; verify a marker appears on the Blueprint track, dated to the component's own creation, drawn dashed and dimmed. |
+| Attach / detach a component | `tackled in` edge, blueprint events | Attach a component to a requirement; verify it appears on the canvas orbiting that requirement, stays in the tray, and its existing timeline marker stops being dashed. Detach and re-attach; verify the marker keeps its original date throughout. |
 | Soft-delete edge reconnect | Edge `createdAt/deletedAt`, active-edge duplicate checks | Create edge, delete it, reconnect same relation; verify reconnect succeeds and history is preserved. |
 | Blueprint parent box resize | Group/child geometry, active child filtering, compaction logic | Delete/move children in parent group; verify width and height shrink/expand correctly and ignore deleted children. |
 | Knowledge subtracks and event grouping | Knowledge events, `treeId`, subtrack assignments | Create subtrack, drag grouped/standalone events, reload and verify grouping/placement persists. |

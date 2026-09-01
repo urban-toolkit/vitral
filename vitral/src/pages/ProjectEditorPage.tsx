@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
-import { useNavigate, useParams } from "react-router-dom";
-import { ReactFlowProvider, useReactFlow, type Connection, type EdgeChange, type NodeChange, type NodeProps, type NodeTypes } from "@xyflow/react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { ReactFlowProvider, useReactFlow, useStore as useReactFlowStore, type Connection, type EdgeChange, type NodeChange, type NodeProps, type NodeTypes } from "@xyflow/react";
 
 import type { AppDispatch, RootState } from "@/store";
 import type {
@@ -72,7 +72,6 @@ import { removeFile, selectAllFiles } from "@/store/filesSlice";
 import { selectAllGitHubEvents, setGithubEvents } from "@/store/gitEventsSlice";
 import {
     addSystemScreenshotMarker,
-    addBlueprintEvent,
     addDefaultStage,
     addStage,
     changeStageBoundary,
@@ -88,7 +87,6 @@ import {
     selectSystemScreenshotMarkers,
     reconcileBlueprintCodebaseAutoLinks,
     selectTimelineStartEnd,
-    updateBlueprintEvent,
     updateStage,
 } from "@/store/timelineSlice";
 
@@ -102,10 +100,13 @@ import { resolveRouterBasename } from "@/routing";
 import {
     buildLocatorIndex,
     codeToUrl,
-    describeLocatorStatus,
     locatorGraphScope,
-    parseLocatorCode,
+    resolveLocatorReference,
 } from "@/pages/projectEditor/locators";
+import {
+    clearCardFilePreviewRequest,
+    requestCardFilePreview,
+} from "@/store/cardPreviewStore";
 import {
     acceptAbstract,
     buildAbstractPayload,
@@ -120,6 +121,7 @@ import { buildActivityOrbitLayout, buildActivityTreeMembership } from "@/pages/p
 import {
     connectionKindFromEdge,
     edgeLabelFrom,
+    isEdgeActive,
     isNodeActive,
     normalizeNodeLabel,
     ITERATION_OF_EDGE_LABEL,
@@ -135,6 +137,7 @@ import {
     type CanvasLevel,
 } from "@/pages/projectEditor/canvasAbstraction";
 import { buildActivityClusters } from "@/pages/projectEditor/canvasClusters";
+import { buildClusterHalos } from "@/pages/projectEditor/canvasClusterHalos";
 import { buildSalienceIndex } from "@/pages/projectEditor/canvasSalience";
 import { CanvasLevelControl } from "@/pages/projectEditor/CanvasLevelControl";
 import { ClusterGlyph, type ClusterGlyphProps } from "@/components/cards/ClusterGlyph";
@@ -154,7 +157,7 @@ import {
 import { describeBlockedRemovals, planEdgeRemovals, withArticle } from "@/pages/projectEditor/graphInvariants";
 import { CanvasNotice } from "@/pages/projectEditor/CanvasNotice";
 import type { ActivityDropRingsReason } from "@/pages/projectEditor/ActivityDropRings";
-import { FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
+import { CANVAS_MAX_ZOOM, CANVAS_MIN_ZOOM, FlowCanvas } from "@/pages/projectEditor/FlowCanvas";
 import { CanvasChatOverlay, type CanvasChatEntry } from "@/pages/projectEditor/CanvasChatOverlay";
 import { CanvasHighlightBridge } from "@/pages/projectEditor/CanvasHighlightBridge";
 import {
@@ -527,7 +530,26 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
     const dispatch = useDispatch<AppDispatch>();
     const navigate = useNavigate();
+    // Read for one thing only: `?ref=`, the other end of the links the exported report prints. See
+    // the deep-link effect below.
+    const [searchParams, setSearchParams] = useSearchParams();
     const { screenToFlowPosition, fitView, setCenter, getZoom } = useReactFlow();
+    // The pane's own size, for working out how far to zoom in on one node. Read from the store rather
+    // than measured, because that is the same number `setCenter` divides by; a subscription costs a
+    // render on resize and nothing else.
+    const flowWidth = useReactFlowStore((state) => state.width);
+    const flowHeight = useReactFlowStore((state) => state.height);
+    /**
+     * Whether React Flow has measured every node it was handed.
+     *
+     * Subscribed to for one reason: `<ReactFlow fitView>` in `FlowCanvas` is a **third** whole-graph
+     * fit, and it is the only one outside the `nodeFocusPendingRef` protocol, because it happens
+     * inside React Flow's own store — queued at init as `fitViewQueued` and resolved on the first
+     * flush where this flag goes up. The two effects below can be told to stand down; this one can
+     * only be waited out, and a reference arriving in the URL has to wait it out or be pulled back to
+     * the whole graph one frame after it lands.
+     */
+    const nodesMeasured = useReactFlowStore((state) => state.nodesInitialized);
 
     const [loading, setLoading] = useState(false);
     const [cursorMode, setCursorMode] = useState<CursorMode>("");
@@ -554,7 +576,29 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     /** How long to keep waiting for a target to be laid out before saying it could not be reached. */
     const FOCUS_DEADLINE_MS = 4000;
 
+    /**
+     * How much of the pane the target fills when a reference lands on it, in its tighter axis.
+     *
+     * Not 1: arriving at a card that fills the screen answers "here it is" and nothing about where it
+     * sits. Just under half leaves the ring of cards around it visible, which is the context half of
+     * Focus+Context doing its job at the moment of arrival.
+     */
+    const FOCUS_FIT_COVERAGE = 0.44;
+
+    /**
+     * The same fact as `pendingCanvasFocus`, readable from inside a `setTimeout`.
+     *
+     * Two other effects refit the **whole graph** on a `setTimeout(0)` — one when the filters change,
+     * one when the level or focus does — and going to a reference changes both, so all three timers
+     * are queued in the same tick and the two general ones run last and win. That is what made a
+     * typed `R2` land on the whole activity tree instead of on R2: the camera did go to the card, and
+     * was then immediately pulled back out. A ref rather than the state because those callbacks close
+     * over the render that scheduled them.
+     */
+    const nodeFocusPendingRef = useRef(false);
+
     const requestNodeFocus = useCallback((nodeId: string, mode: "pan" | "fit" = "pan") => {
+        nodeFocusPendingRef.current = true;
         setPendingCanvasFocus({ nodeId, mode, deadlineAt: Date.now() + FOCUS_DEADLINE_MS });
     }, []);
     const [timelineOpen, setTimelineOpen] = useState(false);
@@ -782,36 +826,122 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     );
 
     /**
-     * The blueprint events whose component still exists — the only ones the track draws.
+     * What the Blueprint track draws: one marker per live component, plus any stored event that still
+     * has a component behind it.
      *
-     * A `BlueprintEvent` is minted by the attach gesture and lives in the timeline slice, which knows
-     * nothing about `flow.nodes`. Deleting the component therefore left the event behind, and the
-     * track drew it dimmed and dashed — the styling for "this component answers no requirement",
-     * which is a true and useful thing to say about a component that *exists*. Said about one that
-     * has been deleted it is a ghost: the researcher removed it and the timeline kept a marker for it
-     * with no way to reach, inspect or clear it.
+     * ## Derived, not minted
      *
-     * Filtered rather than deleted from the slice, for two reasons. The record of the event is what
-     * the report and the document are built from, and destroying it on a *soft* delete would be the
-     * one irreversible step in a chain that is otherwise all recoverable. And a filter fixes the
-     * projects that already carry stale events, which deleting-on-delete could only prevent going
-     * forward.
+     * A marker is a **view of a node**, in exactly the sense contract 28 means when it says the tray
+     * and the canvas are two surfaces over one graph. The component's existence, its name, its paper
+     * and its date are all already in `flow.nodes`; writing a second copy of them into the timeline
+     * slice buys nothing and costs three things, all of which appeared the moment the track started
+     * covering unattached components as well as attached ones:
+     *
+     * - **Opening a project would edit it.** Back-filling a marker for every component a researcher
+     *   had made but never attached is a write, and `useDocumentSync` cannot tell it from a real one:
+     *   it changes the save hash, so merely opening a study would append a revision snapshot to the
+     *   very provenance record this application exists to keep.
+     * - **Only owners would see them.** Minting runs behind `interactionLocked`, so a guest or the
+     *   reader of a published project would get the old track — and it would silently change the next
+     *   time the owner happened to open the project.
+     * - **A guessed date would become a fact.** A component saved before component timestamps existed
+     *   has no `createdAt`, and any fallback is a guess. Derived, the guess is recomputed and can be
+     *   corrected; persisted, it is indistinguishable from something the researcher recorded.
+     *
+     * A stored event still wins on `occurredAt` where one exists, so nothing moves on the track for a
+     * project that already carries them. Everything else is read from the node, which means renaming a
+     * component renames its marker with no reconciliation pass at all.
+     *
+     * ## Why the filter on stored events stays
+     *
+     * Deleting a component used to leave its event behind, and the track drew it dimmed and dashed —
+     * the styling for "this component answers no requirement", which is true and useful about a
+     * component that *exists*. Said about one that has been deleted it is a ghost. Filtered rather
+     * than deleted from the slice, because destroying a record on a *soft* delete would be the one
+     * irreversible step in a chain that is otherwise all recoverable, and because a filter also fixes
+     * the projects that already carry stale rows.
      *
      * `liveNodes`, not `timelineContextNodes`: the needle gates whole activity trees and blueprint
      * structure belongs to none, so a deleted component is gone from this set whatever the playhead
      * is doing — the same answer the tray and the canvas give.
      */
-    const liveBlueprintEvents = useMemo(() => {
+    const liveBlueprintEvents = useMemo<BlueprintEvent[]>(() => {
         const liveNodeIds = new Set(liveNodes.map((node) => node.id));
-        return blueprintEvents.filter((eventData) => {
+        const kept = blueprintEvents.filter((eventData) => {
             const componentNodeId = typeof eventData.componentNodeId === "string"
                 ? eventData.componentNodeId.trim()
                 : "";
-            // An event with no component named is not about a component, so there is nothing to
-            // have been deleted. Those are left alone.
+            // An event naming no component is not about one, so there is nothing to have been
+            // deleted. Those are left alone.
             if (componentNodeId === "") return true;
             return liveNodeIds.has(componentNodeId);
         });
+
+        const storedByComponentId = new Map<string, BlueprintEvent>();
+        for (const eventData of kept) {
+            const componentNodeId = typeof eventData.componentNodeId === "string"
+                ? eventData.componentNodeId.trim()
+                : "";
+            if (componentNodeId !== "") storedByComponentId.set(componentNodeId, eventData);
+        }
+
+        const markers: BlueprintEvent[] = [];
+        for (const node of liveNodes) {
+            if (normalizeNodeLabel(String(node.data?.label ?? "")) !== "blueprint_component") continue;
+
+            const componentData = (node.data ?? {}) as Record<string, unknown>;
+            const blueprintComponent = componentData.blueprintComponent
+                && typeof componentData.blueprintComponent === "object"
+                ? componentData.blueprintComponent as Record<string, unknown>
+                : null;
+            const stored = storedByComponentId.get(node.id);
+            const createdAt = typeof componentData.createdAt === "string"
+                && componentData.createdAt.trim() !== ""
+                ? componentData.createdAt
+                : null;
+            // A component with neither a stored event nor a timestamp of its own has no honest place
+            // on a time axis, and guessing one would put a date on the track that nothing in the
+            // document supports. Only documents predating component timestamps can reach this; every
+            // creation path in the tray stamps one.
+            if (!stored && createdAt === null) continue;
+
+            markers.push({
+                id: stored?.id ?? `blueprint-component:${node.id}`,
+                // Read off the node every time, so a rename reaches the track without a write.
+                name: typeof componentData.title === "string" && componentData.title.trim() !== ""
+                    ? componentData.title
+                    : "Blueprint component",
+                // A stored event keeps the instant it was minted with, so an existing project's
+                // markers do not move; otherwise the component's own moment. One of the two always
+                // exists by the guard above.
+                occurredAt: stored?.occurredAt ?? createdAt!,
+                componentNodeId: node.id,
+                paperDescription: blueprintComponent && typeof blueprintComponent.description === "string"
+                    ? blueprintComponent.description
+                    : "",
+                referenceCitation: blueprintComponent && typeof blueprintComponent.referenceCitation === "string"
+                    ? blueprintComponent.referenceCitation
+                    : "",
+                paperTitle: typeof componentData.blueprintPaperTitle === "string"
+                    ? componentData.blueprintPaperTitle
+                    : undefined,
+                blueprintFileName: typeof componentData.blueprintFileName === "string"
+                    ? componentData.blueprintFileName
+                    : undefined,
+            } as BlueprintEvent);
+        }
+
+        // Stored rows naming no component keep their place; every component-backed one is already
+        // represented above.
+        for (const eventData of kept) {
+            const componentNodeId = typeof eventData.componentNodeId === "string"
+                ? eventData.componentNodeId.trim()
+                : "";
+            if (componentNodeId !== "") continue;
+            markers.push(eventData);
+        }
+
+        return markers;
     }, [blueprintEvents, liveNodes]);
     const activityTreeMembership = useMemo(
         () => buildActivityTreeMembership(liveNodes, liveEdges),
@@ -1575,65 +1705,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
     }, []);
 
-    const maybeCreateBlueprintEventFromConnection = useCallback((
-        sourceNode: nodeType | undefined,
-        targetNode: nodeType | undefined,
-        sourceLabel: string,
-        targetLabel: string,
-    ) => {
-        if (interactionLocked) return;
-        const sourceIsTaskOrRequirement = sourceLabel === "requirement";
-        const targetIsTaskOrRequirement = targetLabel === "requirement";
-        const sourceIsBlueprintComponent = sourceLabel === "blueprint_component";
-        const targetIsBlueprintComponent = targetLabel === "blueprint_component";
-
-        if (
-            !((
-                sourceIsTaskOrRequirement && targetIsBlueprintComponent
-            ) || (
-                targetIsTaskOrRequirement && sourceIsBlueprintComponent
-            ))
-        ) {
-            return;
-        }
-
-        const componentNode = sourceIsBlueprintComponent ? sourceNode : targetNode;
-        if (!componentNode) return;
-
-        const eventId = `blueprint-component:${componentNode.id}`;
-        const hasEvent = blueprintEvents.some((event) => event.id === eventId);
-        if (hasEvent) return;
-
-        const componentData = componentNode.data as Record<string, unknown>;
-        const blueprintComponent = (
-            componentData.blueprintComponent &&
-            typeof componentData.blueprintComponent === "object"
-        )
-            ? (componentData.blueprintComponent as Record<string, unknown>)
-            : null;
-
-        dispatch(addBlueprintEvent({
-            id: eventId,
-            name: typeof componentData.title === "string" && componentData.title.trim() !== ""
-                ? componentData.title
-                : "Blueprint component",
-            occurredAt: resolveActionTimestamp(),
-            componentNodeId: componentNode.id,
-            paperDescription: blueprintComponent && typeof blueprintComponent.description === "string"
-                ? blueprintComponent.description
-                : "",
-            referenceCitation: blueprintComponent && typeof blueprintComponent.referenceCitation === "string"
-                ? blueprintComponent.referenceCitation
-                : "",
-            paperTitle: typeof componentData.blueprintPaperTitle === "string"
-                ? componentData.blueprintPaperTitle
-                : undefined,
-            blueprintFileName: typeof componentData.blueprintFileName === "string"
-                ? componentData.blueprintFileName
-                : undefined,
-        }));
-    }, [dispatch, blueprintEvents, interactionLocked, resolveActionTimestamp]);
-
     const handleConnectSelection = useCallback((option: EdgeConnectOption) => {
         if (interactionLocked) return;
         setPendingConnectionMenu((pending) => {
@@ -1645,8 +1716,6 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     ? REFERENCED_BY_EDGE_LABEL
                     : ITERATION_OF_EDGE_LABEL;
             const kind = option === "default" ? undefined : option;
-            const sourceNode = nodes.find((node) => node.id === pending.sourceId);
-            const targetNode = nodes.find((node) => node.id === pending.targetId);
 
             const alreadyConnected = edges.some((edge) => (
                 edge.source === pending.sourceId &&
@@ -1677,16 +1746,10 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 }]));
             }
 
-            maybeCreateBlueprintEventFromConnection(
-                sourceNode,
-                targetNode,
-                pending.sourceLabel,
-                pending.targetLabel,
-            );
 
             return null;
         });
-    }, [dispatch, interactionLocked, edges, nodes, maybeCreateBlueprintEventFromConnection, resolveActionTimestamp]);
+    }, [dispatch, interactionLocked, edges, resolveActionTimestamp]);
 
     const handleConnect = useCallback((connection: Connection) => {
         if (interactionLocked) return;
@@ -1910,13 +1973,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
 
     /**
-     * Go to a code.
+     * Go to a reference.
      *
      * The reader's half of the shared reference system: somebody has `C3` from a paper, a colleague or
      * the exported report, and wants to see the thing it names. The code carries its own level of
-     * abstraction, so this does not merely centre a node — it puts the canvas at the altitude the code
-     * claims, opens the branch the target sits in, and leaves the rest of the study abstract. That is
-     * Focus+Context arrived at by citation rather than by clicking.
+     * abstraction and the optional suffix carries the reader's, so this does not merely centre a node
+     * — it puts the canvas at the altitude that was asked for, opens the branch the target sits in,
+     * and leaves the rest of the study abstract. That is Focus+Context arrived at by citation rather
+     * than by clicking. `resolveLocatorReference` owns the whole of that decision; everything below is
+     * the reveal.
      *
      * The index is built on demand rather than memoised. It is O(n log n) over the whole graph and
      * would otherwise be recomputed on every card edit for a lookup that happens when somebody types
@@ -1928,16 +1993,25 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
      * does the same, blueprint components are not drawn at all unless their chip is on, and
      * `levelFollowsZoom` would re-derive the level from the zoom the fit produces and throw the focus
      * away on arrival. Only after all of that is the camera asked to move.
+     *
+     * **Every filter comes back on, not just the target's own.** `LOCATOR_PHASE_CONTRACT` says phase
+     * codes are only meaningful over the unfiltered live graph at the latest playhead, and the canvas
+     * builds its clusters over the *filtered* nodes — so with a chip off, the `vz:c:` id the index
+     * resolved and the one the canvas drew are two different phases and `R7P` lands nowhere. Restoring
+     * the whole set is what makes the two agree. A reference is an address into the project, not into
+     * the current screen; clearing what could hide it is the point rather than a side effect.
      */
-    const handleGoToLocatorCode = useCallback((raw: string): boolean => {
+    const handleGoToLocatorCode = useCallback((
+        raw: string,
+        /**
+         * The node the link was written against, from `?n=`. A claim to check, never a destination
+         * in itself — `resolveLocatorReference` decides what to do when it and the code disagree.
+         * Omitted by the reference box, where a typed code is the only claim there is.
+         */
+        expectedTargetId?: string | null,
+    ): boolean => {
         const typed = raw.trim();
         if (typed === "") return false;
-
-        const parsed = parseLocatorCode(typed);
-        if (!parsed) {
-            showCanvasNotice(`"${typed}" is not a code this project uses. Codes look like A3, R7 or C2.`);
-            return false;
-        }
 
         const nodes = nodesRef.current;
         const edges = edgesRef.current;
@@ -1976,40 +2050,52 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             asOf: { version: null, capturedAt: new Date().toISOString() },
         });
 
-        const target = index.byCode.get(parsed.code);
-        if (!target) {
-            showCanvasNotice(`${parsed.code} does not name anything in this project.`);
+        // Parsing, the lens, the status guard and the viewpoint are all one decision, and it is the
+        // report's decision too — so it is made in `locators.ts`, where the document can reach it.
+        const resolution = resolveLocatorReference(index, typed, expectedTargetId);
+        if (!resolution.ok) {
+            showCanvasNotice(resolution.reason);
             return false;
         }
-        // A code the project can name but cannot open says so, and does not move the canvas — the same
-        // rule as the source icon that stays inert when its file is gone.
-        if (target.status !== "live") {
-            showCanvasNotice(describeLocatorStatus(target));
-            return false;
+        const { target, viewpoint, openAttachmentOf } = resolution;
+
+        // A file lens that names a card holding nothing is refused *before* the canvas moves. Moving
+        // and then saying "there is no file" would leave the reader somewhere they did not ask to be,
+        // with no way to tell whether the reference or the card was wrong.
+        let attachmentFileId: string | null = null;
+        if (openAttachmentOf !== null) {
+            const owner = nodes.find((node) => node.id === openAttachmentOf);
+            const ownerData = (owner?.data ?? {}) as Record<string, unknown>;
+            const ids = Array.isArray(ownerData.attachmentIds)
+                ? ownerData.attachmentIds.filter((id): id is string => typeof id === "string")
+                : [];
+            // The same choice `Card` makes: the first id that still resolves to a stored file. A card
+            // holds one attachment now, but projects saved before that rule can carry several.
+            attachmentFileId = ids.find((id) => allFiles.some((file) => file.id === id)) ?? null;
+            if (attachmentFileId === null) {
+                const ownerCode = index.byTargetId.get(openAttachmentOf)?.code ?? target.code;
+                showCanvasNotice(`${resolution.reference} — ${ownerCode} has no file attached to it.`);
+                return false;
+            }
         }
 
         // 1. The needle gates whole activity trees, so a scrubbed playhead can hide the target's tree
         //    with no explanation.
         setPlaybackAt(null);
 
-        // 2. Clear the search filter and put the target's own label chip back on.
-        const label = normalizeNodeLabel(target.describedAs);
-        resetFiltersForCanvasCreation(
-            CARD_LABELS.includes(label as cardLabel) ? (label as cardLabel) : undefined,
-        );
+        // 2. Clear the search filter, and restore every label chip — see the note above about phase
+        //    ids being derived from whatever set the canvas was left filtered to.
+        resetFiltersForCanvasCreation();
+        setSelectedLabels([...CARD_LABELS]);
 
         // 3. The provenance chips and the blueprint chip hide cards independently of the label chips.
-        const targetNode = nodes.find((node) => node.id === target.targetId);
-        if (targetNode) {
-            if (isModelDerivedNodeData(targetNode.data)) setModelDerivedVisible(true);
-            else setAuthoredVisible(true);
-        }
+        //    Both provenance chips go on for the same reason all the label chips do: the index was
+        //    numbered over the unfiltered graph, so the canvas has to be showing it.
+        setModelDerivedVisible(true);
+        setAuthoredVisible(true);
+        const label = normalizeNodeLabel(target.describedAs);
         if (label === "blueprint_component" || label === "blueprint_group" || label === "blueprint") {
             setBlueprintComponentsVisible(true);
-            // A component is only drawn beside a requirement it answers, so that chip has to be on too.
-            setSelectedLabels((previous) => (
-                previous.includes("requirement") ? previous : [...previous, "requirement"]
-            ));
         }
 
         // 4. Non-negotiable: with follow-zoom on, the fit below re-derives the level from the zoom it
@@ -2019,12 +2105,34 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         // 5. Level and focus in one commit. Deliberately not `handleCanvasLevelChange`, which clears
         //    the focus — correctly, because that handler is the user clicking a level segment, where
         //    starting from nowhere is the right behaviour.
-        canvasLevelRef.current = target.viewpoint.level;
-        setCanvasLevel(target.viewpoint.level);
-        setCanvasFocus(target.viewpoint.focus);
+        canvasLevelRef.current = viewpoint.level;
+        setCanvasLevel(viewpoint.level);
+        setCanvasFocus(viewpoint.focus);
 
-        // 6. Finally the camera, once the layout has actually placed the target.
-        if (target.viewpoint.nodeId) requestNodeFocus(target.viewpoint.nodeId, "fit");
+        // 6. The camera, once the layout has actually placed the target.
+        if (viewpoint.nodeId) requestNodeFocus(viewpoint.nodeId, "fit");
+
+        // 7. And the file, if one was asked for. The request waits in its own store until the card
+        //    mounts — which is well after this returns, since the level change, the filter reset and
+        //    the relayout all have to land first.
+        if (openAttachmentOf !== null && attachmentFileId !== null) {
+            requestCardFilePreview(openAttachmentOf, attachmentFileId);
+        } else {
+            // A reference that is not asking for a file supersedes one that was: two panels opening
+            // from two references in a row is nobody's intent.
+            clearCardFilePreviewRequest();
+        }
+
+        // 8. Last, because a later and more serious failure should replace it rather than queue
+        //    behind it: if the camera then times out, "that card could not be shown" is the sentence
+        //    that matters. The reader is looking at the right artifact under a number their document
+        //    does not use, and nothing on screen can tell them that on its own.
+        if (resolution.renumberedFrom !== null) {
+            showCanvasNotice(
+                `${resolution.renumberedFrom} was renumbered ${target.code} since that link was`
+                + ` written. Showing what it named then: ${target.title}.`,
+            );
+        }
         return true;
     }, [
         allFiles,
@@ -2238,6 +2346,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         const connections: BlueprintEventConnection[] = [];
         for (const edge of edges) {
+            // Soft-deleted wiring is wiring the researcher removed. Nothing else in this memo looked
+            // at `deletedAt`, which was survivable only while an unattached component had no marker
+            // for an arc to land on.
+            if (!isEdgeActive(edge)) continue;
+
             const sourceNode = nodeById.get(edge.source);
             const targetNode = nodeById.get(edge.target);
             if (!sourceNode || !targetNode) continue;
@@ -2245,6 +2358,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             const sourceLabel = normalizeNodeLabel(String(sourceNode.data?.label ?? ""));
             const targetLabel = normalizeNodeLabel(String(targetNode.data?.label ?? ""));
             if (sourceLabel !== "blueprint_component" || targetLabel !== "blueprint_component") continue;
+
+            /**
+             * Both ends have to answer a requirement.
+             *
+             * `feeds into` is a claim about the system, not about the study: `canvasBlueprintEdges`
+             * refuses to draw it and `buildActivityTreeMembership` refuses to walk it, both on the
+             * grounds that it belongs to the tray. Until markers were derived, "both ends have an
+             * event" happened to mean "both ends are attached", and that coincidence was the only
+             * thing keeping a dropped paper's internal wiring off the timeline. Now every live
+             * component has a marker, so the real condition has to be asked directly.
+             */
+            if (!emphasizedBlueprintComponentIds.has(sourceNode.id)) continue;
+            if (!emphasizedBlueprintComponentIds.has(targetNode.id)) continue;
 
             const sourceEvent = blueprintEventByComponentNodeId.get(sourceNode.id);
             const targetEvent = blueprintEventByComponentNodeId.get(targetNode.id);
@@ -2273,7 +2399,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         return connections;
-    }, [edges, liveBlueprintEvents, nodes]);
+    }, [edges, emphasizedBlueprintComponentIds, liveBlueprintEvents, nodes]);
     // Highlight used to be injected here as `node.style`, which cloned node objects and so invalidated
     // salience, clustering, abstraction and the layout on every hover. It now reaches the nodes
     // through `canvasHighlightStore`, leaving this memo to do only what its name says.
@@ -2402,32 +2528,162 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
         const target = displayedNodes.find((node) => node.id === pendingCanvasFocus.nodeId);
         if (!target) {
-            if (Date.now() < pendingCanvasFocus.deadlineAt) return;
+            // The deadline needs a timer of its own. This effect only re-runs when one of its
+            // dependencies changes, and a target that never arrives is very often a target whose
+            // arrival would have been the only thing left to change — so without this the request
+            // would sit here, `nodeFocusPendingRef` would stay raised, and the next whole-graph refit
+            // would be skipped for a focus that had already given up.
+            if (Date.now() < pendingCanvasFocus.deadlineAt) {
+                const wake = window.setTimeout(
+                    () => setPendingCanvasFocus((current) => (current ? { ...current } : current)),
+                    Math.max(16, pendingCanvasFocus.deadlineAt - Date.now()),
+                );
+                return () => window.clearTimeout(wake);
+            }
+            nodeFocusPendingRef.current = false;
             setPendingCanvasFocus(null);
+            clearCardFilePreviewRequest();
             showCanvasNotice(
-                "That card could not be shown. It may be hidden by a filter, folded into a summary, or"
-                + " no longer part of the study.",
+                "That card could not be shown. It may be hidden by a filter, by the timeline needle,"
+                + " folded into a summary, or no longer part of the study.",
             );
+            // The refit this focus stood down (see `nodeFocusPendingRef`) never happened, and the
+            // level or filter change that asked for it still needs framing.
+            window.setTimeout(() => {
+                if (nodeFocusPendingRef.current) return;
+                fitView({ padding: 0.2, duration: 350 });
+            }, 0);
             return;
         }
 
         const size = nodeSizeOf(target);
         const mode = pendingCanvasFocus.mode;
+        let release: number | null = null;
         const timer = window.setTimeout(() => {
-            if (mode === "fit") {
-                void fitView({ nodes: [{ id: target.id }], padding: 0.28, duration: 420 });
-            } else {
-                void setCenter(
-                    target.position.x + (size.width / 2),
-                    target.position.y + (size.height / 2),
-                    { zoom: getZoom(), duration: 420 },
-                );
-            }
-            setPendingCanvasFocus(null);
+            /**
+             * One node, centred, at a zoom worked out here — deliberately not `fitView`.
+             *
+             * `fitView` looks like the right call and is not usable for this. It does not move the
+             * viewport: it sets `fitViewQueued` on React Flow's store and pushes a no-op onto the node
+             * batch, and the fit happens later, if a subsequent `setNodes` reaches `resolveFitView`
+             * while the flag is still up. On a controlled `nodes` prop that is not guaranteed — the
+             * batched update produces no diff, so the fallback is a `requestAnimationFrame` that has
+             * to survive every other write to the store in between. In practice a typed reference
+             * resolved and the camera never moved. Worse, the queued options are global and
+             * last-writer-wins, so a second `fitView` anywhere in the same tick silently replaces
+             * "this node" with "everything".
+             *
+             * `setCenter` writes the viewport there and then. The arithmetic below is what `fitView`
+             * would have done — the node at `FOCUS_FIT_COVERAGE` of the pane in its tighter axis,
+             * clamped to the same zoom bounds the canvas itself uses.
+             */
+            const zoom = mode === "fit"
+                ? Math.min(
+                    CANVAS_MAX_ZOOM,
+                    Math.max(
+                        CANVAS_MIN_ZOOM,
+                        Math.min(
+                            (flowWidth * FOCUS_FIT_COVERAGE) / size.width,
+                            (flowHeight * FOCUS_FIT_COVERAGE) / size.height,
+                        ),
+                    ),
+                )
+                : getZoom();
+            void setCenter(
+                target.position.x + (size.width / 2),
+                target.position.y + (size.height / 2),
+                { zoom, duration: 420 },
+            );
+            // Released from a timer of its own, not here.
+            //
+            // The two whole-graph refits schedule their timers in the same commit as this one, from
+            // effects declared *below* it, so the queue already holds them behind this callback.
+            // Scheduling the release now therefore puts it behind both of them, and they are
+            // guaranteed to read the flag while it is still set. Dropping it inline instead loses the
+            // race in the worst way — non-deterministically, because React Flow's `fitView` is queued
+            // rather than immediate (it sets `fitViewQueued` and waits for the next node flush), so
+            // whether the whole-graph fit overwrote this one depended on when a microtask ran.
+            release = window.setTimeout(() => {
+                nodeFocusPendingRef.current = false;
+                setPendingCanvasFocus(null);
+            }, 0);
         }, 0);
 
-        return () => window.clearTimeout(timer);
-    }, [pendingCanvasFocus, displayedNodes, setCenter, getZoom, fitView, showCanvasNotice]);
+        return () => {
+            window.clearTimeout(timer);
+            if (release !== null) window.clearTimeout(release);
+        };
+    }, [pendingCanvasFocus, displayedNodes, setCenter, getZoom, fitView, flowWidth, flowHeight, showCanvasNotice]);
+
+    /** Raised the moment the link is acted on, resolved or refused, so it is acted on exactly once. */
+    const deepLinkHandledRef = useRef(false);
+
+    /**
+     * A reader arriving from a link in an exported report.
+     *
+     * `codeToUrl` has always printed `?ref=R7&n=<target id>&at=<instant>` into every card entry of
+     * the markdown, and nothing ever read it back: following one opened the project at Detail with no
+     * focus, and the reader had to retype the code they had just clicked. This is the other end of
+     * that link, and it is deliberately nothing more than typing the code for them — the reveal, and
+     * every filter it has to put back, stays in `handleGoToLocatorCode`. Two implementations of it is
+     * exactly how a document and the application it describes come to disagree.
+     *
+     * **Why it waits for `nodesMeasured` and not for `status === "ready"` alone.** Two things sit
+     * between a loaded document and a camera that can move. `useDocumentSync` dispatches the graph
+     * before it awaits the file list, so there is a commit where the nodes are in the store, the
+     * status is still `loading`, and the early return above `<FlowCanvas>` means React Flow is not
+     * mounted at all — firing there hands `setCenter` a 0x0 pane and clamps the arrival zoom to
+     * `CANVAS_MIN_ZOOM`. And `<ReactFlow fitView>` fits the whole graph once on init, from inside
+     * React Flow's store, where `nodeFocusPendingRef` cannot reach it; that fit resolves on the flush
+     * that raises `nodesInitialized`, so waiting for the flag is what puts the arrival after it.
+     *
+     * **`at` is read and deliberately not honoured.** Honouring it means setting the playhead, which
+     * would undo step 1 of the reveal — and it is not the snapshot it looks like: the needle gates
+     * whole activity trees and replays no node history, so it cannot reproduce what the document
+     * described. What it *can* do is make `canvasClusters` disagree with the index the phase codes
+     * were numbered over, which is the precise failure restoring the filters exists to prevent, and
+     * arm `resolveActionTimestamp` to stamp a past instant on the next card an owner creates.
+     */
+    useEffect(() => {
+        if (deepLinkHandledRef.current) return;
+        if (status !== "ready") return;
+
+        const reference = searchParams.get("ref");
+        if (reference === null || reference.trim() === "") {
+            deepLinkHandledRef.current = true;
+            return;
+        }
+
+        // An empty canvas never raises `nodesInitialized` — React Flow starts it at `nodes.length >
+        // 0` — so waiting on it there would hang forever, silently. There is also nothing to wait
+        // for: with nothing live the code cannot resolve, and the call below produces only the
+        // sentence saying so, which is what the reader needs. `displayedNodes` rather than `nodes`,
+        // because a project whose cards were all deleted has nodes and an empty canvas, and deserves
+        // to be told which card was deleted rather than to wait.
+        if (displayedNodes.length > 0 && !nodesMeasured) return;
+
+        deepLinkHandledRef.current = true;
+        handleGoToLocatorCode(reference, searchParams.get("n"));
+
+        // Stripped only now, so a load that failed leaves the reference in the address bar to retry
+        // with. Through the router rather than `history.replaceState`: `createBrowserRouter` holds
+        // its own location and re-reads `window.location` only on `popstate`, so a raw call would
+        // leave the router holding a query string the address bar no longer shows — and
+        // `RequireSession` builds its post-login return path out of exactly that. `replace`, so the
+        // back button does not step onto a URL meaning "jump to R7" and fire it again.
+        const remaining = new URLSearchParams(searchParams);
+        remaining.delete("ref");
+        remaining.delete("n");
+        remaining.delete("at");
+        setSearchParams(remaining, { replace: true });
+    }, [
+        displayedNodes.length,
+        handleGoToLocatorCode,
+        nodesMeasured,
+        searchParams,
+        setSearchParams,
+        status,
+    ]);
 
     // Rings are shown while a file is dragged over the canvas and while the card tool is armed,
     // because both actions create a card that gets connected to the activity underneath.
@@ -2442,6 +2698,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (cursorMode === "node" || cursorMode === "text") return "tool";
         return null;
     }, [canvasIsEditable, cursorMode, fileDragActive, interactionLocked]);
+
+    /**
+     * A disc around each phase or thread, with its title set large enough to survive being zoomed
+     * away from. Built from the *displayed* graph, so it describes exactly what is on screen.
+     *
+     * Not gated on the zoom here: whether a halo is *visible* is decided in CSS from the attribute
+     * `useCanvasLod` writes on the pan/zoom frame, because a React gate would remount the overlay in
+     * the middle of the gesture that crossed the boundary. It is gated on the *level*, because at
+     * Detail there are no glyphs and therefore nothing to circle.
+     */
+    const clusterHalos = useMemo(() => (
+        canvasLevel === 3 ? null : buildClusterHalos(displayedNodes, displayedEdges)
+    ), [canvasLevel, displayedNodes, displayedEdges]);
 
     const activityDropTargets = useMemo(() => (
         activityDropReason ? getActivityDropTargets(displayedNodes) : null
@@ -2679,9 +2948,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
      * Attach a tray component to the requirement under the cursor, or say why not.
      *
      * The whole "attach" gesture is this one edge. A `tackled in` relation is what puts the
-     * component on the canvas at all (`blueprintSurfaces.canvasBlueprintNodes`), what mints the
-     * dated `BlueprintEvent` on the timeline, and what the researcher removes to detach — so there
-     * is nothing else to create, and nothing to keep in sync with the tray.
+     * component on the canvas at all (`blueprintSurfaces.canvasBlueprintNodes`), what stops its
+     * timeline marker being drawn as "answers nothing yet", and what the researcher removes to
+     * detach — so there is nothing else to create, and nothing to keep in sync with the tray.
+     *
+     * It no longer *mints* that marker: the Blueprint track derives one per live component from the
+     * moment it exists (`liveBlueprintEvents`). Detaching must therefore not delete anything on the
+     * timeline; the component still exists, and its marker goes back to the dashed state.
      *
      * The hit test reads `displayedNodes`, never the store `nodes`: the layout owns rendered
      * positions and the two coordinate spaces stopped agreeing when it did.
@@ -2738,18 +3011,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             },
         }]));
 
-        maybeCreateBlueprintEventFromConnection(
-            requirementNode,
-            componentNode,
-            "requirement",
-            "blueprint_component",
-        );
         requestNodeFocus(componentNode.id);
     }, [
         displayedNodes,
         dispatch,
         edges,
-        maybeCreateBlueprintEventFromConnection,
         requestNodeFocus,
         nodes,
         resolveActionTimestamp,
@@ -3054,27 +3320,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         const blueprintEventIdByComponentNodeId = new Map<string, string>();
-        const blueprintEventByComponentNodeId = new Map<string, typeof blueprintEvents[number]>();
-        const existingBlueprintEventIds = new Set<string>();
         for (const eventData of blueprintEvents) {
-            existingBlueprintEventIds.add(eventData.id);
             if (typeof eventData.componentNodeId === "string" && eventData.componentNodeId.trim() !== "") {
                 blueprintEventIdByComponentNodeId.set(eventData.componentNodeId, eventData.id);
-                blueprintEventByComponentNodeId.set(eventData.componentNodeId, eventData);
             }
         }
 
-        const missingBlueprintEvents: Array<{
-            id: string;
-            name: string;
-            occurredAt: string;
-            componentNodeId: string;
-            paperDescription?: string;
-            referenceCitation?: string;
-            paperTitle?: string;
-            blueprintFileName?: string;
-        }> = [];
-        const updatedBlueprintEvents: typeof blueprintEvents = [];
         const requiredAutoLinks: Array<{ blueprintEventId: string; codebaseSubtrackId: string }> = [];
         const requiredAutoLinkKeys = new Set<string>();
 
@@ -3083,76 +3334,21 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             if (nodeLabel !== "blueprint_component") continue;
 
             const componentData = node.data as Record<string, unknown>;
-            const blueprintComponent = (
-                componentData.blueprintComponent &&
-                typeof componentData.blueprintComponent === "object"
-            )
-                ? (componentData.blueprintComponent as Record<string, unknown>)
-                : null;
-            const nextEventName = typeof componentData.title === "string" && componentData.title.trim() !== ""
-                ? componentData.title
-                : "Blueprint component";
-            const nextPaperDescription = blueprintComponent && typeof blueprintComponent.description === "string"
-                ? blueprintComponent.description
-                : "";
-            const nextReferenceCitation = blueprintComponent && typeof blueprintComponent.referenceCitation === "string"
-                ? blueprintComponent.referenceCitation
-                : "";
-            const nextPaperTitle = typeof componentData.blueprintPaperTitle === "string"
-                ? componentData.blueprintPaperTitle
-                : undefined;
-            const nextBlueprintFileName = typeof componentData.blueprintFileName === "string"
-                ? componentData.blueprintFileName
-                : undefined;
-
-            const existingBlueprintEvent = blueprintEventByComponentNodeId.get(node.id);
-            if (existingBlueprintEvent) {
-                const shouldUpdate =
-                    existingBlueprintEvent.name !== nextEventName ||
-                    (existingBlueprintEvent.paperDescription ?? "") !== nextPaperDescription ||
-                    (existingBlueprintEvent.referenceCitation ?? "") !== nextReferenceCitation ||
-                    (existingBlueprintEvent.paperTitle ?? "") !== (nextPaperTitle ?? "") ||
-                    (existingBlueprintEvent.blueprintFileName ?? "") !== (nextBlueprintFileName ?? "");
-
-                if (shouldUpdate) {
-                    updatedBlueprintEvents.push({
-                        ...existingBlueprintEvent,
-                        name: nextEventName,
-                        paperDescription: nextPaperDescription,
-                        referenceCitation: nextReferenceCitation,
-                        paperTitle: nextPaperTitle,
-                        blueprintFileName: nextBlueprintFileName,
-                    });
-                }
-            }
-
             const attachedPaths = Array.isArray(componentData.codebaseFilePaths)
                 ? componentData.codebaseFilePaths
                     .filter((path): path is string => typeof path === "string")
                     .map((path) => normalizePath(path))
                     .filter((path) => path !== "")
                 : [];
-            if (attachedPaths.length === 0) continue;
+            if (attachedPaths.length === 0 || !isNodeActive(node)) continue;
 
-            let blueprintEventId = blueprintEventIdByComponentNodeId.get(node.id);
-            if (!blueprintEventId) {
-                blueprintEventId = `blueprint-component:${node.id}`;
-                blueprintEventIdByComponentNodeId.set(node.id, blueprintEventId);
-
-                if (!existingBlueprintEventIds.has(blueprintEventId)) {
-                    missingBlueprintEvents.push({
-                        id: blueprintEventId,
-                        name: nextEventName,
-                        occurredAt: resolveActionTimestamp(),
-                        componentNodeId: node.id,
-                        paperDescription: nextPaperDescription,
-                        referenceCitation: nextReferenceCitation,
-                        paperTitle: nextPaperTitle,
-                        blueprintFileName: nextBlueprintFileName,
-                    });
-                    existingBlueprintEventIds.add(blueprintEventId);
-                }
-            }
+            // The marker's id, not a marker. Every live component has one on the track already
+            // (`liveBlueprintEvents` derives them), and the id is a pure function of the node — so
+            // this pass only has to name it in order to link it to a codebase subtrack. Minting one
+            // here would make opening a project a document edit; see the note on that memo.
+            const blueprintEventId = blueprintEventIdByComponentNodeId.get(node.id)
+                ?? `blueprint-component:${node.id}`;
+            blueprintEventIdByComponentNodeId.set(node.id, blueprintEventId);
 
             for (const attachedPath of attachedPaths) {
                 const subtrackIds = subtrackIdsByFilePath.get(attachedPath);
@@ -3170,15 +3366,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             }
         }
 
-        for (const eventData of missingBlueprintEvents) {
-            dispatch(addBlueprintEvent(eventData));
-        }
-        for (const eventData of updatedBlueprintEvents) {
-            dispatch(updateBlueprintEvent(eventData));
-        }
-
         dispatch(reconcileBlueprintCodebaseAutoLinks(requiredAutoLinks));
-    }, [codebaseSubtracks, dispatch, interactionLocked, nodes, blueprintEvents, resolveActionTimestamp]);
+    }, [codebaseSubtracks, dispatch, interactionLocked, nodes, blueprintEvents]);
 
     useEffect(() => {
         dispatch(setGithubEvents([]));
@@ -3357,8 +3546,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, []);
 
+    // Changing what is on screen changes how much room it needs, so refit to it — **unless somebody
+    // has asked for one particular node**. A reference names a card; a refit names everything; and the
+    // more specific instruction has to win, or going to `R2` shows the tree R2 is in. See
+    // `nodeFocusPendingRef`.
     useEffect(() => {
         const t = window.setTimeout(() => {
+            if (nodeFocusPendingRef.current) return;
             fitView({ padding: 0.2, duration: 350 });
         }, 0);
 
@@ -3377,6 +3571,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (levelFollowsZoom) return;
 
         const t = window.setTimeout(() => {
+            if (nodeFocusPendingRef.current) return;
             fitView({ padding: 0.2, duration: 350 });
         }, 0);
 
@@ -3388,6 +3583,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             if (nodeChangeRafRef.current !== null) {
                 window.cancelAnimationFrame(nodeChangeRafRef.current);
             }
+            // A standing `R7F` request is a module singleton and outlives this route, so leaving one
+            // behind would have it opened by whatever card happens to mount next — in another project.
+            clearCardFilePreviewRequest();
         };
     }, []);
 
@@ -3881,17 +4079,18 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         navigate("/projects");
     }, [navigate]);
 
+    /**
+     * Clicking a timeline entity to see the card it is about (contract 11).
+     *
+     * Routed through `requestNodeFocus` rather than calling `fitView` itself, so it waits for the
+     * node to be laid out, says so out loud when it never appears, and stands the whole-graph refits
+     * down while it moves. It used to call `fitView({nodes: [...]})` directly, which quietly did
+     * nothing whenever anything else refit in the same tick — see the note in the effect that
+     * consumes `pendingCanvasFocus`.
+     */
     const focusNodeById = useCallback((targetNodeId: string) => {
-        const focusNode = () => {
-            void fitView({
-                nodes: [{ id: targetNodeId }],
-                padding: 0.28,
-                duration: 360,
-            });
-        };
-
-        focusNode();
-    }, [fitView]);
+        requestNodeFocus(targetNodeId, "fit");
+    }, [requestNodeFocus]);
 
     const handleKnowledgeEventNavigate = useCallback((eventData: KnowledgeBaseEvent) => {
         const candidateIds: string[] = [];
@@ -3914,17 +4113,35 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         focusNodeById(targetNodeId);
     }, [focusNodeById, nodes]);
 
+    /**
+     * Clicking a Blueprint marker to see the component it stands for.
+     *
+     * The canvas draws a component only while it answers a requirement that is itself on screen
+     * (contract 28), and the track now marks **every** component from the moment it is made — so most
+     * markers name something the canvas will not show. Asking the camera to go there anyway would
+     * spend the four-second focus deadline finding nothing and then blame a filter, which is the one
+     * explanation that is certainly wrong. It is refused here instead, with the actual reason.
+     */
     const handleBlueprintEventNavigate = useCallback((eventData: BlueprintEvent) => {
         const componentNodeId = typeof eventData.componentNodeId === "string"
             ? eventData.componentNodeId.trim()
             : "";
         if (!componentNodeId) return;
 
-        const existingNodeIds = new Set(nodes.map((node) => String(node.id ?? "")));
-        if (!existingNodeIds.has(componentNodeId)) return;
+        const componentNode = nodes.find((node) => node.id === componentNodeId);
+        if (!componentNode || !isNodeActive(componentNode)) return;
+
+        if (!trayAttachedComponentIds.has(componentNodeId)) {
+            showCanvasNotice(
+                `"${eventData.name || "This component"}" answers no requirement yet, so the canvas does`
+                + " not draw it. Open the blueprint tray to work on it, or drag it onto a requirement"
+                + " to bring it onto the canvas.",
+            );
+            return;
+        }
 
         focusNodeById(componentNodeId);
-    }, [focusNodeById, nodes]);
+    }, [focusNodeById, nodes, showCanvasNotice, trayAttachedComponentIds]);
 
     const handleFreeInputClicked = useCallback(() => {
         if (interactionLocked) return;
@@ -4509,6 +4726,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 onDragOver={handleCanvasDragOver}
                 onDrop={handleCanvasDrop}
                 activityDropTargets={activityDropTargets}
+                clusterHalos={clusterHalos}
                 cardSpawnTargets={cardSpawnTargets}
                 activityDropReason={activityDropReason ?? "drag"}
                 onResetNodePositions={hasManualNodePositions ? handleResetNodePositions : null}

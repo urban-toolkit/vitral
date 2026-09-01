@@ -4,6 +4,7 @@ import { faArrowRight, faWandMagicSparkles } from "@fortawesome/free-solid-svg-i
 
 import classes from "./CanvasLevelControl.module.css";
 import type { CanvasLevel } from "@/pages/projectEditor/canvasAbstraction";
+import { LOCATOR_LENS_HELP } from "@/pages/projectEditor/locators";
 
 /**
  * Picks how abstract the canvas is, and opens the assistant.
@@ -17,10 +18,25 @@ import type { CanvasLevel } from "@/pages/projectEditor/canvasAbstraction";
  * am I looking at", and one thing in the bottom-right corner beats two competing for it. Two short
  * rows rather than one long bar, so the panel stays clear of the bottom-centre tool bar.
  *
- * The reference box belongs here for the same reason. A code carries its own level of abstraction, so
- * typing one is a *third* way of driving this control — not "find me a card" but "put the canvas where
- * this reference points", which is exactly what the segments and follow-zoom do by other means.
+ * The reference box belongs here for the same reason. A reference carries its own level of
+ * abstraction — the letter says what altitude the artifact is cited at, and the optional suffix says
+ * which altitude the reader wants — so typing one is a *third* way of driving this control: not "find
+ * me a card" but "put the canvas where this reference points", which is exactly what the segments and
+ * follow-zoom do by other means.
  */
+
+/**
+ * The whole grammar, in a tooltip, because the suffixes are not guessable and the box is the only
+ * place a reader meets them outside the exported report. Built from `LOCATOR_LENS_HELP` so the two
+ * cannot drift.
+ */
+const REFERENCE_INPUT_HELP = [
+    "A reference from a report or a paper — A3, R7, C2 — takes the canvas to what it names.",
+    "Add a suffix to choose the view:",
+    ...LOCATOR_LENS_HELP.map((entry) => (
+        `  R1${entry.suffix} — ${entry.means}`
+    )),
+].join("\n");
 
 const LEVELS: Array<{ value: CanvasLevel; label: string; hint: string }> = [
     { value: 1, label: "Overview", hint: "Phases, major requirements and concepts" },
@@ -37,8 +53,8 @@ export type CanvasLevelControlProps = {
     focusLabel?: string | null;
     onClearFocus?: () => void;
     /**
-     * Jump to a reference code. Returns whether it resolved, so the box can keep a bad code on screen
-     * for correction instead of clearing it and leaving the reader to retype from memory.
+     * Jump to a reference. Returns whether it resolved, so the box can keep a bad one on screen for
+     * correction instead of clearing it and leaving the reader to retype from memory.
      */
     onGoToCode?: (code: string) => boolean;
     /** Lifted clear of the timeline dock, the same way the toolbar is. */
@@ -65,8 +81,8 @@ export function CanvasLevelControl({
     const submitCode = useCallback(() => {
         const typed = codeDraft.trim();
         if (typed === "" || !onGoToCode) return;
-        // Cleared only on success. A code that did not resolve is usually a typo, and clearing the
-        // field would make the reader fetch the paper again to retype it.
+        // Cleared only on success. A reference that did not resolve is usually a typo, and clearing
+        // the field would make the reader fetch the paper again to retype it.
         if (onGoToCode(typed)) setCodeDraft("");
     }, [codeDraft, onGoToCode]);
 
@@ -119,9 +135,9 @@ export function CanvasLevelControl({
                             // being typed must not reach either.
                             event.stopPropagation();
                         }}
-                        placeholder="Go to code"
-                        title="A reference code from a report or a paper — A3, R7, C2 — takes the canvas to what it names"
-                        aria-label="Go to a reference code"
+                        placeholder="Go to reference"
+                        title={REFERENCE_INPUT_HELP}
+                        aria-label="Go to a reference"
                         spellCheck={false}
                         autoCapitalize="characters"
                         autoCorrect="off"
@@ -130,8 +146,8 @@ export function CanvasLevelControl({
                     <button
                         type="button"
                         className={classes.codeGo}
-                        title="Go to this code"
-                        aria-label="Go to this code"
+                        title="Go to this reference"
+                        aria-label="Go to this reference"
                         disabled={codeDraft.trim() === ""}
                         onClick={submitCode}
                     >

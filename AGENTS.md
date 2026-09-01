@@ -139,6 +139,7 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 19. Focus + context: three canvas abstraction levels
 - `canvasLevel` is `1` Overview, `2` Threads, `3` Detail. Detail is today's bare graph.
 - The whole feature is one pure function, `buildAbstractedGraph` (`canvasAbstraction.ts`), inserted between `filteredEdges` and the layout in `ProjectEditorPage`. **At level 3 it returns its input arrays by reference.** That identity path is the no-regression guarantee — keep it as the first statement in the function.
+- **A glyph carries no `zIndex`.** `glyphNode` spreads the activity it was built from, and contract 16's stale-`zIndex` strip only covers `type === "card"` — by the time the layout runs, the glyph is a `clusterGlyph`, so the strip never fires for it. Documents saved by earlier versions carry values like 2000 and 3000 on their activity cards, and React Flow feeds `node.zIndex` straight into the wrapper's inline `z-index`: the glyph then painted over everything, including the cards of an opened branch beside it and the cluster-halo titles. `glyphNode` deletes it, on the grounds that a node the lens invented this frame has no business inheriting a stacking order recorded years ago.
 - Glyphs present as `data.label === "activity"` with an explicit size, so `activityOrbitLayout.ts` places them with no knowledge of the feature. The size must be set as top-level `width`/`height` **and** in `style`: React Flow reads only the former when deciding a node has dimensions, and keeps a node `visibility: hidden` (with its edges unrendered) until it does. `nodeSizeOf` reads the latter.
 - An activity glyph keeps the **real activity node id**, so switching Threads to Detail leaves it mounted and only its satellites change. Phase glyphs use `vz:c:<earliest member id>`; collapsed edges use `vz:e:<pair>`. `isSyntheticCanvasId` gates `handleNodesChange`, `handleEdgesChange` and `manualNodePositions` — a synthetic id must never reach the store.
 - Focus is a path (`{ clusterId, activityId }`) and nesting falls out of `effectiveLevelForActivity`, which is checked deepest-first. There is no separate state machine, and no focus stack.
@@ -146,6 +147,12 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 - **No LLM, ever.** Cluster labels are borrowed: a timeline stage name when exactly one phase falls inside that stage, else the highest-salience activity's own title, else an ordinal. Semantic similarity comes from `referenced_by` / `iteration_of` edges, which already froze thresholded cosine similarity into the graph at card-creation time; `document_node_embeddings` is deliberately untouched.
 - Zoom mode reads the viewport through `onMove`, never `useViewport()`/`useStore` in `ProjectEditorPage` — that callback fires every animation frame and re-rendering a 4000-line component at 60Hz is ruinous. It early-returns off refs unless the level band actually changed.
 - **Both zoom ladders are symmetric — no hysteresis, in either direction.** `levelForZoom` (`canvasAbstraction.ts`) and `lodForZoom` (`canvasLod.ts`) used to carry multiplicative dead bands; a 1.35x band meant Detail was left at 0.556 and only regained at 1.013, which reads as the threshold moving on its own rather than as stability. A gesture that crosses a boundary and comes straight back now lands exactly where it started. Do not reintroduce a Schmitt trigger without a measured flicker problem; the early return in `handleViewportMove` and the `fitView` rule below are what keep a crossing from feeding itself.
+- **Cluster halos are a third boundary on the paint axis** (`ZOOM_CLUSTER_HALO_MAX`, 0.300, in `canvasLod.ts`). Below it, `ClusterHalos` draws a pale disc around each phase or thread with the cluster's title set at a fraction of the disc's own radius — because a glyph is a card-sized object with a 16px title, and at the zoom where Overview takes over that title is under 7px. It sits *below* the Overview boundary on purpose: arriving at Overview should show the glyphs, and the halo answers a question the reader only has a step further out. The full ladder, zoom descending, is 0.850 Detail↔Threads, 0.550 cards drop to title, 0.420 Threads↔Overview, 0.300 halos, 0.180 cards become boxes.
+  - Shown and hidden **in CSS**, from a `data-cluster-halo` attribute `useCanvasLod` writes beside `data-lod` on the same animation frame. A React gate would mount and unmount an overlay in the middle of the gesture that crossed the boundary. The overlay itself is mounted whenever `canvasLevel !== 3`, since at Detail there are no glyphs to circle.
+  - The type is sized in **flow units, proportional to the halo radius**, not pinned to a constant screen size. Pinning would need the live zoom in CSS, which means writing a custom property every frame — the cost the `data-lod` attribute and the `canvas-moving` class both exist to avoid — and proportional reads better anyway: a big phase gets big type and a one-activity thread does not shout.
+  - `pointer-events: none` throughout, like the drop rings. A halo that swallowed clicks would break click-to-open on the glyph underneath, which is the one gesture the level exists for.
+  - **The disc and the title are two sibling elements, on opposite sides of the cards.** React Flow's viewport portal is a sibling of `.react-flow__nodes`, and node wrappers carry an inline `z-index`, so anything rendered into the portal paints under the cards unless it says otherwise. That is right for the disc — an area containing a group has to sit behind the group, or its fill tints the very cards it is grouping — and fatal for the title, which is centred on the glyph it names and would be hidden by that one card at every zoom. Nested they cannot disagree: the disc's own stacking context would trap the title inside it. So the disc takes `z-index: -1` and the title `1001`, one past the `+1000` React Flow adds to a selected node, and the `.layer` wrapper deliberately has **no** `z-index` so it does not open a stacking context of its own.
+  - Membership is `buildClusterHalos`' own BFS over the displayed edges, deliberately **not** `buildActivityTreeMembership`, which skips `blueprint_component` (contract 28). A halo decides nothing and only has to *contain* what is drawn; excluding components would leave boxes outside a ring claiming to enclose them.
 - The two ladders are deliberately **ordered, not interleaved**: every card-detail boundary (0.550, 0.180) is below the Detail boundary (0.850). With follow-zoom on, a card is therefore never simplified in place — it is replaced by a glyph while still fully drawn, and the abstraction is the only simplification on that path. The card tiers are tuned for follow-zoom **off**, where the user pins Detail and zooms out over the bare graph. Retuning either set means re-checking this ordering, and `minZoom` in `FlowCanvas.tsx` has to stay below 0.420 or Overview is unreachable.
 - Never `fitView` on a level change while `levelFollowsZoom` is on: writing the viewport there can bounce the zoom back across the threshold and fights the user's gesture.
 - Glyph counts describe the **filtered** canvas, not the whole project. That is deliberate — a glyph must not promise more than expanding it would reveal.
@@ -251,7 +258,13 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   - **The tray** (`pages/projectEditor/BlueprintTray.tsx`) draws every live blueprint node — groups and components — at its stored `node.position`. It is a second React Flow instance with its own provider, and it is the **only** surface that reads or writes blueprint positions.
   - **The canvas** draws a `blueprint_component` exactly when it holds an active `tackled in` edge to a requirement that is *itself still on screen*. No group boxes, and no `feeds into` edges: the wiring between components describes the system, not the study.
 - **Why.** The canvas is a temporal graph — activities left to right by `createdAt`, everything else orbiting the activity it belongs to — and a system design has no place on that axis. `activityOrbitLayout` had to exile the whole block to a band 460px below everything, which is exactly what made it read as dislocated. An attached component *does* have a place, beside the requirement it answers, and it now orbits there like any other card (`STRUCTURAL_LABELS` no longer contains `blueprint_component`).
-- **Attach is the edge, and nothing else.** Dragging the grip on a tray component onto a requirement card creates the `tackled in` relation, which is what puts it on the canvas, what mints the dated `BlueprintEvent`, and what removing detaches. One component may answer several requirements; it is one node with several edges, drawn once in the tray and once beside each requirement it answers.
+- **Attach is the edge, and nothing else.** Dragging the grip on a tray component onto a requirement card creates the `tackled in` relation, which is what puts it on the canvas and what removing detaches. One component may answer several requirements; it is one node with several edges, drawn once in the tray and once beside each requirement it answers.
+- **The blueprint track marks creation, not attachment, and its markers are derived rather than stored.** A `BlueprintEvent` used to be minted by the attach gesture, which made a track called Blueprint a record of *connections*: a component the researcher had made and could see in the tray existed nowhere in time. `liveBlueprintEvents` in `ProjectEditorPage` now emits one marker per live `blueprint_component`, read straight off the node.
+  - **Derived, because minting would make opening a project an edit.** Back-filling markers for every previously-unattached component is a write, and `useDocumentSync` cannot tell it from a real one — it changes the save hash, so merely opening a study would append a revision snapshot to the provenance record this application exists to keep. Two more follow from the same choice: minting runs behind `interactionLocked`, so guests and readers of a published project would see a different track from the owner until the owner next opened it; and a component with no `createdAt` would have a *guessed* date written down as if it were recorded. A derived marker is recomputed, so a rename reaches the track with no reconciliation pass at all.
+  - A **stored** event still wins on `occurredAt` where one exists, so nothing moves on the track for a project that already carries them; everything else is read from the node. A component with neither a stored event nor a `createdAt` is **omitted**, because there is no honest place for it on a time axis. The dashed grey "answers nothing yet" styling in `useTimelineChart` was already written for the unattached state and needed no change.
+  - Two things stopped being coincidentally true when every component gained a marker, and are now asserted directly. `blueprintEventConnections` requires **both ends attached** — before, "both ends have an event" happened to mean that, and it was the only thing keeping a dropped paper's tray-only `feeds into` wiring off the timeline — and it skips soft-deleted edges. And `handleBlueprintEventNavigate` refuses, out loud, for a component that answers no requirement: the canvas does not draw one, so asking the camera to go there spends the whole focus deadline and then blames a filter.
+  - The report reads a component’s `referenceCitation` and its attach date off the **graph** (the node, and the `tackled in` edge’s `createdAt`) rather than off the event, which used to carry both. `DEFAULT_HISTORY_TIMESTAMP` is excluded there: `ensureEdgeTimestamps` stamps 1970 on any edge that arrived without a date, and printing it would claim a component was attached before the project existed.
+  - Known consequence, unaddressed on purpose: `buildBlueprintComponentGraph` gives every component of a dropped paper **one** `createdAt`, and the blueprint lane plots every marker at a single Y with no collision handling, so a fourteen-component paper is a pile of triangles on one instant. That is a truthful rendering of a real simultaneity and the same thing any lane does with coincident events; dodging them would need the arcs, the knowledge links and the codebase links to agree on a per-event Y.
 - **The attach edge is written `requirement -> blueprint_component`, always.** `routes/state.ts` builds the *provenance* endpoint's blueprint links from card→component rows only ("Enforce directional links only"), so an edge drawn the other way is accepted by the canvas, the timeline and provenance and then silently missing from the knowledge track. The markdown report reads the graph directly and accepts either direction (`attachedComponentIds`), so it is not affected — an earlier version of this note claimed otherwise. The relation table is unordered and this gesture always knows which end is which, so it writes the direction that survives. The duplicate check is unordered for the same reason.
 - **The split runs last**, after the needle, the label chips and the chat query. `filteredEdges` drops any edge with a filtered-out endpoint, so judging attachment earlier leaves a component stranded on the canvas with its requirement filtered away — orbiting nothing, back in the unassigned band. Switching the `requirement` chip off is enough to reach that. Running it last is also what gives playback scoping for free, with no second mechanism, and it handles multiple attachment correctly: the component survives while *any* of its requirements does.
 - **A component is deliberately not a member of an activity tree.** `kindOf` calls it a satellite so the layout places it, but `buildActivityTreeMembership` skips it. Membership is what the playhead gates whole trees by and what `crossTreeDegree` reads: a component answering two requirements in two trees can only be given one of them, so the needle would hide an answer whose own requirement is still on screen — and card salience, which decides what Threads and Overview promote, would shift for reasons that have nothing to do with the cards. The BFS also skips edges with a component at **both** ends, or a chain wired in the tray becomes a shortcut between two requirements and a card changes tree because of something drawn on the other surface.
@@ -286,6 +299,53 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   keeps the base level at 1 and puts the altitude in the *focus path depth*, so several levels are on
   screen at once — `effectiveLevelForActivity` already does that in three lines and nothing was added
   to the lens.
+- **The suffix is the reader's altitude, and it is a second axis rather than a redesign of the
+  first.** The letter still says, unchangeably, what altitude an artifact is *cited* at; an optional
+  suffix on the ordinal says which of six views of it the reader wants. `R7`/`R7D` the card at Detail,
+  `R7P` its phase as an Overview summary, `R7A` its root activity card, `R7T` its thread as a Threads
+  summary, `R7F` the file attached to it, `R7AF` the file attached to that activity. The four
+  navigating lenses differ **only in how deep the focus path is cut** — no focus, `{cluster}`,
+  `{cluster, activity}` — so this is the same mechanism as above, now exposed to the reader instead of
+  fixed by the letter. `LOCATOR_KIND_LEVEL` is untouched and still total.
+  - **The set is closed, and the closure is the argument for not extending it.** The views are a
+    containment ladder — phase ⊃ thread ⊃ activity ⊃ card ⊃ file — so a suffix is *a step up the
+    ladder, then optionally `F` to open what is attached where you landed*. That product is
+    `{nothing, A} x {D, P, T, F}`, and the three cells the six do not occupy are aliases rather than
+    destinations: the thread of R7's activity is R7's thread, its phase is R7's phase, and `R7AD` is
+    `R7A`. Adding them would grow the grammar a reader has to learn without adding anywhere to go.
+  - **`P`, not `O`, and the reason is an invariant rather than taste.** `O` is the kind letter for
+    object cards, and `R10`/`R1O` are one glyph apart on a printed page — which is why `DIGIT_TWIN`
+    had to be crippled to first-character-only and why the report had to print a caution about it.
+    The suffix alphabet is now `{D, P, A, T, F}` and the digit twins are `{O, I, S, B}`; **the two
+    sets are disjoint**, so no valid reference can be turned into a *different valid reference* by a
+    retyping slip. That is a property to preserve: a new lens letter must stay out of `DIGIT_TWIN`,
+    and `npm run test:locators` asserts it. `DIGIT_TWIN` stays first-character-only regardless,
+    because a suffix is never a kind letter.
+  - `parseLocatorReference` owns the grammar; `parseLocatorCode` is now the artifact half of it, so
+    `R1T` names R1 and every caller that indexes by code (the index, the persisted
+    `data.locatorCode`) keeps working. `resolveLocatorReference` owns parse, status, the staleness
+    redirect and viewpoint in one place, because the canvas and the document must not each decide.
+    **`codeToUrl` is the exception and must use `parseLocatorReference`**: it writes `ref`, and
+    collapsing to the bare code there — which it did — turned every lensed link in an exported
+    document back into a link to the card.
+  - An unrecognised suffix is **refused**, never ignored: dropping the `X` in `R1X` would answer a
+    question nobody asked. `O` is refused too, but *by name* — `RETIRED_LENS_SUFFIX` makes the
+    message say "that view is spelled P now, try R1P", because `R1O` is not a typo, it is what every
+    document exported before the rename still prints. The hint is offered only when the rest of the
+    code is well formed, so `Z1O` is not given a confident answer about a letter that was never its
+    problem.
+  - The two file lenses are answered through `store/cardPreviewStore.ts`, a standing request keyed on
+    `{nodeId, fileId}` that `FilePreview` reads as a *second reason to be open* beside a click on the
+    thumbnail. It is not consumed on arrival: copying it into component state from an effect is a
+    cascading render and records one boolean twice. The card is usually not mounted when the reference
+    resolves, so the request waits. A file lens naming a card with nothing attached is refused
+    **before** the canvas moves.
+- **Resolving a reference restores every filter, not just the target's own.** Phase codes are only
+  meaningful over the unfiltered live graph (below), and the canvas builds `canvasClusters` over
+  `filteredNodes` — so with one label chip off, the `vz:c:` id the index resolved and the one the
+  canvas drew are different phases and `R7P` lands nowhere. `handleGoToLocatorCode` therefore puts
+  back all label chips and both provenance chips. A reference is an address into the project, not into
+  the current screen.
 - **Ordinals come from position in `flow.nodes`, not from time.** Every time-based key fails to be
   append-only: `createdAt` is user-editable, and even the first `__history` entry is stamped from
   `resolveActionTimestamp()`, which returns the *playhead* — so a card created while scrubbed into the
@@ -312,9 +372,88 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   used in `npm run test:report` as the **oracle**: the report's headline codes must equal what levels
   1 and 2 promote. That check is what stops the document and the canvas drifting apart.
 - **Abstraction decides emphasis and ordering; it never decides inclusion.** The canvas hides because
-  it has one zoom; a document has none. Every live card appears once in a thread section or under
-  "Unconnected cards", and again in the appendix. Nothing is truncated — the old report was
-  superficial *because* it summarised, and length belongs in appendices.
+  it has one zoom; a document has none. Every live *and relevant* card appears once in a thread
+  section or under "Unconnected cards", and again in the appendix. Nothing is truncated for length —
+  the old report was superficial *because* it summarised, and length belongs in appendices.
+- **Relevance is the one thing that does decide inclusion.** `data.relevant === false` is not the
+  abstraction hiding something for want of room; it is the researcher saying this material is not part
+  of the study. So a set-aside card is kept out of every content collection in `reportModel` — threads,
+  the unconnected band, the insight and concept sweeps, the requirements and the components answering
+  them — and out of any relation with an end in one, which would otherwise cite a code the document has
+  no entry for. `allCards` stays complete, because `setAsideCards` is derived from it and a judgement
+  about the material is itself part of the record: the **Set aside** table names the card, and
+  "Codes that no longer resolve" points at that table rather than reprinting the title (which
+  `describeLocatorStatus` would, taking its `"live"` branch). The front-matter totals and
+  `report.stats.cards` count only what the body contains, or the document promises cards it never
+  delivers.
+- **What the report no longer prints, and must not regain by accident.** Removed on request, and
+  pinned as absent in `npm run test:report`: the front-matter paragraph explaining the code system
+  (it moved into Appendix A, where the codes resolve), the abstract's "Machine-written" disclaimer
+  (the `vitral:abstract:*` sentinels remain, which is the half a script needs), a thread's
+  "Relations inside this thread" line ("Reaching beyond it" stays — a thread's internal wiring is the
+  card table said twice, and where it *reached* is not), the "Cards" column in "Phases at a glance",
+  the "Contains" and "Composition" rows in a phase table, the date-and-counts line under a thread
+  heading (participants stay), and the five computed Provenance subsections — "How this document was
+  made", "Authorship", "Emphasis, as a formula", "Relations by kind and origin", "How much the
+  material was worked". Provenance now holds only "Removed from the study" and "Set aside": the two
+  things the graph cannot show on its own. `salienceWeightRows`, `buildRelationKindTallies` and
+  `buildRevisionSummary` are left in `reportProvenance.ts` unused; `buildAuthorshipTally` still feeds
+  the front-matter Contents row.
+- **"How to read a reference" is a section of its own**, immediately before Appendix A, generated
+  from `LOCATOR_LENS_HELP` — the same table the canvas box puts in its tooltip, so the document and
+  the box cannot come to describe different grammars. It explains two conventions now, the codes in
+  the document and the same codes typed into the application, and the next-step links it describes
+  are directly below it. Still the only in-document explanation of the codes, so it still travels
+  with `includeAppendices`.
+- **Each index entry offers the next step: `On the canvas: R1 (P / A / T / F)`.** The bare code opens
+  the card; the letters open the further views of it. Three rules make it honest:
+  - **Availability is decided by asking `resolveLocatorReference`, not by re-deriving membership.**
+    The document can then only advertise a view the canvas will actually accept, and the refusals
+    stay in one place — an unconnected card prints no parenthesis at all, because `overview`,
+    `thread` and `activity` all decline it.
+  - The **file** lens is the one the resolver cannot answer, because `locators.ts` never reads node
+    data. The renderer applies the test `handleGoToLocatorCode` applies before it moves the camera:
+    an attachment id that still resolves to a file in `snapshot.files`.
+  - `AF` is typeable but **not advertised** there — five letters in a row stops being something a
+    reader takes in at a glance. The explanation section names it, which is where somebody looking
+    for it will be.
+  - The row is the only caller of `canvasUrlForCode`, and with no builder the whole line is omitted,
+    as before. `npm run test:report` pins the line's exact prefix, because test 4 filters canvas-link
+    lines out before asserting that no uuid reaches the prose.
+- **A link in the document opens the canvas at what it names.** `codeToUrl` had always written
+  `?ref=&n=&at=` and nothing ever read it back, so following a citation opened the project at Detail
+  with no focus and the reader had to retype the code they had just clicked. The effect in
+  `ProjectEditorPage` is deliberately nothing but a *caller* of `handleGoToLocatorCode` — two
+  implementations of the reveal is how a document and the application come to disagree.
+  - **It waits for `nodesInitialized`, not for `status === "ready"` alone**, and this is the
+    non-obvious part. `useDocumentSync` dispatches the graph before it awaits the file list, so there
+    is a commit where the nodes are in the store and `<FlowCanvas>` is not mounted — firing there
+    hands `setCenter` a 0x0 pane and clamps the arrival zoom to `CANVAS_MIN_ZOOM`. And
+    `<ReactFlow fitView>` in `FlowCanvas` is a **third** whole-graph fit, the only one outside the
+    `nodeFocusPendingRef` protocol because it lives in React Flow's own store; it resolves on the
+    flush that raises `nodesInitialized`, so waiting for that flag is what puts the arrival after it.
+    An empty canvas never raises the flag (`adoptUserNodes` starts it at `nodes.length > 0`), so the
+    wait is skipped when nothing is displayed — where there is also nothing to race, and the resolver
+    answers immediately and honestly.
+  - **The params are stripped through the router**, with `replace`. `createBrowserRouter` holds its
+    own location and re-reads `window.location` only on `popstate`, so `history.replaceState` would
+    leave the router holding a query string the address bar no longer shows — and `RequireSession`
+    builds its post-login return path out of exactly that.
+  - **`at` is read and deliberately not honoured.** Honouring it means setting the playhead, which
+    undoes step 1 of the reveal; and it is not the snapshot it looks like, because the needle gates
+    whole activity trees and replays no node history. What it *would* do is make `canvasClusters`
+    disagree with the index the phase codes were numbered over — the precise failure restoring the
+    filters exists to prevent — and arm `resolveActionTimestamp` to stamp a past instant on the next
+    card the owner creates.
+  - **`n` outranks the code when they disagree.** A citation carries both halves because a hard
+    `removeNode` or a label change renumbers a whole letter. A paper that cites `R7` means the card
+    its author was looking at, so `resolveLocatorReference` redirects to the node and re-applies the
+    lens to whatever code that node answers to now; showing the reader different material under the
+    right label is the one failure they cannot detect, because the canvas would look normal. It hands
+    back `renumberedFrom` and the caller has to say so out loud. An id the index no longer holds is
+    dropped rather than obeyed — there is nothing to redirect to.
+  - Nothing on this path is gated on `interactionLocked`, so a guest following a link into a
+    published project gets a bit-for-bit identical result. Keep it that way.
 - Inputs are the whole live graph, **unfiltered**. `buildSalienceIndex` normalises its degree terms
   against whatever set it is handed, so passing the filtered canvas would rescale every card's
   emphasis to whatever the researcher last clicked. The report states this about itself.
@@ -327,7 +466,12 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   runs, so a refused or unreachable paragraph costs one italic line. The export itself is **not**
   gated on `interactionLocked` — it writes nothing, and a reader of a published study is exactly who
   the document is for.
-- **Typing a code is a third way of driving the level control**, which is why the reference box lives
+- **The domain noun is `locator`; the word on screen is "reference".** `cardData.reference` already
+  means the verbatim excerpt a card was extracted from, so anything to do with codes carries the
+  `Locator` prefix in source. The canvas box is labelled **Go to reference** (it was "Go to code"),
+  because somebody meeting `R7T` in a paper is not meeting a locator, and "code" stopped covering it
+  once a code could carry a lens.
+- **Typing a reference is a third way of driving the level control**, which is why the box lives
   in `CanvasLevelControl` beside the segments and follow-zoom rather than with the search tools. The
   reveal order in `handleGoToLocatorCode` is load-bearing and every step is there because skipping it
   fails *silently*: the playhead gates whole activity trees, a label chip or a provenance chip hides
@@ -339,10 +483,30 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   graph, it must be built over the unfiltered live graph (`locatorGraphScope`) which no canvas memo
   holds, and it is needed only when somebody types.
 - **`pendingCanvasFocus` carries a mode and a deadline.** `pan` keeps the zoom, for a card the
-  researcher just created; `fit` re-frames, for arriving at a typed code, where there is no prior
+  researcher just created; `fit` re-frames, for arriving at a typed reference, where there is no prior
   viewport worth keeping. The deadline exists because the effect waits for the target to appear in
   `displayedNodes` and re-runs on every derivation — without one, a target that never appears retries
   for the rest of the session and reports nothing.
+- **Going to one node does not use `fitView`, and two whole-graph refits stand down while it moves.**
+  This is why a typed `R2` used to land on the activity tree R2 is in rather than on R2, and both
+  halves are needed.
+  - `fitView` does not move the viewport. It raises `fitViewQueued` on React Flow's store, stores the
+    options **globally**, and pushes a no-op onto the node batch; the fit happens later, if some
+    subsequent `setNodes` reaches `resolveFitView` while the flag is still up. Two consequences: on a
+    controlled `nodes` prop the batched update produces no diff, so it falls back to a
+    `requestAnimationFrame` that has to survive everything else written to the store in between; and
+    the options are last-writer-wins, so a second `fitView` in the same tick silently replaces
+    "this node" with "everything". `setCenter` writes the viewport there and then, and the zoom is
+    computed here from the node's size against the pane (`FOCUS_FIT_COVERAGE`, clamped to
+    `CANVAS_MIN_ZOOM`/`CANVAS_MAX_ZOOM`, both exported from `FlowCanvas`).
+  - Two effects refit the whole graph on a `setTimeout(0)` — one on a filter change, one on a level or
+    focus change — and going to a reference changes both, so all three timers queue in the same tick.
+    `nodeFocusPendingRef` makes them skip. It is **released from a nested `setTimeout(0)`** rather than
+    inline, because the two refit timers are already queued behind the focus timer and the release has
+    to land behind them too; dropping it inline loses the race non-deterministically.
+  - `focusNodeById` (the timeline's click-to-navigate, contract 11) goes through `requestNodeFocus`
+    for the same reasons — it used to call `fitView({nodes: [...]})` itself and quietly did nothing
+    whenever anything else refit in the same tick.
 - **A relation is only live when both of its ends are.** `isEdgeActive` alone is not enough: the
   node-delete cascade is editor behaviour, not a data invariant, and a document that renders
   `R1 —tackled in→ B1` three lines from "B1 was deleted" is worse than one that drops the dangling

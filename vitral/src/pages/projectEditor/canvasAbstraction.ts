@@ -296,7 +296,7 @@ function glyphNode(
     // `height` because React Flow reads only those when deciding whether a node has dimensions yet,
     // and keeps it `visibility: hidden` — with its edges unrendered — until it does.
     const baseData = base ? dataOf(base) : {};
-    return {
+    const glyphNodeValue = {
         ...(base ?? { id, position: { x: 0, y: 0 } }),
         id,
         type: "clusterGlyph",
@@ -318,6 +318,19 @@ function glyphNode(
             canvasGlyph: glyph,
         },
     } as nodeType;
+
+    /**
+     * A stale `zIndex` must not ride in on the activity this glyph was built from.
+     *
+     * Contract 16 strips one, but only from `type === "card"` — and by the time the layout runs, this
+     * node is a `clusterGlyph`, so the strip never fires for it. Projects saved by earlier versions
+     * carry values like 2000 and 3000 on their activity cards, and React Flow feeds `node.zIndex`
+     * straight into the wrapper's inline `z-index`: the glyph then paints over everything, including
+     * the cards of an opened branch beside it and any overlay the canvas draws on purpose. A glyph is
+     * a node the lens invented this frame; a stacking order recorded years ago is not about it.
+     */
+    delete (glyphNodeValue as { zIndex?: number }).zIndex;
+    return glyphNodeValue;
 }
 
 function promotionEdge(sourceId: string, target: nodeType): edgeType {

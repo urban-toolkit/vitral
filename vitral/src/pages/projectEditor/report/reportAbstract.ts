@@ -53,7 +53,12 @@ export type ReportAbstractPayload = {
 const DESCRIPTION_BUDGET_CHARS = 400;
 
 export function buildAbstractPayload(model: ReportModel): ReportAbstractPayload {
-    const contentCards = model.allCards.filter((card) => card.label !== "person");
+    // `card.relevant`, for the same reason `projectReport.stats` and the front-matter Contents row
+    // both filter on it: a set-aside card is not part of the study, and a paragraph written from a
+    // total the document never prints is a figure a reader cannot check against anything.
+    const contentCards = model.allCards.filter((card) => (
+        card.label !== "person" && card.relevant
+    ));
     const answered = new Set(model.requirementAnswers.map((entry) => entry.requirement.nodeId));
 
     const byLabel = new Map<string, number>();

@@ -286,7 +286,7 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
     }).report.markdown;
     const prose = linked
         .split("\n")
-        .filter((line) => !line.includes("Open on the canvas"))
+        .filter((line) => !line.startsWith("On the canvas:"))
         .join("\n");
     equal("no uuid appears in the prose", prose.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i), null);
     check("but the canvas link carries the target id", linked.includes("&n=node-R1"));
@@ -410,10 +410,15 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
     });
 
     check("a participant is named", reportWith.markdown.includes("P04"));
-    // A person is never counted as a card, promoted, or listed in a thread's card table.
-    equal("people are excluded from the card totals",
-        reportWith.stats.cards, withPeople.nodes.filter((n) => (n.data as Record<string, unknown>).label !== "person"
-            && (n.data as Record<string, unknown>).label !== "blueprint_group").length);
+    // A person is never counted as a card, promoted, or listed in a thread's card table. Neither is
+    // a set-aside card: the totals describe what the document contains.
+    equal("people and set-aside cards are excluded from the card totals",
+        reportWith.stats.cards, withPeople.nodes.filter((n) => {
+            const data = n.data as Record<string, unknown>;
+            return data.label !== "person"
+                && data.label !== "blueprint_group"
+                && data.relevant !== false;
+        }).length);
 
     // Stronger form: two projects differing only by person cards produce the same document apart
     // from the participant lines.
@@ -468,12 +473,16 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
     // `e5` carries neither `manual` nor an automatic marker: it predates the flag, so it is unknown
     // rather than assumed to be either. Guessing here is the overclaim the report exists to avoid.
     check("an unmarked edge is unknown, not guessed", origins.includes("unknown"));
-    // Counted in its own column of the provenance table rather than folded into either side.
-    check("the document gives unknown provenance its own column",
-        report.markdown.includes("| Kind | Total | Hand-drawn | AI | Unknown |"));
+    // The provenance tally table is gone, so the place a reader now meets a relation's origin is
+    // beside the relation itself — which is where it was always checkable.
+    check("a printed relation names its origin",
+        report.markdown.includes("(hand-drawn)"));
 
-    // The similarity evidence is carried through so a doubted relation can be checked.
-    check("automatic relations show their score", report.markdown.includes("cos 0.71"));
+    // The similarity evidence is carried through so a doubted relation can be checked. Only
+    // cross-thread relations are printed now, so this is asserted on the model: whether a given
+    // fixture happens to have an outbound automatic edge is not what is being pinned.
+    check("automatic relations carry their score",
+        model.relations.some((relation) => relation.similarity === 0.71));
 }
 
 // --- 10. Nothing is dropped -------------------------------------------------------------------
@@ -631,30 +640,238 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
     }).report.markdown;
     check("a present abstract is fenced by sentinels", withAbstract.includes("vitral:abstract:begin"));
     check("and closed", withAbstract.includes("vitral:abstract:end"));
-    check("and labelled as machine-written", withAbstract.includes("Machine-written"));
+    // The visible disclaimer was removed on request. The sentinels above are what remain, and they
+    // are the half a script needs: the block stays findable and removable without a reader having to
+    // be told, in the abstract itself, that the abstract was written by a machine.
+    check("and carries no visible machine-written disclaimer",
+        !withAbstract.includes("Machine-written"));
 }
 
-// --- 15. Provenance carries the numbers a sceptic wants ---------------------------------------
+// --- 15. Provenance is what the graph cannot show, and nothing it restates --------------------
+//
+// The computed tallies were removed on request. They are pinned here as *absent* rather than simply
+// deleted from the test, because each one restated a mark the body already carries per card and per
+// relation, and reintroducing one would be a regression against that decision rather than a feature.
 {
     const md = reportFor(studyFixture()).report.markdown;
-    check("the salience formula is printed", md.includes("`authored`"));
-    check("the emphasis weights are shown", md.includes("0.20"));
-    check("the clustering rule is explained", md.includes("gap in time"));
-    check("the disagreement with the server's tree rule is admitted",
-        md.includes("honest discrepancy"));
-    check("the filters-are-ignored caveat is stated", md.includes("Filters are ignored"));
-    check("authorship is tallied", md.includes("### Authorship"));
+
+    check("the how-it-was-made essay is gone", !md.includes("How this document was made"));
+    check("the authorship tally is gone", !md.includes("### Authorship"));
+    check("the salience weight table is gone", !md.includes("Emphasis, as a formula"));
+    check("the relation-origin table is gone", !md.includes("Relations by kind and origin"));
+    check("the revision summary is gone", !md.includes("How much the material was worked"));
+
+    // What is left is the two things no other section can say.
+    check("Provenance still exists", md.includes("## Provenance"));
+    check("and still records what was removed", md.includes("### Removed from the study"));
+    check("and still records what was set aside", md.includes("### Set aside"));
+}
+
+// --- 15b. Set-aside cards leave the body entirely ----------------------------------------------
+{
+    const fixture = studyFixture();
+    const { report, snapshot, codes } = reportFor(fixture);
+    const md = report.markdown;
+    const model = buildReportModel(snapshot, codes);
+
+    // `o1` is the fixture's one `relevant: false` card.
+    const asideCode = codes.byTargetId.get("o1")?.code;
+    check("the set-aside card has a code", typeof asideCode === "string");
+    equal("and is counted as set aside", report.stats.setAsideCards, 1);
+
+    const inNoBodyCollection = ![
+        ...model.unassignedCards,
+        ...model.insights,
+        ...model.concepts,
+        ...model.blueprintComponents,
+        ...model.unansweredRequirements,
+        ...model.requirementAnswers.map((answer) => answer.requirement),
+        ...model.requirementAnswers.flatMap((answer) => answer.components.map((c) => c.card)),
+        ...model.phases.flatMap((phase) => [
+            ...phase.headline,
+            ...phase.threads.flatMap((thread) => [...thread.cards, ...thread.headline]),
+        ]),
+        ...model.looseThreads.flatMap((thread) => [...thread.cards, ...thread.headline]),
+    ].some((entry) => entry.nodeId === "o1");
+    check("no body collection contains it", inNoBodyCollection);
+
+    check("no relation touching it survives",
+        !model.relations.some((r) => r.sourceNodeId === "o1" || r.targetNodeId === "o1"));
+
+    // Its title is the thing that must not be reproduced. It appears once — in the Set aside table —
+    // and the sections that name codes point at that table rather than repeating it.
+    const titleMentions = md.split("Session transcript").length - 1;
+    equal("its title appears exactly once, under Set aside", titleMentions, 1);
+    check("and the appendix sends the reader there",
+        md.includes("set aside by the researcher, so it has no entry above"));
+    check("it has no appendix entry of its own",
+        !md.includes(`### ${asideCode}
+`));
+}
+
+// --- 15b2. The awkward relevance cases: an activity, and a person ------------------------------
+//
+// Both were live holes after the first pass at the relevance rule, and both reach the body through a
+// route that is not a card table: an activity through its own thread heading, a person through the
+// participants lines. Neither is covered by 15b, whose set-aside card is an ordinary satellite.
+{
+    const withAside = studyFixture();
+    withAside.nodes.push(
+        card("h9", "person", "SIDELINED PERSON", day(46), { relevant: false }),
+    );
+    withAside.edges.push(edge("e20", "a3", "h9", "part of", { manual: true }));
+    // The third activity, far enough out in time to anchor its own phase.
+    (withAside.nodes.find((n) => n.id === "a3")!.data as Record<string, unknown>).relevant = false;
+
+    const { report, codes } = reportFor(withAside);
+    const md = report.markdown;
+
+    // A person's name reaches the body only through the participants lines, and a set-aside card
+    // must not be featured there. It is still named once, in the Set aside table — that row is the
+    // record of the judgement, and it is the same treatment every other set-aside card gets.
+    const participantLines = md
+        .split("\n")
+        .filter((line) => line.startsWith("Participants:") || line.startsWith("| Participants |"));
+    check("no participants line names a set-aside person",
+        !participantLines.some((line) => line.includes("SIDELINED PERSON")));
+    equal("and the name appears exactly once, under Set aside",
+        md.split("SIDELINED PERSON").length - 1, 1);
+    check("recorded with its code", md.includes(`| ${codes.byTargetId.get("h9")?.code} |`));
+
+    // An activity is structure: its thread stays, because the cards under it were not set aside.
+    const activityCode = codes.byTargetId.get("a3")?.code;
+    check("a set-aside activity keeps its thread section",
+        md.includes(`#### ${activityCode} · Pilot evaluation`)
+        || md.includes(`### ${activityCode} · Pilot evaluation`));
+    check("and says so in the section itself",
+        md.includes("marked this activity not relevant"));
+    check("and its cards are still listed", md.includes("Show who wrote each card"));
+
+    // The contradiction this pair used to produce: a heading the appendix denied existed.
+    check("the appendix does not deny a section the document has",
+        !md.includes(`\`${activityCode}\` — was set aside`));
+    // The link definition and the heading still agree, which is what the anchor guarantee rests on.
+    check("its code still resolves to that heading",
+        md.includes(`[${activityCode}]: #${String(activityCode).toLowerCase()}`));
+}
+
+// --- 15c. The report explains how to read a reference ------------------------------------------
+{
+    const md = reportFor(studyFixture()).report.markdown;
+
+    // The front-matter paragraph that used to carry this was removed; the explanation now lives in
+    // a section of its own, immediately above the index the codes resolve to.
+    check("the front-matter essay is gone",
+        !md.includes("Everything in this document except the Abstract"));
+    check("the explanation has a section of its own", md.includes("## How to read a reference"));
+    check("and it comes before the index",
+        md.indexOf("## How to read a reference") < md.indexOf("## Appendix A. Card index"));
+    check("the letter is explained as an altitude",
+        md.includes("the altitude it is cited at"));
+
+    check("the phase suffix is documented", md.includes("`R1P`"));
+    check("the activity suffix is documented", md.includes("`R1A`"));
+    check("the thread suffix is documented", md.includes("`R1T`"));
+    check("the attached-file suffix is documented", md.includes("`R1F`"));
+    // Not offered as a next-step link in the index, so the explanation is the only place a reader
+    // can learn it exists.
+    check("the activity-file suffix is documented", md.includes("`R1AF`"));
+
+    // `O` is gone, and with it the caution that existed only because `R10` and `R1O` collided.
+    check("the retired Overview suffix is not documented", !md.includes("`R1O`"));
+    check("and the R10/R1O caution is gone", !md.includes("`R10` is the tenth requirement"));
+
+    check("the closure of the grammar is stated", md.includes("it is closed"));
+    check("both surfaces are described",
+        md.includes("**In this document**") && md.includes("**In the application**"));
+
+    // Without appendices the index is not there either, so neither is its explanation.
+    const bodyOnly = reportFor(studyFixture(), {}, { includeAppendices: false }).report.markdown;
+    check("and it travels with the index", !bodyOnly.includes("## How to read a reference"));
+}
+
+// --- 15e. The index offers the next step, and only where there is one ---------------------------
+// `R1 (P / A / T / F)`: the code opens the card, the letters open the further views of it. A letter
+// that would resolve to nothing is left out rather than printed dead.
+{
+    const withFile = studyFixture();
+    withFile.nodes = withFile.nodes.map((node) => (node.id === "r1"
+        ? card("r1", "requirement", "Must survive a reload", day(1), {
+            description: "Sessions are long.",
+            attachmentIds: ["file-1"],
+        })
+        : node));
+    const md = reportFor(withFile, {
+        files: [{
+            id: "file-1",
+            sha256: "a".repeat(64),
+            name: "protocol.pdf",
+            ext: "pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 2048,
+            createdAtIso: day(1),
+        }],
+    }, {
+        canvasUrlForCode: (code) => `https://host/p?ref=${code}`,
+    }).report.markdown;
+
+    const entryOf = (code: string): string => {
+        const line = md.split("\n").find((row) => row.startsWith(`On the canvas: [${code}]`));
+        return line ?? "";
+    };
+
+    // R1 is a requirement in a thread, in a phase, with a file attached: every letter applies.
+    const r1 = entryOf("R1");
+    check("the code itself is the first link", r1.startsWith("On the canvas: [R1](https://host/p?ref=R1)"));
+    check("the phase is offered", r1.includes("[P](https://host/p?ref=R1P)"));
+    check("the activity is offered", r1.includes("[A](https://host/p?ref=R1A)"));
+    check("the thread is offered", r1.includes("[T](https://host/p?ref=R1T)"));
+    check("the file is offered", r1.includes("[F](https://host/p?ref=R1F)"));
+    check("in the order the explanation lists them",
+        r1.indexOf("[P]") < r1.indexOf("[A]")
+        && r1.indexOf("[A]") < r1.indexOf("[T]")
+        && r1.indexOf("[T]") < r1.indexOf("[F]"));
+    // Typeable, deliberately not advertised: five letters stops being a glance.
+    check("but the activity's file is not", !r1.includes("[AF]"));
+
+    // R2 is in a thread and a phase but carries nothing.
+    const r2 = entryOf("R2");
+    check("a card with no file still offers the rest", r2.includes("[P]") && r2.includes("[T]"));
+    check("and omits the file rather than linking nowhere", !r2.includes("[F]"));
+
+    // C2 is the unattached thought: no activity, so no thread and no phase either.
+    const c2 = entryOf("C2");
+    check("an unconnected card is still linkable", c2.startsWith("On the canvas: [C2]"));
+    // Not a bare "(" — the markdown link syntax has one. The parenthesised group is what must
+    // be absent, and it is the only thing separated from the code link by a space.
+    check("but is offered no further views", !c2.includes(") ("));
+
+    // Offline, the whole line goes, as it always did.
+    const offline = reportFor(studyFixture()).report.markdown;
+    check("with no link builder there is no row at all", !offline.includes("On the canvas:"));
+}
+
+// --- 15d. The counts the reader was asked to lose ----------------------------------------------
+{
+    const md = reportFor(studyFixture()).report.markdown;
+
+    check("Phases at a glance has no Cards column",
+        md.includes("| Code | Phase | Dates | Threads |"));
+    check("a phase table states no card total", !md.includes("| Contains |"));
+    check("a phase table states no composition", !md.includes("| Composition |"));
+    check("a thread states no internal relations", !md.includes("Relations inside this thread"));
+    check("but still states what it reaches", md.includes("Reaching beyond it"));
 }
 
 // --- 16. Canvas links are optional ------------------------------------------------------------
 {
     const offline = reportFor(studyFixture()).report.markdown;
-    check("with no link builder there are no canvas links", !offline.includes("Open on the canvas"));
+    check("with no link builder there are no canvas links", !offline.includes("On the canvas:"));
 
     const online = reportFor(studyFixture(), {}, {
         canvasUrlForCode: (code) => `https://host/vitral/project/proj-1?ref=${code}`,
     }).report.markdown;
-    check("with one, the appendix links out", online.includes("Open on the canvas"));
+    check("with one, the appendix links out", online.includes("On the canvas:"));
     check("and the link carries the code", online.includes("ref=R1"));
     // The document must still be navigable by its own anchors either way.
     check("internal definitions are present in both", offline.includes("]: #") && online.includes("]: #"));

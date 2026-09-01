@@ -31,7 +31,11 @@ export function buildProjectReport(
     const model = buildReportModel(snapshot, options.codes);
     const markdown = renderReportMarkdown(model, options);
 
-    const contentCards = model.allCards.filter((card) => card.label !== "person");
+    // Set-aside cards are named under "Set aside" and nowhere else, so they are not part of what the
+    // document reports on — see the relevance note in `reportModel`.
+    const contentCards = model.allCards.filter((card) => (
+        card.label !== "person" && card.relevant
+    ));
     const threads = model.phases.reduce((sum, phase) => sum + phase.threads.length, 0)
         + model.looseThreads.length;
 

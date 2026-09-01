@@ -1,11 +1,12 @@
-import { describeLocatorStatus } from "@/pages/projectEditor/locators";
-import type { ReportCard, ReportModel, ReportRelation, ReportThread } from "./reportModel";
 import {
-    buildAuthorshipTally,
-    buildRelationKindTallies,
-    buildRevisionSummary,
-    salienceWeightRows,
-} from "./reportProvenance";
+    describeLocatorStatus,
+    LOCATOR_LENS_HELP,
+    LOCATOR_LENS_SUFFIX,
+    LOCATOR_NEXT_STEP_LENSES,
+    resolveLocatorReference,
+} from "@/pages/projectEditor/locators";
+import type { ReportCard, ReportModel, ReportRelation, ReportThread } from "./reportModel";
+import { buildAuthorshipTally } from "./reportProvenance";
 import {
     daysBetween,
     formatDayRange,
@@ -97,6 +98,100 @@ function ref(out: Emitter, code: string | null): string {
     return `[${code}]`;
 }
 
+/**
+ * How to read a code, in the document that uses them.
+ *
+ * A reader with the paper in front of them and the canvas open on another screen needs to know two
+ * things that are not guessable: that the letter is an altitude rather than a category, and that a
+ * suffix can ask for a different one. Both are one sentence each, and the alternative — leaving them
+ * undocumented — makes every code in the document look like an arbitrary label.
+ *
+ * The suffix list is generated from `LOCATOR_LENS_HELP`, the same table the canvas's reference box
+ * puts in its tooltip, so the document and the box cannot come to describe different grammars.
+ */
+/**
+ * The whole reference grammar, for the reader.
+ *
+ * A section of its own rather than a preamble to the index, because it now describes two conventions
+ * — the codes in this document, and the same codes typed into the application — and because the
+ * next-step links it explains are the thing directly below it.
+ *
+ * The list of lenses is generated from `LOCATOR_LENS_HELP`, which is also what the canvas box puts in
+ * its tooltip, so the document and the box cannot come to describe different grammars. Only the prose
+ * around it is written here.
+ */
+function referenceMechanismLines(): string[] {
+    const lines = [
+        "Every artifact this study can name carries a short code — `A3`, `R7`, `P1`. The letter says"
+        + " what kind of thing it is **and the altitude it is cited at**: `P` is a phase, so it is an"
+        + " Overview claim; `A` is an activity, so it is a Threads claim; `R`, `I`, `C` and `O` are"
+        + " cards, so they are Detail claims. A code links to its entry in the index below and, where"
+        + " a canvas link is available, to the same artifact on the canvas at that altitude.",
+        "",
+        "A code can carry a **suffix**, which asks for a different view of the same artifact. One"
+        + " artifact therefore has one number and six ways of being looked at, rather than six"
+        + " numbers:",
+        "",
+    ];
+    for (const entry of LOCATOR_LENS_HELP) {
+        lines.push(`- \`R1${entry.suffix}\` — ${entry.means}`);
+    }
+    lines.push("");
+    lines.push(
+        "That is the whole grammar, and it is closed. The views are a ladder — a phase holds threads,"
+        + " a thread holds an activity and its cards, a card may carry a file — so a suffix is a step"
+        + " up that ladder, then optionally `F` to open what is attached where you landed. Anything"
+        + " beyond these six would only repeat one of them: `R1AT` asks for the thread of R1's"
+        + " activity, which is R1's thread, which is `R1T`.",
+    );
+    lines.push("");
+    lines.push(
+        "**In this document**, each entry in the index below is followed by the further views"
+        + " available for it, written `R1 (P / A / T / F)`. A letter appears only where there is"
+        + " something to show: a card with no attached file has no `F`, and a card that belongs to no"
+        + " thread has no `P`, `A` or `T`.",
+    );
+    lines.push("");
+    lines.push(
+        "**In the application**, the same references go into the canvas's **Go to reference** box,"
+        + " which takes the canvas to what the reference names, at the altitude it asks for. Following"
+        + " one of the links below does the same thing without the typing.",
+    );
+    return lines;
+}
+
+/**
+ * The further views of one card, as links: `R1 (P / A / T / F)`.
+ *
+ * Which letters appear is decided by **asking the resolver**, not by re-deriving membership here — so
+ * the document can only advertise a view the canvas will actually accept, and the refusals stay in
+ * one place. `overview` declines a card that belongs to no phase, `thread` and `activity` a card that
+ * reaches no activity, and an unconnected card therefore prints no parenthesis at all.
+ *
+ * The file lens is the one the resolver cannot answer, because `locators.ts` never reads node data.
+ * The test applied here is the one `handleGoToLocatorCode` applies before it moves the camera: an
+ * attachment id that still resolves to a stored file.
+ */
+function nextStepLinks(
+    card: ReportCard,
+    options: ReportOptions,
+    hasAttachment: boolean,
+): string[] {
+    if (card.code === null || options.canvasUrlForCode === null) return [];
+
+    const links: string[] = [];
+    for (const lens of LOCATOR_NEXT_STEP_LENSES) {
+        if (lens === "file" && !hasAttachment) continue;
+        const suffix = LOCATOR_LENS_SUFFIX[lens];
+        const reference = `${card.code}${suffix}`;
+        if (!resolveLocatorReference(options.codes, reference).ok) continue;
+        const url = options.canvasUrlForCode(reference);
+        if (url === null) continue;
+        links.push(`[${suffix}](${url})`);
+    }
+    return links;
+}
+
 function authorshipWord(card: ReportCard): string {
     return card.authorship === "authored" ? "authored" : "AI";
 }
@@ -130,16 +225,22 @@ function renderThread(out: Emitter, thread: ReportThread, depth: number): void {
         : thread.title;
     heading(out, depth, title, thread.code, `activity — ${thread.title}`);
 
-    const facts = [
-        formatIsoDay(thread.createdAtIso),
-        plural(thread.cards.length, "card"),
-        thread.participants.length > 0 ? `with ${thread.participants.join(", ")}` : null,
-        thread.outboundRelations.length > 0
-            ? `${plural(thread.outboundRelations.length, "relation")} reaching other threads`
-            : null,
-    ].filter((part): part is string => part !== null);
-    push(out, facts.join(" · "));
-    blank(out);
+    // An activity the researcher set aside still organises the cards under it, so the section stays —
+    // but the reader has to be told, or the document silently features work the study ruled out. See
+    // `ReportThread.relevant`.
+    if (!thread.relevant) {
+        push(out, "_The researcher marked this activity not relevant. Its section is kept because the"
+            + " cards below it were not set aside and have nowhere else to be listed._");
+        blank(out);
+    }
+
+    // Who was there, and nothing else. The date and the two counts that used to run along this line
+    // are all derivable from the table below it and from the relation lines under that, and a reader
+    // arriving at a thread wants to know whose thread it was before they want its arithmetic.
+    if (thread.participants.length > 0) {
+        push(out, `Participants: ${thread.participants.join(", ")}`);
+        blank(out);
+    }
 
     if (thread.headline.length > 0) {
         push(out, "What this thread is organised around, most central first:");
@@ -170,16 +271,12 @@ function renderThread(out: Emitter, thread: ReportThread, depth: number): void {
         }
     }
 
-    if (thread.internalRelations.length > 0) {
-        push(out, `Relations inside this thread: ${thread.internalRelations.map((relation) => relationSentence(out, relation)).join(" · ")}`);
-        blank(out);
-    }
+    // Only the relations that leave. A thread's internal wiring is the table above it said twice —
+    // every card in it is already listed, and the edges between them are what put them there. What is
+    // not derivable from the table is where this thread reached to, which is the whole question the
+    // phase structure exists to answer.
     if (thread.outboundRelations.length > 0) {
         push(out, `Reaching beyond it: ${thread.outboundRelations.map((relation) => relationSentence(out, relation)).join(" · ")}`);
-        blank(out);
-    }
-    if (thread.setAside.length > 0) {
-        push(out, `Set aside by the researcher: ${thread.setAside.map((card) => `${ref(out, card.code)} ${card.title}`).join(" · ")}`);
         blank(out);
     }
 }
@@ -187,7 +284,13 @@ function renderThread(out: Emitter, thread: ReportThread, depth: number): void {
 export function renderReportMarkdown(model: ReportModel, options: ReportOptions): string {
     const out: Emitter = { lines: [], taken: new Map(), definitions: new Map(), cited: new Set() };
     const { snapshot } = model;
-    const authorship = buildAuthorshipTally(model.allCards, model.relations);
+    // Over what the document contains, not over the whole live graph: `allCards` deliberately keeps
+    // the set-aside cards so they can be named under "Set aside", and counting them here would have
+    // the front matter promise a card count the body never delivers.
+    const authorship = buildAuthorshipTally(
+        model.allCards.filter((card) => card.relevant),
+        model.relations,
+    );
     const threadCount = model.phases.reduce((sum, phase) => sum + phase.threads.length, 0)
         + model.looseThreads.length;
 
@@ -208,14 +311,6 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
         )],
     ]));
     blank(out);
-    push(
-        out,
-        "Everything in this document except the Abstract is computed from the project graph. Each"
-        + " artifact carries a short code — `A3`, `R7`, `P1` — which links to its entry here and, where"
-        + " a canvas link is available, to the same artifact on the canvas at the same level of"
-        + " abstraction. See **Appendix A** for the full index.",
-    );
-    blank(out);
 
     // --- Abstract ---------------------------------------------------------------------------------
     heading(out, 2, "Abstract", null);
@@ -223,12 +318,6 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
         // Sentinel comments: invisible in every renderer (`react-markdown` skips raw HTML without
         // `rehype-raw`), and they make the machine-written block findable and removable by a script.
         push(out, `<!-- ${MACHINE_TEXT_BEGIN} model=${options.abstract.model} prompt=${options.abstract.prompt} -->`);
-        push(
-            out,
-            "_Machine-written from the figures in this document. Every other section is computed from"
-            + " the project graph. Deleting this section removes all machine-written text._",
-        );
-        blank(out);
         push(out, options.abstract.prose.trim());
         blank(out);
         push(out, `<!-- ${MACHINE_TEXT_END} -->`);
@@ -248,13 +337,12 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
 
     if (model.phases.length > 0) {
         heading(out, 3, "Phases at a glance", null);
-        push(out, ...table(["Code", "Phase", "Dates", "Threads", "Cards"],
+        push(out, ...table(["Code", "Phase", "Dates", "Threads"],
             model.phases.map((phase) => [
                 ref(out, phase.code),
                 tableCell(phase.label),
                 tableCell(formatDayRange(phase.startIso, phase.endIso)),
                 String(phase.threads.length),
-                String(phase.cardCount),
             ])));
         blank(out);
     }
@@ -288,8 +376,6 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
                 return days === null || days === 0 ? "" : ` (${plural(days, "day")})`;
             })()}`)],
             ["Anchor activity", ref(out, phase.anchorCode)],
-            ["Contains", tableCell(`${plural(phase.threads.length, "thread")} · ${plural(phase.cardCount, "card")}`)],
-            ["Composition", tableCell(phase.composition.map((entry) => `${entry.count} ${entry.label}`).join(", ") || "—")],
             ["Participants", tableCell(phase.participants.join(", ") || "—")],
         ]));
         blank(out);
@@ -428,94 +514,14 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
     }
 
     // --- Provenance --------------------------------------------------------------------------------
+    //
+    // What is left here is the two things the graph cannot show on its own: what was taken out of the
+    // study, and what was kept but ruled out of it. The computed tallies that used to sit above them —
+    // authorship counts, the salience weights, the relation-origin table, the revision summary — were
+    // removed on request. Each restated a mark that every card and every relation already carries
+    // individually in the body, so a reader who doubted a number had to go and check it against the
+    // study regardless.
     heading(out, 2, "Provenance", null);
-
-    heading(out, 3, "How this document was made", null);
-    push(out,
-        "Every section above except the Abstract is computed from the project graph by the same"
-        + " functions the canvas uses to draw it, so the document and the canvas cannot disagree about"
-        + " what the study contains.");
-    blank(out);
-    push(out,
-        "- **Phases** are runs of consecutive activities, cut where the gap in time outweighs the"
-        + " content the activities share. A cut is only made where that difference is positive, so a"
-        + " project with steady work and connected activities is one phase.\n"
-        + "- **Threads** are activity trees: every card is assigned to the nearest activity it can"
-        + " reach through the graph, with the earlier activity winning a tie. A card reaching none is"
-        + " listed under \"Unconnected cards\".\n"
-        + "- **Ordering** everywhere is by one salience score, printed below.\n"
-        + "- **`referenced by` and `iteration of`** relations were thresholded cosine similarity"
-        + " frozen at the moment the card was created. They are not a live model's opinion, and the"
-        + " score that carried each decision is shown beside it.\n"
-        + "- **Filters are ignored.** This document describes the project, not the researcher's"
-        + " current screen, so label chips, the search query and the timeline playhead have no effect"
-        + " on what appears here.");
-    blank(out);
-    push(out,
-        "_One honest discrepancy: this document assigns a card to a thread by walking the graph to the"
-        + " nearest activity at any distance, while the server's provenance database follows only"
-        + " direct activity-to-card connections. For a card more than one step from its activity the two"
-        + " can disagree. The canvas's definition is the one used here._");
-    blank(out);
-
-    heading(out, 3, "Authorship", null);
-    push(out, "Who put each thing on the canvas. This is a count of the same mark every card and every"
-        + " relation carries individually above, so any row here can be checked against the study.");
-    blank(out);
-    push(out, ...table(["Kind", "Authored", "AI", "Total"], [
-        ...authorship.cards.byLabel.map((row) => [
-            tableCell(row.label),
-            String(row.authored),
-            String(row.modelProposed),
-            String(row.authored + row.modelProposed),
-        ]),
-        ["**all cards**", `**${authorship.cards.authored}**`, `**${authorship.cards.modelProposed}**`, `**${authorship.cards.total}**`],
-    ]));
-    blank(out);
-    push(out, `Relations: ${authorship.relations.handDrawn} hand-drawn, `
-        + `${authorship.relations.modelDerived} by AI, and ${authorship.relations.unknown} whose origin `
-        + "predates the marker that records it — counted as unknown rather than assumed to be either.");
-    blank(out);
-
-    heading(out, 3, "Emphasis, as a formula", null);
-    push(out, ...table(["Term", "Weight", "What it means"], salienceWeightRows().map((row) => [
-        `\`${row.term}\``,
-        row.weight.toFixed(2),
-        tableCell(row.means),
-    ])));
-    blank(out);
-    push(out, "`degree`, `crossTree` and `iteration` are proportions of the highest value in this"
-        + " project; the rest are flat. `authored` is why a card a person wrote is named before one a"
-        + " model proposed when the two are equally central.");
-    blank(out);
-
-    heading(out, 3, "Relations by kind and origin", null);
-    push(out, ...table(["Kind", "Total", "Hand-drawn", "AI", "Unknown", "Similarity (min/median/max)"],
-        buildRelationKindTallies(model.relations).map((row) => [
-            tableCell(row.kind),
-            String(row.count),
-            String(row.handDrawn),
-            String(row.modelDerived),
-            String(row.unknown),
-            row.similarity
-                ? `${row.similarity.min.toFixed(2)} / ${row.similarity.median.toFixed(2)} / ${row.similarity.max.toFixed(2)}`
-                : "—",
-        ])));
-    blank(out);
-
-    const revisions = buildRevisionSummary(model.allCards);
-    heading(out, 3, "How much the material was worked", null);
-    push(out, `${plural(revisions.cardsEditedAfterCreation, "card")} were edited after being created and`
-        + ` ${revisions.cardsNeverEdited} were not, over ${plural(revisions.totalDataRevisions, "recorded edit")}.`);
-    blank(out);
-    if (revisions.mostRevised.length > 0) {
-        push(out, ...table(["Code", "Card", "Edits"], revisions.mostRevised.map((row) => [
-            ref(out, row.code),
-            tableCell(row.title),
-            String(row.revisions),
-        ])));
-        blank(out);
-    }
 
     heading(out, 3, "Removed from the study", null);
     if (model.removedCards.length === 0 && model.removedRelations.length === 0) {
@@ -558,6 +564,10 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
 
     // --- Appendices ---------------------------------------------------------------------------------
     if (options.includeAppendices) {
+        heading(out, 2, "How to read a reference", null);
+        push(out, ...referenceMechanismLines());
+        blank(out);
+
         heading(out, 2, "Appendix A. Card index", null);
         push(out, "Every artifact this document can name, with its code. This is where the codes used"
             + " above resolve to, and where a code cited in a paper can be looked up.");
@@ -583,22 +593,45 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
                 push(out, quoteBlock(card.quotation));
                 blank(out);
             }
+            // The code itself opens the card; the letters beside it open the further views of it.
+            // One line rather than two, because they are one gesture with four destinations, and a
+            // reader scanning the index should be able to take the whole of it in at a glance.
             const url = options.canvasUrlForCode?.(card.code) ?? null;
             if (url !== null) {
-                push(out, `[Open on the canvas](${url})`);
+                const hasAttachment = card.attachmentIds.some((id) => (
+                    snapshot.files.some((file) => file.id === id)
+                ));
+                const steps = nextStepLinks(card, options, hasAttachment);
+                const suffixed = steps.length > 0 ? ` (${steps.join(" / ")})` : "";
+                push(out, `On the canvas: [${card.code}](${url})${suffixed}`);
                 blank(out);
             }
         }
 
         // Codes whose target the document cannot anchor still get an entry, stating why. A reference
         // that cannot resolve must say so rather than look clickable.
+        //
+        // A live target with no anchor is the set-aside case, and it needs its own sentence:
+        // `describeLocatorStatus` takes its "live" branch and would print the card's title under a
+        // heading saying the code does not resolve — reproducing in the appendix exactly the content
+        // the researcher's judgement kept out of the body.
+        //
+        // `out.definitions` is the check, not `inDocument` alone: a set-aside **activity** does still
+        // get a heading, because its thread section organises cards that were not set aside
+        // (`ReportThread.relevant`). Asking what the document actually anchored, rather than what the
+        // index predicted it would, is what stops the appendix denying a section three pages up — and
+        // it will stay right for whatever the next exception turns out to be.
         const unresolvable = options.codes.entries.filter((entry) => (
-            entry.status !== "live" || !entry.inDocument
+            (entry.status !== "live" || !entry.inDocument) && !out.definitions.has(entry.code)
         ));
         if (unresolvable.length > 0) {
             heading(out, 3, "Codes that no longer resolve", null);
             for (const entry of unresolvable) {
-                push(out, `- \`${entry.code}\` — ${describeLocatorStatus(entry)}`);
+                const why = entry.status === "live"
+                    ? "was set aside by the researcher, so it has no entry above. It is listed under"
+                        + " **Set aside**."
+                    : describeLocatorStatus(entry);
+                push(out, `- \`${entry.code}\` — ${why}`);
             }
             blank(out);
         }

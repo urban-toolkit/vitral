@@ -19,7 +19,12 @@ import {
 } from "@/pages/projectEditor/graphSemantics";
 import { isModelDerivedEdgeData, isModelDerivedNodeData } from "@/utils/edgeProvenance";
 import { relationLabelFor } from "@/utils/relationships";
-import { countNodeDataRevisions, firstNodeHistoryAtMs, lastNodeHistoryAtMs } from "@/pages/projectEditor/nodeHistory";
+import {
+    DEFAULT_HISTORY_TIMESTAMP,
+    countNodeDataRevisions,
+    firstNodeHistoryAtMs,
+    lastNodeHistoryAtMs,
+} from "@/pages/projectEditor/nodeHistory";
 import { locatorGraphScope, type LocatorIndex } from "@/pages/projectEditor/locators";
 import type { ReportSnapshot } from "./reportTypes";
 
@@ -32,6 +37,19 @@ import type { ReportSnapshot } from "./reportTypes";
  * exactly once in a thread section or under "Unconnected cards", and again in the appendix. What the
  * Focus+Context levels contribute is *which* cards are named first — the same cards Overview and
  * Threads promote, taken from the same `pickTop` so the two cannot drift apart.
+ *
+ * ## The one thing that does decide inclusion
+ *
+ * **Relevance.** `data.relevant === false` is not the abstraction hiding something for want of room;
+ * it is the researcher saying this material is not part of the study. So a set-aside card is kept out
+ * of every content collection below — the threads, the unconnected band, the insight and concept
+ * sweeps, the requirements and the components answering them — and out of any relation with an end
+ * in one, which would otherwise cite a code the document has no entry for.
+ *
+ * It is not *erased*, and the distinction matters: `allCards` stays complete so `setAsideCards` can
+ * name what was ruled out, because a judgement about the material is itself part of the record. That
+ * one section, and the note in "Codes that no longer resolve" that points at it, are the whole of
+ * what a set-aside card contributes to the document.
  *
  * `buildAbstractedGraph` is deliberately **not** called. It returns React Flow nodes carrying
  * synthetic `vz:` ids, positions and sizes that mean nothing here, and its `cardCount` /
@@ -95,13 +113,31 @@ export type ReportThread = {
     activityNodeId: string;
     code: string | null;
     title: string;
+    /**
+     * False when the researcher marked the **activity itself** not relevant.
+     *
+     * The thread is still rendered, and this is the one place the relevance rule bends. An activity is
+     * not content in the way a card is: it is the structure the document is organised by, and its
+     * satellites are cards in their own right that were not set aside. Dropping the section would take
+     * them with it, which is the one thing the report may not do. So the section stays, says so in a
+     * line of its own, and the appendix does not claim the code is unanchored — see the note where
+     * "Codes that no longer resolve" is emitted.
+     */
+    relevant: boolean;
     createdAtIso: string | null;
     participants: string[];
     /** The cards Threads promotes — what this activity is organised around. */
     headline: ReportCard[];
     /** Every card in the thread, most central first. Includes the headline. */
     cards: ReportCard[];
-    /** Relations with both ends inside this thread. */
+    /**
+     * Relations with both ends inside this thread.
+     *
+     * Computed but no longer printed: the markdown dropped its "Relations inside this thread" line,
+     * because every card in a thread is already in the table above it and the edges between them are
+     * what put them there. Kept on the model because it is a true fact about a thread and the tray,
+     * the tests and any future section can ask for it.
+     */
     internalRelations: ReportRelation[];
     /** Relations reaching another thread, as one row per partner thread. */
     outboundRelations: ReportRelation[];
@@ -294,7 +330,23 @@ export function buildReportModel(
         liveNodeIds.has(edge.source) && liveNodeIds.has(edge.target)
     );
 
-    const relations = liveEdges.filter(bothEndsLive).map(toRelation);
+    /**
+     * An end that was set aside takes its relation with it.
+     *
+     * Same argument as `bothEndsLive` above, one step weaker: a relation is a claim about two cards,
+     * and printing "R1 —informs→ O4" three lines after the document decided O4 is not part of the
+     * study leaves `O4` as a code with nothing to link to. The tray applies the deletion half of this
+     * rule; this is the relevance half.
+     */
+    const relevantNodeIds = new Set(
+        liveNodes.filter((node) => (node.data as Record<string, unknown> | undefined)?.relevant !== false)
+            .map((node) => node.id),
+    );
+    const bothEndsRelevant = (edge: edgeType) => (
+        relevantNodeIds.has(edge.source) && relevantNodeIds.has(edge.target)
+    );
+
+    const relations = liveEdges.filter(bothEndsLive).filter(bothEndsRelevant).map(toRelation);
     const removedRelations = edges
         .filter((edge) => !isEdgeActive(edge) || !bothEndsLive(edge))
         .map(toRelation);
@@ -361,8 +413,12 @@ export function buildReportModel(
             activityNodeId: activityId,
             code: codeOf(activityId),
             title: cardsById.get(activityId)?.title ?? "Untitled",
+            relevant: relevantNodeIds.has(activityId),
             createdAtIso: cardsById.get(activityId)?.createdAtIso ?? null,
-            participants: collectParticipants(members),
+            // A set-aside `person` is a name the document is not entitled to print, and the
+            // participants line is the one place a card's *title* reaches the body without going
+            // through `cards`.
+            participants: collectParticipants(members.filter((node) => relevantNodeIds.has(node.id))),
             headline,
             cards: bodyCards.filter((card) => card.relevant),
             internalRelations: internal.sort(byEdgeId),
@@ -403,10 +459,13 @@ export function buildReportModel(
             labelSource: cluster.labelSource,
             startIso: cluster.startAt,
             endIso: cluster.endAt,
-            // Counted over the complete member set, not the folded remainder.
-            composition: countLabels(memberNodes),
-            participants: collectParticipants(memberNodes),
-            cardCount: memberNodes.filter((node) => !isPerson(node)).length,
+            // Counted over the complete member set, not the folded remainder — but only over what
+            // the document actually contains, so a phase's totals agree with the threads under it.
+            composition: countLabels(memberNodes.filter((node) => relevantNodeIds.has(node.id))),
+            participants: collectParticipants(memberNodes.filter((node) => relevantNodeIds.has(node.id))),
+            cardCount: memberNodes.filter((node) => (
+                !isPerson(node) && relevantNodeIds.has(node.id)
+            )).length,
             headline,
             threads: cluster.memberActivityIds
                 .map(buildThread)
@@ -422,7 +481,8 @@ export function buildReportModel(
 
     const unassignedCards = liveNodes
         .filter((node) => (
-            membership.get(node.id) === undefined
+            relevantNodeIds.has(node.id)
+            && membership.get(node.id) === undefined
             && normalizeNodeLabel(nodeLabelOf(node)) !== "blueprint_component"
             && normalizeNodeLabel(nodeLabelOf(node)) !== "blueprint_group"
             && normalizeNodeLabel(nodeLabelOf(node)) !== "blueprint"
@@ -453,10 +513,26 @@ export function buildReportModel(
     );
 
     const requirements = liveNodes
-        .filter((node) => normalizeNodeLabel(nodeLabelOf(node)) === "requirement")
+        .filter((node) => (
+            normalizeNodeLabel(nodeLabelOf(node)) === "requirement"
+            && relevantNodeIds.has(node.id)
+        ))
         .sort((a, b) => compareBySalience(a, b, salience.score))
         .map((node) => cardsById.get(node.id)!)
         .filter(Boolean);
+
+    /**
+     * When each component was attached, taken from the `tackled in` **edge** rather than from the
+     * blueprint event.
+     *
+     * The event used to be minted by the attach gesture, so its instant was the attach instant. It is
+     * now minted when the component is *created* (so the timeline's Blueprint track shows components
+     * that answer nothing yet), which means reading the attach date off it would print a component's
+     * birthday under the words "attached". The edge is the attachment — that is the whole of
+     * contract 28 — so the edge is what carries its date.
+     */
+    const attachedAtByPair = new Map<string, string | null>();
+    const pairKey = (requirementId: string, componentId: string) => `${requirementId}::${componentId}`;
 
     const componentsForRequirement = new Map<string, string[]>();
     for (const edge of liveEdges) {
@@ -473,9 +549,25 @@ export function buildReportModel(
         }
         if (requirementId === null || componentId === null) continue;
         if (!attached.has(componentId)) continue;
+        if (!relevantNodeIds.has(componentId)) continue;
         const list = componentsForRequirement.get(requirementId) ?? [];
         if (!list.includes(componentId)) list.push(componentId);
         componentsForRequirement.set(requirementId, list);
+        // A component may answer one requirement through more than one edge only if somebody drew a
+        // duplicate; the earliest is the one that attached it.
+        //
+        // `DEFAULT_HISTORY_TIMESTAMP` is not a date. `flowSlice.ensureEdgeTimestamps` stamps it on any
+        // edge that arrived without one — every edge in a document saved before edge timestamps were
+        // recorded — and printing it verbatim would tell the reader a component was attached in 1970.
+        // It also has to be excluded from the earliest-wins tie-break, where a sentinel beats every
+        // real date it is compared against.
+        const key = pairKey(requirementId, componentId);
+        const rawDrawnAt = isoField((edge.data ?? {}) as Record<string, unknown>, "createdAt");
+        const drawnAt = rawDrawnAt === DEFAULT_HISTORY_TIMESTAMP ? null : rawDrawnAt;
+        const known = attachedAtByPair.get(key) ?? null;
+        if (known === null || (drawnAt !== null && drawnAt < known)) {
+            attachedAtByPair.set(key, drawnAt);
+        }
     }
 
     const requirementAnswers: ReportRequirementAnswer[] = [];
@@ -491,23 +583,39 @@ export function buildReportModel(
             components: componentIds.map((componentId) => {
                 const componentNode = liveNodes.find((node) => node.id === componentId);
                 const componentData = componentNode ? dataOf(componentNode) : {};
+                // Read off the node, with the timeline event only as a fallback for a document whose
+                // component predates the field. The event used to be the source of both, which was
+                // always a copy of what the node already held and is now not even guaranteed to
+                // exist — the track derives its markers rather than storing them.
+                const blueprintComponent = componentData.blueprintComponent
+                    && typeof componentData.blueprintComponent === "object"
+                    ? componentData.blueprintComponent as Record<string, unknown>
+                    : {};
                 const event = blueprintEventByComponent.get(componentId) ?? null;
                 return {
                     card: cardsById.get(componentId)!,
                     paperTitle: stringField(componentData, "blueprintPaperTitle") || event?.paperTitle || null,
-                    referenceCitation: event?.referenceCitation ?? null,
-                    attachedAtIso: event?.occurredAtIso ?? null,
+                    referenceCitation: stringField(blueprintComponent, "referenceCitation")
+                        || event?.referenceCitation
+                        || null,
+                    attachedAtIso: attachedAtByPair.get(pairKey(requirement.nodeId, componentId)) ?? null,
                 };
             }).filter((entry) => entry.card !== undefined),
         });
     }
 
     const byLabel = (label: string): ReportCard[] => liveNodes
-        .filter((node) => normalizeNodeLabel(nodeLabelOf(node)) === label)
+        .filter((node) => (
+            normalizeNodeLabel(nodeLabelOf(node)) === label
+            && relevantNodeIds.has(node.id)
+        ))
         .sort((a, b) => compareBySalience(a, b, salience.score))
         .map((node) => cardsById.get(node.id)!)
         .filter(Boolean);
 
+    // Deliberately *not* relevance-filtered: this is the complete live set, and `setAsideCards` is
+    // derived from it. The appendix filters it again on its own way past (`card.relevant`), so the
+    // completeness costs the document nothing and buys it the record of what was ruled out.
     const allCards = liveNodes
         .filter((node) => {
             const label = normalizeNodeLabel(nodeLabelOf(node));

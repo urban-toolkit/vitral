@@ -18,8 +18,10 @@
 
 import type { edgeType, nodeType } from "@/config/types";
 import {
+    DIGIT_TWIN,
     LOCATOR_KIND_LETTER,
     LOCATOR_KIND_LEVEL,
+    LOCATOR_LENS_SUFFIX,
     LOCATOR_LETTER_KIND,
     buildLocatorIndex,
     codeToAnchor,
@@ -29,7 +31,9 @@ import {
     isLocatableId,
     nodeToCode,
     parseLocatorCode,
+    parseLocatorReference,
     planLocatorAssignments,
+    resolveLocatorReference,
     type LocatorIndex,
     type LocatorKind,
 } from "@/pages/projectEditor/locators";
@@ -222,6 +226,65 @@ function indexOf(fixture: Fixture, files: Array<{ sha256: string; name: string; 
     equal("ordinal zero is refused", parseLocatorCode("A0"), null);
     equal("a non-string is refused", parseLocatorCode(42), null);
     equal("empty is refused", parseLocatorCode("   "), null);
+}
+
+// --- 2b. The lens suffix ------------------------------------------------------------------------
+{
+    equal("a bare code is the Detail lens", parseLocatorReference("R1")?.lens, "detail");
+    equal("and canonicalises to itself", parseLocatorReference("R1")?.reference, "R1");
+    equal("D is the same lens said out loud", parseLocatorReference("R1D")?.lens, "detail");
+    equal("and canonicalises back to the bare code", parseLocatorReference("R1D")?.reference, "R1");
+    equal("P is the phase", parseLocatorReference("R1P")?.lens, "overview");
+    equal("A is the root activity", parseLocatorReference("R1A")?.lens, "activity");
+    equal("T is the thread", parseLocatorReference("R1T")?.lens, "thread");
+    equal("F is the attached file", parseLocatorReference("R1F")?.lens, "file");
+    equal("AF is the activity's attached file", parseLocatorReference("R1AF")?.lens, "activityFile");
+    equal("a suffix is case-folded like the letter", parseLocatorReference("r1af")?.reference, "R1AF");
+
+    // `R10` and `R1O` are one glyph apart on a printed page, and `O` used to be a valid suffix, so
+    // one of them could be retyped into the other. `P` retired that, but `DIGIT_TWIN` still runs on
+    // the first character only and the two still have to parse as different things.
+    equal("R10 is the tenth requirement", parseLocatorReference("R10")?.locator.ordinal, 10);
+    equal("and carries no lens", parseLocatorReference("R10")?.lens, "detail");
+
+    // The invariant that replaced that hazard rather than merely warning about it: nothing in the
+    // suffix alphabet is a character `DIGIT_TWIN` repairs, so no valid reference can be turned into
+    // a *different valid reference* by a retyping slip. A new lens letter has to keep this true.
+    const twins = new Set(Object.values(DIGIT_TWIN));
+    const collidingSuffix = Object.values(LOCATOR_LENS_SUFFIX)
+        .filter((suffix) => suffix !== "")
+        .filter((suffix) => Array.from(suffix).some((letter) => twins.has(letter)));
+    equal("no lens suffix is a digit twin", collidingSuffix, []);
+
+    // An unrecognised suffix is refused rather than ignored: dropping it would answer a question
+    // nobody asked, and the reader would never learn the suffix was wrong.
+    equal("an unknown suffix is refused", parseLocatorReference("R1X"), null);
+    equal("a two-letter unknown suffix is refused", parseLocatorReference("R1TO"), null);
+    equal("and the retired Overview suffix is refused like any other",
+        parseLocatorReference("R1O"), null);
+
+    // `parseLocatorCode` answers for the artifact, so every caller that indexes by code still works.
+    equal("a lensed reference still names its artifact", parseLocatorCode("R1AF")?.code, "R1");
+}
+
+// --- 2c. A retired suffix is refused, but by name -----------------------------------------------
+// `R1O` is not a typo. It is the spelling every document exported before `P` took the phase lens
+// still prints, so the refusal has to be actionable rather than merely correct.
+{
+    const index = indexOf(studyFixture());
+
+    const retired = resolveLocatorReference(index, "R1O");
+    check("R1O is refused", !retired.ok);
+    if (!retired.ok) {
+        check("naming the replacement letter", retired.reason.includes("P"));
+        check("and spelling out what to type", retired.reason.includes("R1P"));
+    }
+
+    // Only where the rest of the code is well formed: an unrecognised letter is not owed a
+    // confident answer about a suffix that was never its problem.
+    const nonsense = resolveLocatorReference(index, "Z1O");
+    check("an unknown kind letter is refused", !nonsense.ok);
+    if (!nonsense.ok) check("without the retired-suffix hint", !nonsense.reason.includes("Z1P"));
 }
 
 // --- 3. The level table is total, and the index agrees with it ----------------------------------
@@ -636,6 +699,172 @@ function indexOf(fixture: Fixture, files: Array<{ sha256: string; name: string; 
     equal("a card reaching no activity still gets a code", nodeToCode(orphanIndex, "lone"), "I1");
     equal("and resolves at Detail, because Overview would fold it into a glyph",
         orphanIndex.byCode.get("I1")?.viewpoint.level, 3);
+}
+
+// --- 12. A reference resolves to a viewpoint, and the lens picks how deep the focus is cut ------
+{
+    const index = indexOf(studyFixture());
+
+    const detail = resolveLocatorReference(index, "R1");
+    check("a bare reference resolves", detail.ok);
+    if (detail.ok) {
+        equal("Detail centres the card itself", detail.viewpoint.nodeId, "r1");
+        equal("and cuts the focus all the way to its thread", detail.viewpoint.focus.activityId, "a1");
+        equal("and asks for no file", detail.openAttachmentOf, null);
+    }
+
+    const thread = resolveLocatorReference(index, "R1T");
+    check("the thread lens resolves", thread.ok);
+    if (thread.ok) {
+        equal("Threads centres the activity", thread.viewpoint.nodeId, "a1");
+        // One cut shallower: the phase is open, so its activities are glyphs, but no activity is.
+        equal("and stops at the phase", thread.viewpoint.focus.activityId, null);
+        check("keeping the phase itself open", thread.viewpoint.focus.clusterId !== null);
+    }
+
+    const overview = resolveLocatorReference(index, "R1P");
+    check("the overview lens resolves", overview.ok);
+    if (overview.ok) {
+        equal("Overview cuts the focus away entirely", overview.viewpoint.focus.activityId, null);
+        equal("and again", overview.viewpoint.focus.clusterId, null);
+        check("centring the phase glyph itself",
+            String(overview.viewpoint.nodeId ?? "").startsWith("vz:c:"));
+    }
+
+    const activity = resolveLocatorReference(index, "R1A");
+    check("the activity lens resolves", activity.ok);
+    if (activity.ok) {
+        equal("it centres the root activity", activity.viewpoint.nodeId, "a1");
+        equal("at Detail, so the activity is a card rather than a glyph",
+            activity.viewpoint.focus.activityId, "a1");
+    }
+
+    const file = resolveLocatorReference(index, "R1F");
+    check("the file lens resolves", file.ok);
+    if (file.ok) {
+        equal("it names the card whose attachment to open", file.openAttachmentOf, "r1");
+        equal("and puts the canvas where the Detail lens would", file.viewpoint.nodeId, "r1");
+    }
+
+    const activityFile = resolveLocatorReference(index, "R1AF");
+    check("the activity-file lens resolves", activityFile.ok);
+    if (activityFile.ok) {
+        equal("it names the activity's attachment", activityFile.openAttachmentOf, "a1");
+        equal("and travels to the activity", activityFile.viewpoint.nodeId, "a1");
+    }
+
+    // An activity is its own thread, so every lens still answers for one.
+    const ownThread = resolveLocatorReference(index, "A2T");
+    check("an activity has a thread lens", ownThread.ok);
+    if (ownThread.ok) equal("which is itself", ownThread.viewpoint.nodeId, "a2");
+
+    // A blueprint component belongs to no thread by design (`LOCATOR_KIND_LEVEL`), so the lenses that
+    // need one refuse rather than inventing an owner.
+    const componentThread = resolveLocatorReference(index, "B1T");
+    check("a component has no thread to show", !componentThread.ok);
+    if (!componentThread.ok) {
+        check("and says so in words", componentThread.reason.includes("thread"));
+        equal("echoing what was typed", componentThread.reference, "B1T");
+    }
+
+    // A file code has no node, so the Detail lens still answers but the file lens has nothing of its
+    // own to open — a file is not a card holding an attachment, it *is* the attachment.
+    const withFile = indexOf(studyFixture(), [
+        { sha256: "aaa", name: "transcript.pdf", createdAt: day(5) },
+    ]);
+    check("a file code resolves as itself", resolveLocatorReference(withFile, "F1").ok);
+    const fileOfFile = resolveLocatorReference(withFile, "F1F");
+    check("but has no attachment of its own", !fileOfFile.ok);
+    if (!fileOfFile.ok) check("and says why", fileOfFile.reason.includes("not a card"));
+
+    const nonsense = resolveLocatorReference(index, "R1X");
+    check("an unparseable reference is refused", !nonsense.ok);
+    const missing = resolveLocatorReference(index, "R99");
+    check("a reference to nothing is refused", !missing.ok);
+    if (!missing.ok) check("naming the code", missing.reason.includes("R99"));
+}
+
+// --- 13. A deleted target refuses every lens ----------------------------------------------------
+{
+    const deleted = studyFixture();
+    (deleted.nodes.find((node) => node.id === "r1")!.data as Record<string, unknown>).deletedAt = day(9);
+    const index = indexOf(deleted);
+
+    for (const reference of ["R1", "R1P", "R1A", "R1T", "R1F", "R1AF"]) {
+        const outcome = resolveLocatorReference(index, reference);
+        check(`${reference} refuses a deleted target`, !outcome.ok);
+    }
+}
+
+// --- 14. A URL carries the lens, and the artifact's own node ------------------------------------
+// `codeToUrl` used to parse with `parseLocatorCode` and write the bare code back, so every lensed
+// link an exported document printed asked for the card instead of the view.
+{
+    const index = indexOf(studyFixture());
+    const options = { projectId: "proj-1", basename: "/vitral" };
+    const r1 = index.byCode.get("R1")!;
+
+    const bare = new URL(codeToUrl(index, "R1", options)!, "http://example.test");
+    equal("a bare code round-trips", bare.searchParams.get("ref"), "R1");
+    equal("carrying its node", bare.searchParams.get("n"), r1.targetId);
+
+    const lensed = new URL(codeToUrl(index, "R1P", options)!, "http://example.test");
+    equal("a lensed reference keeps its suffix", lensed.searchParams.get("ref"), "R1P");
+    // The *artifact's* node, not the phase glyph's: a lens is a view of R1, so R1 is the claim
+    // worth checking on arrival, and a `vz:c:` id must never reach a URL in any case.
+    equal("and still names the artifact's node", lensed.searchParams.get("n"), r1.targetId);
+    check("never a synthetic id", !String(lensed.searchParams.get("n")).startsWith("vz:"));
+
+    equal("a retired suffix builds no URL at all", codeToUrl(index, "R1O", options), null);
+}
+
+// --- 15. The node in a link outranks the code in it ---------------------------------------------
+// A citation carries both halves because ordinals can be renumbered by a hard delete or a relabel.
+// When they disagree the id wins: a paper that cites R7 means the card its author was looking at.
+{
+    const index = indexOf(studyFixture());
+    const r1 = index.byCode.get("R1")!;
+    const concept = index.byCode.get("C1")!;
+
+    const agreeing = resolveLocatorReference(index, "R1", r1.targetId);
+    check("an id that agrees changes nothing", agreeing.ok);
+    if (agreeing.ok) {
+        equal("resolving to the code's own target", agreeing.target.code, "R1");
+        equal("and reporting no renumbering", agreeing.renumberedFrom, null);
+    }
+
+    // `C1` standing in for "the node R1 used to be": the code says R1, the id says something the
+    // index now calls C1, and the reader asked for the thing the document was about.
+    const drifted = resolveLocatorReference(index, "R1", concept.targetId);
+    check("a disagreeing id is followed", drifted.ok);
+    if (drifted.ok) {
+        equal("landing on the node the link named", drifted.target.targetId, concept.targetId);
+        equal("under the code it answers to now", drifted.target.code, "C1");
+        equal("and saying which code the link used", drifted.renumberedFrom, "R1");
+        equal("while still quoting what was asked for", drifted.reference, "R1");
+    }
+
+    // The lens survives the redirect: `R1P` asks for a phase whichever card it lands on.
+    const driftedLens = resolveLocatorReference(index, "R1P", concept.targetId);
+    check("a lensed reference redirects too", driftedLens.ok);
+    if (driftedLens.ok) {
+        equal("keeping the lens", driftedLens.lens, "overview");
+        equal("and reporting the renumbering", driftedLens.renumberedFrom, "R1");
+    }
+
+    // An id the index does not hold is a claim about a node that is gone. There is nothing to
+    // redirect to, so the code is the only surviving half and it is used unchanged.
+    const orphaned = resolveLocatorReference(index, "R1", "no-such-node");
+    check("an unknown id falls back to the code", orphaned.ok);
+    if (orphaned.ok) {
+        equal("resolving normally", orphaned.target.code, "R1");
+        equal("and claiming no renumbering", orphaned.renumberedFrom, null);
+    }
+
+    // The box supplies nothing, and must behave exactly as it did.
+    const typed = resolveLocatorReference(index, "R1");
+    check("a typed reference is unaffected", typed.ok);
+    if (typed.ok) equal("with no renumbering to report", typed.renumberedFrom, null);
 }
 
 console.log(`ok    ${checks - failures}/${checks} checks pass`);
