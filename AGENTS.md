@@ -527,6 +527,59 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   plain code text, never as a broken link — the same rule as the inert source icon in `Card.tsx`.
 - `npm run test:locators` and `npm run test:report` pin all of the above.
 
+
+31. Measuring the model, without labelling anything
+- Reviewer R1.1 asked for direct measurement of sharding, cross-link inference and hallucination
+  rather than user ratings. `vitral/eval/` answers it, and `vitral/eval/README.md` is the long form.
+  Two rules hold the whole thing up.
+- **The metrics call the shipped code, never a copy of it.** `locateReference`, `decideSimilarityEdges`,
+  `normalizeArtifactEntity` and `parseFile` are imported as they are; the runner calls
+  `requestCardsLLMObserved`, which *is* `requestCardsLLM` with the request payload returned rather
+  than a second implementation of it. A benchmark that rebuilt prompt assembly or the decision rule
+  would be measuring the rebuild, and would keep passing after the product diverged from it.
+  `decideSimilarityEdges` gained an optional `tuning` override for the same reason: the ablation has
+  to relax a threshold *inside* the real function, and the product never passes it.
+- **A controlled corpus, not the existing project.** The one real study has 52 model-made shards but a
+  single hand-drawn edge and six inferred links, all six soft-deleted — and every one of those
+  deletions is byte-identical to its source card's `deletedAt`, so they were cascades from deleting
+  the cards. No link was ever judged. An audit would have printed "0 of 6 kept" and would have been
+  measuring card deletion. Repetition over a fixed corpus is answerable instead, and needs no labels:
+  run an artifact ten times and see which shards survive.
+- **The prompt text is captured, not reconstructed.** Nothing stores what the model was shown —
+  `document_files.content_text` was dropped in migration 007 and the docling markdown behind a PDF is
+  built for the prompt and discarded — so a retrospective groundedness check reports its own
+  reconstruction error next to the model's. The runner records `payload.userText`, and the
+  groundedness verdict is therefore exact rather than approximate. It is also why the corpus is
+  English: `llm.ts` appends a translate-to-English instruction to every extraction prompt, and a
+  translated excerpt is verbatim in no language.
+- **Five quotation verdicts, because "the citation does not resolve" and "the model made it up" are
+  different failures.** `exact` and `drifted` resolve; `reassembled` means no contiguous run resolves
+  but nearly every word is the document's (real material stitched together — broken citation, grounded
+  content); `context` means the words came from the injected project-settings block rather than the
+  artifact (the model cited the wrong half of its input, which is a prompt bug); `absent` is the
+  fabrication rate. All three middle cases appeared in the *first* benchmark run of a two-page file.
+  Reporting them as one number would have said 12% hallucination where the truth was 0% fabrication.
+  The split is done by token **containment**, not by loosening `locateReference` — the `exact` and
+  `drifted` verdicts are the product's own claim about itself and must not be measured with a kinder
+  instrument than the one that makes the claim.
+- **Cross-link is reported as selectivity, never accuracy.** The ablation says what each gate admits
+  and how large a hub removing it allows; it does not say whether an admitted link is right, and the
+  paper must not imply otherwise. Two traps were hit building it and both are silent:
+  - The similarity route ends its cohort query `AND NOT (node_id = ANY($5))`, where `$5` is every id
+    being offered. Offering the whole corpus at once therefore excludes every card from every cohort
+    and returns a full set of empty matches with `status: "ok"` — indistinguishable from a corpus
+    where nothing is similar. Cards are offered **one at a time**, which is also what the product does
+    when a note is typed.
+  - The route answers with one entry per card offered whether or not it found anything, so waiting on
+    `matches.length` rather than on candidates exits before the embedding backfill has settled.
+- The throwaway project the cross-link script spawns is deleted again once its candidates are read.
+  Everything the analysis needs is in the captured file, so `--matches` re-derives every table from
+  disk with no server at all.
+- `npm run test:eval-metrics` pins the arithmetic against hand-computed fixtures before any of it is
+  believed. The scripts live in `vitral/eval/` rather than `src/` because they use node globals, which
+  is the same rule the `*.test.ts` files state for staying inside `src`.
+
+
 ## Key Areas and Files
 
 - Timeline defaults / playhead / context menu cutoff:

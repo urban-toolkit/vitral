@@ -1,0 +1,720 @@
+[Maryam Hosseini] 19:18:08
+Viewer sees it.
+
+[Karla Falcão] 19:18:12
+I've been here, but I don't know.
+
+[Karla Falcão] 19:18:26
+Artasin.
+
+[Maryam Hosseini] 19:18:28
+He's joining?
+
+[Karla Falcão] 19:18:32
+He… he's answering. Wait. Nathan.
+
+[Maryam Hosseini] 19:18:35
+Oh, okay, perfect. Uh-huh. Okay, I left.
+
+[Maryam Hosseini] 19:18:41
+He answered someone.
+
+[Karla Falcão] 19:19:07
+That I can, like, start the meeting. So… I think we can start now.
+
+[Maryam Hosseini] 19:19:12
+Okay. Of course.
+
+[Karla Falcão] 19:19:22
+So, just as we talked in the last meeting. You said, uh, that you had a notebook, and you could, like, showcase.
+
+[Karla Falcão] 19:19:32
+Your workflow that you have. So if you can, like, share.
+
+[Maryam Hosseini] 19:19:32
+Mm-hmm.
+
+[Maryam Hosseini] 19:19:38
+To be honest, I don't have a notebook to share right now.
+
+[Maryam Hosseini] 19:19:43
+Um…
+
+[Karla Falcão] 19:19:49
+If you could, like, share some kind of work that you're doing that.
+
+[Karla Falcão] 19:19:54
+You said in this…
+
+[Maryam Hosseini] 19:19:54
+Let me ask you, like, close my… camera, because your… your voice is cracking. I think it's because I'm in a different building.
+
+[Karla Falcão] 19:20:03
+Yeah.
+
+[Maryam Hosseini] 19:20:05
+And my internet is not as good as… in my office. I'm in a different building.
+
+[Maryam Hosseini] 19:20:12
+So… So, can you repeat your question? Maybe now I can hear it better?
+
+[Karla Falcão] 19:20:20
+Yeah, the last session, you said that you could show? Some kind of job that you were doing related to intersections.
+
+[Maryam Hosseini] 19:20:24
+Mm-hmm.
+
+[Karla Falcão] 19:20:29
+And geographical information. If you had…
+
+[Maryam Hosseini] 19:20:33
+Yeah, but none of them is actually on a Jupyter notebook. It's a giant… type of, like, a code base that we have.
+
+[Maryam Hosseini] 19:20:43
+Um… it's a GitHub repo with a… work out, you know, like a nest that… I can share my screen, you can see what it is.
+
+[Maryam Hosseini] 19:20:53
+But… can you remind me of what part of the, um… the intersection thing, we said we want to take a look at.
+
+[Maryam Hosseini] 19:21:03
+Was it the change? Was it…
+
+[Karla Falcão] 19:21:05
+What's… was the very last minutes of this call, the last call, that you said, let me show you something I'm doing right now, and then we… I think Fabio was hungry, and we had to…
+
+[Maryam Hosseini] 19:21:09
+I don't know…
+
+[Karla Falcão] 19:21:20
+Copel. You remember that?
+
+[Maryam Hosseini] 19:21:22
+I remember, but I'm thinking, like, what I wanted to show you. Um, let me actually take a look at what I have.
+
+[Fabio Miranda] 19:21:29
+But, Mary?
+
+[Fabio Miranda] 19:21:31
+We all have…
+
+[Maryam Hosseini] 19:21:32
+I'm joined!
+
+[Fabio Miranda] 19:21:33
+We only have 40 minutes, so you have to be fast.
+
+[Maryam Hosseini] 19:21:38
+Good, because I also need to leave, um, the Beats building.
+
+[Maryam Hosseini] 19:21:43
+In… literally 30 minutes.
+
+[Fabio Miranda] 19:21:48
+That's good. So, we only have 40 minutes because of the Zoom. So, uh…
+
+[Fabio Miranda] 19:21:53
+I mean, let's be practical. You know, we want to build so… Carla, are you recording the transcript?
+
+[Maryam Hosseini] 19:21:55
+Okay. Yes.
+
+[Fabio Miranda] 19:22:01
+Alright. Uh, so let's be practical. Marianne, what do you need?
+
+[Karla Falcão] 19:22:01
+Yes.
+
+[Fabio Miranda] 19:22:06
+utilization for.
+
+[Maryam Hosseini] 19:22:11
+Um…
+
+[Fabio Miranda] 19:22:12
+We discussed it before, the intersection stuff, right?
+
+[Fabio Miranda] 19:22:15
+So, what can we do with that?
+
+[Maryam Hosseini] 19:22:15
+Yeah.
+
+[Maryam Hosseini] 19:22:20
+What we discussed before. Was to have this, um, like, a change detection being visualized, right? This was what I was telling you guys.
+
+[Fabio Miranda] 19:22:28
+What change detection?
+
+[Maryam Hosseini] 19:22:31
+Change in the… intersection, like, we had, like, different images of the intersection in different years, and we wanted to take a look at the change.
+
+[Fabio Miranda] 19:22:42
+I don't remember that.
+
+[Maryam Hosseini] 19:22:42
+Okay. Then… then tell me what it was.
+
+[Fabio Miranda] 19:22:45
+I remember that was something, you know, crashes over…
+
+[Fabio Miranda] 19:22:50
+intact sections, and…
+
+[Maryam Hosseini] 19:22:51
+Mobot crashes over intersection?
+
+[Fabio Miranda] 19:22:53
+I mean, I don't your domain expert, not me.
+
+[Maryam Hosseini] 19:22:57
+I know, but there… you have a strong opinion on things, so that's why I want to be compliant.
+
+[Karla Falcão] 19:22:58
+Yeah.
+
+[Karla Falcão] 19:23:05
+Yeah, I think we can, like, fix that. We can work on images and difference.
+
+[Maryam Hosseini] 19:23:06
+Thank you, R.
+
+[Karla Falcão] 19:23:13
+Between this image and the time.
+
+[Maryam Hosseini] 19:23:14
+Exactly, yeah, this is what I also remember.
+
+[Fabio Miranda] 19:23:18
+But…
+
+[Fabio Miranda] 19:23:20
+I mean, we are making this too complex, uh…
+
+[Fabio Miranda] 19:23:24
+Mary, what… so…
+
+[Fabio Miranda] 19:23:25
+Precious.
+
+[Maryam Hosseini] 19:23:25
+Father, if you tell me what you want, I will do exactly what you want.
+
+[Fabio Miranda] 19:23:29
+No, no, no, no, but it should be the other way. Uh, so…
+
+[Fabio Miranda] 19:23:33
+What is the… do you have any data?
+
+[Fabio Miranda] 19:23:37
+related to crashes, so that we don't go back to…
+
+[Fabio Miranda] 19:23:40
+the… before the last meeting, do you have any data that you're interested in visualizing?
+
+[Maryam Hosseini] 19:23:48
+Hmm… data… data… for about crashes?
+
+[Fabio Miranda] 19:23:55
+about intersections.
+
+[Maryam Hosseini] 19:23:59
+So we have, um… We have… let me show you.
+
+[Maryam Hosseini] 19:24:07
+We have some data on… ah, we have some data on, um… Uh…
+
+[Maryam Hosseini] 19:24:16
+Crossing… The crossings in San Francisco, the quality of the crossings, so they have different attributes of.
+
+[Maryam Hosseini] 19:24:26
+Each crossing. Yeah. Yes, yes.
+
+[Fabio Miranda] 19:24:28
+But is this data ready? I can go to your website and download that? Is that a mystical dataset that's somewhere…
+
+[Maryam Hosseini] 19:24:34
+Right. No. Give me one second. I have that data.
+
+[Fabio Miranda] 19:24:39
+I… maybe we should name those datasets Unicorn Datasets, because we never see it.
+
+[Fabio Miranda] 19:24:45
+We never see them.
+
+[Maryam Hosseini] 19:24:47
+I'm going to share it with you, man.
+
+[Karla Falcão] 19:24:50
+Bucket data sets. Back datasets.
+
+[Fabio Miranda] 19:24:51
+Uh, which one?
+
+[Fabio Miranda] 19:24:54
+Yeah.
+
+[Maryam Hosseini] 19:24:55
+Yeah, exactly, the missing data. Like, dark data book.
+
+[Karla Falcão] 19:24:57
+Cool.
+
+[Maryam Hosseini] 19:25:01
+A literature API. Let me just find this for you.
+
+[Maryam Hosseini] 19:25:07
+This is from my student's work, because he has access to this data.
+
+[Maryam Hosseini] 19:25:14
+This data is called…
+
+[Maryam Hosseini] 19:25:22
+It is San Francisco Care Floridate.
+
+[Fabio Miranda] 19:25:27
+Where's the link.
+
+[Maryam Hosseini] 19:25:28
+I am going to… I'm trying to find a link. Okay.
+
+[Maryam Hosseini] 19:25:44
+Here… Okay. I think that should be it.
+
+[Maryam Hosseini] 19:25:50
+Yes. So, we are from a mystery data to an actual data.
+
+[Fabio Miranda] 19:25:57
+Unquad data slash black data, right?
+
+[Maryam Hosseini] 19:26:00
+Yes. Dark data.
+
+[Fabio Miranda] 19:26:02
+Curb ramp locations and attribute data. These data come from the curb RAM information system.
+
+[Fabio Miranda] 19:26:07
+Please be advised that CIIS is a planning tool only. There's no guarantee of ad-wield accuracy. Also, while the data syncs nightly, the underlying system only updates about once a
+
+[Fabio Miranda] 19:26:19
+Quarter.
+
+[Fabio Miranda] 19:26:21
+I think this is good. So, I'm opening the metadata here. Uh, let's see, the dictionary.
+
+[Fabio Miranda] 19:26:28
+So, there is a name of intact section, cross streets, direction of the curb return,
+
+[Fabio Miranda] 19:26:34
+So this is for each kerb ramp.
+
+[Maryam Hosseini] 19:26:37
+Exactly.
+
+[Fabio Miranda] 19:26:39
+Uh, so, see?
+
+[Fabio Miranda] 19:26:41
+I always knew that I could count on you.
+
+[Maryam Hosseini] 19:26:45
+Thank you. Yeah, so the way that it works is, for some of these.
+
+[Fabio Miranda] 19:26:46
+condition score?
+
+[Maryam Hosseini] 19:26:53
+Take his score off, so the score that you see, if it is 1 or 5 or something.
+
+[Maryam Hosseini] 19:26:58
+It is taking that point off 100. So at the end, they will give a score of 100 to each intersection.
+
+[Maryam Hosseini] 19:27:07
+But these are, like, the score that they took off.
+
+[Fabio Miranda] 19:27:10
+And this is… so, let's do…
+
+[Fabio Miranda] 19:27:13
+So, it was created in 2012,
+
+[Fabio Miranda] 19:27:16
+It's updated every day, so, you know, there is some temporal aspect here, I bet, right?
+
+[Maryam Hosseini] 19:27:22
+Mm-hmm. Perfect, I'm very happy.
+
+[Fabio Miranda] 19:27:23
+Um… I think this is wonderful.
+
+[Fabio Miranda] 19:27:28
+flush to the corner…
+
+[Fabio Miranda] 19:27:30
+So, you know, maybe we can…
+
+[Fabio Miranda] 19:27:34
+Um…
+
+[Fabio Miranda] 19:27:36
+you know, well, let's focus on this. So, uh, Kali, can you…
+
+[Fabio Miranda] 19:27:42
+maybe… dive deep in… deeper into this. I would suggest, you know,
+
+[Fabio Miranda] 19:27:47
+Pick one specific spot, right?
+
+[Fabio Miranda] 19:27:50
+Um, well…
+
+[Fabio Miranda] 19:27:53
+You know, first, let's try to find the spot that we have many, many, many data points.
+
+[Fabio Miranda] 19:27:57
+Right? And then maybe we can see the evolution of the condition score for that particular…
+
+[Maryam Hosseini] 19:27:58
+Mm-hmm.
+
+[Fabio Miranda] 19:28:06
+Uh, for that particular
+
+[Fabio Miranda] 19:28:10
+Um, Gub, ramp.
+
+[Fabio Miranda] 19:28:12
+Right? Um…
+
+[Maryam Hosseini] 19:28:13
+Okay.
+
+[Fabio Miranda] 19:28:14
+And then we can do… we can do…
+
+[Fabio Miranda] 19:28:19
+we can do…
+
+[Fabio Miranda] 19:28:23
+Um…
+
+[Fabio Miranda] 19:28:26
+some sort of analysis built on that.
+
+[Fabio Miranda] 19:28:28
+Based on that.
+
+[Fabio Miranda] 19:28:32
+Sounds good. All right.
+
+[Maryam Hosseini] 19:28:32
+Sounds great. Yes. Happy? Now I, like, I see this smile.
+
+[Karla Falcão] 19:28:35
+Yeah. I will analyze it.
+
+[Fabio Miranda] 19:28:36
+Now, this is…
+
+[Maryam Hosseini] 19:28:39
+That's good.
+
+[Fabio Miranda] 19:28:40
+Huh? Yeah.
+
+[Fabio Miranda] 19:28:42
+Uh, so…
+
+[Fabio Miranda] 19:28:44
+you know, uh, onesie…
+
+[Fabio Miranda] 19:28:47
+I do not know how to say his first name, but I call him Wanzee.
+
+[Maryam Hosseini] 19:28:51
+Mm-hmm.
+
+[Fabio Miranda] 19:28:53
+Uh, but it's spelled V-A-M-I-N.
+
+[Fabio Miranda] 19:28:57
+V-AM-S-I.
+
+[Fabio Miranda] 19:28:59
+Uh, so Wumsy,
+
+[Maryam Hosseini] 19:29:00
+Mm-hmm.
+
+[Fabio Miranda] 19:29:01
+is managing all of that.
+
+[Fabio Miranda] 19:29:04
+Uh, so, Carla, I bet that onesie is, um, bugging you in terms of reporting, you know, documentation and all of that.
+
+[Fabio Miranda] 19:29:13
+I think we have, you know, a very good
+
+[Fabio Miranda] 19:29:17
+thing to explore.
+
+[Fabio Miranda] 19:29:19
+Uh… yeah.
+
+[Maryam Hosseini] 19:29:20
+Perfect.
+
+[Karla Falcão] 19:29:20
+No, so…
+
+[Fabio Miranda] 19:29:21
+So, maybe, Carl, so…
+
+[Fabio Miranda] 19:29:24
+Pick one spot, or… no, try to do some sort of analysis for what is the spot
+
+[Fabio Miranda] 19:29:32
+in a particular region of San Francisco that has many, many, many data points across time.
+
+[Fabio Miranda] 19:29:37
+Right? Um… oh, this is beautiful! There… here, is the pet of
+
+[Fabio Miranda] 19:29:42
+Travel critical systems,
+
+[Fabio Miranda] 19:29:45
+access to VITA facilities, right?
+
+[Fabio Miranda] 19:29:48
+Uh… so…
+
+[Maryam Hosseini] 19:29:48
+Yes, I also… wait a second, I also have the access to the data set, which is, like.
+
+[Maryam Hosseini] 19:29:55
+All the points of interest.
+
+[Fabio Miranda] 19:29:58
+of, like, uh, health centers and all of that.
+
+[Maryam Hosseini] 19:30:00
+Everything, like, all the services.
+
+[Fabio Miranda] 19:30:02
+Yeah, the next step, let's first do… let's first focus on this, uh…
+
+[Fabio Miranda] 19:30:08
+Because there are so many attributes here, the pose or hydrants in the curb, ramp, wing, blah blah blah blah blah. So, many, many, many, uh, interesting
+
+[Fabio Miranda] 19:30:17
+you know, things for us to take a look here. So maybe…
+
+[Fabio Miranda] 19:30:23
+Got it. If you can do, you know, the first step is load the data, try to
+
+[Fabio Miranda] 19:30:29
+big load of data in a Jupyter Notebook, Python, something like that.
+
+[Fabio Miranda] 19:30:33
+Uh, have you ever used a Jupyter notebook?
+
+[Karla Falcão] 19:30:35
+Okay. Yeah. Yes.
+
+[Fabio Miranda] 19:30:39
+Have you… yeah? So, those…
+
+[Maryam Hosseini] 19:30:41
+Carlite is good. Carla is really good.
+
+[Karla Falcão] 19:30:41
+Yes.
+
+[Fabio Miranda] 19:30:42
+Huh?
+
+[Fabio Miranda] 19:30:44
+I know, I know, but I… I have to ask before I…
+
+[Karla Falcão] 19:30:47
+Thank you, no, it's…
+
+[Fabio Miranda] 19:30:49
+Uh, I thought I should ask before. Uh, so, Cal, if you use some Jupiter notebook, let's do some very basic plotting on this.
+
+[Fabio Miranda] 19:30:58
+And then, you know, maybe early next week.
+
+[Fabio Miranda] 19:31:01
+We can see, we can pick a handful of these, uh, cups, right?
+
+[Fabio Miranda] 19:31:08
+Um, and then we can…
+
+[Fabio Miranda] 19:31:10
+dive deeper into this
+
+[Karla Falcão] 19:31:14
+Nice. Nice. Thank you, guys.
+
+[Fabio Miranda] 19:31:15
+Sounds good. Cool.
+
+[Fabio Miranda] 19:31:19
+All right, so I will send this…
+
+[Fabio Miranda] 19:31:21
+Oh, wait, wait, wait, wait, wait, we still have 10 minutes, uh…
+
+[Fabio Miranda] 19:31:25
+Wait, so let me send this… no, not this one. So, let me send this to the…
+
+[Karla Falcão] 19:31:26
+Okay.
+
+[Fabio Miranda] 19:31:31
+to the chat with onesie.
+
+[Fabio Miranda] 19:31:34
+Um, and then…
+
+[Fabio Miranda] 19:31:37
+I think…
+
+[Maryam Hosseini] 19:31:38
+Very serious, he in Brazil, or is he in… Yeah.
+
+[Fabio Miranda] 19:31:40
+Quanzi? He's Indian.
+
+[Fabio Miranda] 19:31:44
+If he is in Brazil?
+
+[Maryam Hosseini] 19:31:44
+Okay.
+
+[Fabio Miranda] 19:31:47
+I would be surprised.
+
+[Fabio Miranda] 19:31:49
+But, uh…
+
+[Fabio Miranda] 19:31:56
+So, um…
+
+[Fabio Miranda] 19:31:56
+Yeah, so, Carlo, do you know what are the documents that Wonzi wants?
+
+[Fabio Miranda] 19:32:05
+I do, uh… yeah.
+
+[Karla Falcão] 19:32:05
+Yeah, the proposal? In fact, instructions.
+
+[Fabio Miranda] 19:32:09
+Okay, so you can take a look at that and write the document, right? And then maybe circulate with Marian and myself.
+
+[Fabio Miranda] 19:32:17
+Um, and then we take from there.
+
+[Karla Falcão] 19:32:19
+Sure. Sounds good.
+
+[Fabio Miranda] 19:32:21
+Cool. Alright, uh, Marion, any questions?
+
+[Karla Falcão] 19:32:24
+Okay.
+
+[Maryam Hosseini] 19:32:26
+No, Bobby, this is part of, um, Jacob's. Uh, capsule.
+
+[Fabio Miranda] 19:32:32
+I… who is Jacob?
+
+[Maryam Hosseini] 19:32:34
+Jacob, you talked with him for the two, he was my student, that master student you talked with.
+
+[Maryam Hosseini] 19:32:39
+You're in. Yes, yes, yes, yes. Because then… then you… we can also, like, at one point have him in the conversation.
+
+[Fabio Miranda] 19:32:40
+Oh, the very exciting guy! Yeah, yeah, he is great.
+
+[Fabio Miranda] 19:32:49
+Yeah, he is great. Um…
+
+[Fabio Miranda] 19:32:52
+Cool. This is very exciting, and I think this is very unique to San Francisco, right?
+
+[Maryam Hosseini] 19:32:57
+Yes. No, they have a… it's a very detailed, super interesting data set that he found in his internship at SFMTA.
+
+[Fabio Miranda] 19:32:58
+So, anything like that for Chicago?
+
+[Fabio Miranda] 19:33:10
+Nice. Cool. Uh…
+
+[Maryam Hosseini] 19:33:13
+And he's actually working on it, and he question was, how can we best visualize the data?
+
+[Fabio Miranda] 19:33:18
+Yeah.
+
+[Maryam Hosseini] 19:33:18
+And I think this is… this is a very good use case.
+
+[Fabio Miranda] 19:33:22
+Yeah, perfect. Uh…
+
+[Fabio Miranda] 19:33:24
+Sounds good. So…
+
+[Fabio Miranda] 19:33:27
+Kala, are you confident?
+
+[Karla Falcão] 19:33:30
+Yeah.
+
+[Fabio Miranda] 19:33:31
+All right, uh, Marion, are you confident?
+
+[Maryam Hosseini] 19:33:33
+I'm very happy, I love this.
+
+[Fabio Miranda] 19:33:35
+Cool. So, Mary, please, uh, when we reach out…
+
+[Fabio Miranda] 19:33:40
+Try to get back to us.
+
+[Maryam Hosseini] 19:33:42
+Of course, of course. Sorry. I know, but it… like, you see my calendar.
+
+[Fabio Miranda] 19:33:44
+Uh, you talk sometimes. It took some time.
+
+[Maryam Hosseini] 19:33:50
+Like, today, from 9am till… Exactly, like, now I was in this side of the campus.
+
+[Maryam Hosseini] 19:33:58
+And I'm even, like, not in our department. I'm in another department that I'm using their rooms to have a meeting.
+
+[Fabio Miranda] 19:34:05
+I see. Uh…
+
+[Maryam Hosseini] 19:34:05
+And then they want to use this room in. 5 minutes, so I need to leave.
+
+[Fabio Miranda] 19:34:09
+Okay, so, uh…
+
+[Fabio Miranda] 19:34:11
+Yeah, but before… so, good… everyone feeling confident?
+
+[Maryam Hosseini] 19:34:16
+Perfect.
+
+[Fabio Miranda] 19:34:16
+Ah, cool. Uh, Carla, let me know what goes with the… the offer, you know, of that.
+

@@ -1,0 +1,3 @@
+# Raw benchmark output: large, timestamped, and reproducible by `npm run eval:run`.
+# The report derived from it is what belongs in the paper, not these.
+*.json

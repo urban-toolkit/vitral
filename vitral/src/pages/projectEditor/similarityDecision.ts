@@ -89,6 +89,17 @@ export type DecideSimilarityOptions = {
     evidenceOf: (cardId: string) => IterationEvidence | null;
     /** Automatic edges a candidate already carries. */
     autoDegreeOf: (cardId: string) => number;
+    /**
+     * Thresholds to use instead of the shipped ones. **Never passed in the product** — the canvas
+     * always runs the measured values below.
+     *
+     * It exists for the evaluation harness (`src/eval/`), which answers "what does each gate
+     * actually contribute" by replaying real card pairs with one gate relaxed at a time. That
+     * question can only be asked of *this* function: a second copy of the rule written next to the
+     * measurements would be measuring the copy. Setting `ABSOLUTE_FLOOR` to 0 disables the level
+     * gate, `SEPARATION_MARGIN` to 0 the separation gate, `MAX_AUTO_DEGREE` to `Infinity` the cap.
+     */
+    tuning?: Partial<SimilarityTuning>;
 };
 
 /**
@@ -124,6 +135,33 @@ const MAX_AUTO_DEGREE = 6;
 const ITERATION_FLOOR = 0.8;
 const ITERATION_TITLE_OVERLAP = 0.5;
 
+export type SimilarityTuning = {
+    ABSOLUTE_FLOOR: number;
+    MIN_COHORT_FOR_STATS: number;
+    SEPARATION_MARGIN: number;
+    TWIN_DELTA: number;
+    MAX_EDGES_PER_NEW_CARD: number;
+    MAX_AUTO_DEGREE: number;
+    ITERATION_FLOOR: number;
+    ITERATION_TITLE_OVERLAP: number;
+};
+
+const SHIPPED_TUNING: SimilarityTuning = {
+    ABSOLUTE_FLOOR,
+    MIN_COHORT_FOR_STATS,
+    SEPARATION_MARGIN,
+    TWIN_DELTA,
+    MAX_EDGES_PER_NEW_CARD,
+    MAX_AUTO_DEGREE,
+    ITERATION_FLOOR,
+    ITERATION_TITLE_OVERLAP,
+};
+
+/** The shipped values, with any harness override laid over them. */
+function resolveTuning(overrides: Partial<SimilarityTuning> | undefined): SimilarityTuning {
+    return overrides === undefined ? SHIPPED_TUNING : { ...SHIPPED_TUNING, ...overrides };
+}
+
 export function robustZScore(similarity: number, baseline: SimilarityBaseline | null): number | null {
     if (!baseline) return null;
     if (baseline.sampled < MIN_COHORT_FOR_STATS) return null;
@@ -146,8 +184,9 @@ function isIteration(
     newCardId: string,
     candidateId: string,
     options: DecideSimilarityOptions,
+    tuning: SimilarityTuning,
 ): boolean {
-    if (similarity < ITERATION_FLOOR) return false;
+    if (similarity < tuning.ITERATION_FLOOR) return false;
 
     const source = options.evidenceOf(newCardId);
     const target = options.evidenceOf(candidateId);
@@ -157,7 +196,7 @@ function isIteration(
     if (source.createdAtMs === null || target.createdAtMs === null) return false;
     if (target.createdAtMs >= source.createdAtMs) return false;
 
-    return jaccardOverlap(tokenize(source.title), tokenize(target.title)) >= ITERATION_TITLE_OVERLAP;
+    return jaccardOverlap(tokenize(source.title), tokenize(target.title)) >= tuning.ITERATION_TITLE_OVERLAP;
 }
 
 /**
@@ -168,6 +207,7 @@ export function decideSimilarityEdges(
     match: SimilarityMatch,
     options: DecideSimilarityOptions,
 ): SimilarityVerdict[] {
+    const tuning = resolveTuning(options.tuning);
     const ranked = match.candidates
         .filter((candidate) => candidate.existingCardId && candidate.existingCardId !== match.newCardId)
         .slice()
@@ -177,11 +217,11 @@ export function decideSimilarityEdges(
     // A capped card cannot take another edge, so it is out of the running entirely rather than
     // sitting at the top of the list blocking everything behind it.
     const eligible = ranked.filter(
-        (candidate) => options.autoDegreeOf(candidate.existingCardId) < MAX_AUTO_DEGREE,
+        (candidate) => options.autoDegreeOf(candidate.existingCardId) < tuning.MAX_AUTO_DEGREE,
     );
 
     const isStrong = (candidate: SimilarityCandidate): boolean => (
-        Number.isFinite(candidate.similarity) && candidate.similarity >= ABSOLUTE_FLOOR
+        Number.isFinite(candidate.similarity) && candidate.similarity >= tuning.ABSOLUTE_FLOOR
     );
 
     // What gets accepted is the tight cluster at the very top -- the best match plus anything
@@ -192,8 +232,8 @@ export function decideSimilarityEdges(
     if (!best || !isStrong(best)) return [];
 
     const accepted = eligible
-        .filter((candidate) => best.similarity - candidate.similarity <= TWIN_DELTA)
-        .slice(0, MAX_EDGES_PER_NEW_CARD)
+        .filter((candidate) => best.similarity - candidate.similarity <= tuning.TWIN_DELTA)
+        .slice(0, tuning.MAX_EDGES_PER_NEW_CARD)
         .filter(isStrong);
     if (accepted.length === 0) return [];
 
@@ -202,11 +242,11 @@ export function decideSimilarityEdges(
     // only comparison set available.
     const separationFloor = eligible[accepted.length]?.similarity ?? match.baseline?.median ?? 0;
     const weakest = accepted[accepted.length - 1].similarity;
-    if (weakest - separationFloor < SEPARATION_MARGIN) return [];
+    if (weakest - separationFloor < tuning.SEPARATION_MARGIN) return [];
 
     return accepted.map((candidate) => ({
         existingCardId: candidate.existingCardId,
-        kind: isIteration(candidate.similarity, match.newCardId, candidate.existingCardId, options)
+        kind: isIteration(candidate.similarity, match.newCardId, candidate.existingCardId, options, tuning)
             ? "iteration_of"
             : "referenced_by",
         similarity: candidate.similarity,
@@ -215,13 +255,4 @@ export function decideSimilarityEdges(
     }));
 }
 
-export const SIMILARITY_TUNING = {
-    ABSOLUTE_FLOOR,
-    MIN_COHORT_FOR_STATS,
-    SEPARATION_MARGIN,
-    TWIN_DELTA,
-    MAX_EDGES_PER_NEW_CARD,
-    MAX_AUTO_DEGREE,
-    ITERATION_FLOOR,
-    ITERATION_TITLE_OVERLAP,
-} as const;
+export const SIMILARITY_TUNING = SHIPPED_TUNING;

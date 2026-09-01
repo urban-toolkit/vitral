@@ -317,7 +317,7 @@ type PromptSet = {
     code: string;
 };
 
-type PreparedLlmPayload = {
+export type PreparedLlmPayload = {
     prompt: string;
     userText: string;
 };
@@ -533,6 +533,27 @@ export async function requestCardsLLM(
     projectSettings?: LlmProjectSettingsContext,
     signal?: AbortSignal,
 ): Promise<{ cards: llmCardData[], connections: llmConnectionData[] }> {
+    const { cards, connections } = await requestCardsLLMObserved(file, projectSettings, signal);
+    return { cards, connections };
+}
+
+/**
+ * The extraction call, returning the payload it sent alongside what came back.
+ *
+ * `requestCardsLLM` is this function with the payload dropped, rather than a second copy of it, so
+ * the product and the evaluation harness cannot come to run different code.
+ *
+ * The harness (`src/eval/`) needs `payload.userText` because the only honest way to ask whether a
+ * quoted excerpt was really in the source is to ask it of the exact string the model was given.
+ * Nothing stores that string: `document_files.content_text` was dropped in migration 007, and the
+ * docling markdown behind a PDF is built here for the prompt and then discarded. A harness that
+ * re-derived it would be reporting its own reconstruction error as the model's hallucination rate.
+ */
+export async function requestCardsLLMObserved(
+    file: filePendingUpload,
+    projectSettings?: LlmProjectSettingsContext,
+    signal?: AbortSignal,
+): Promise<{ cards: llmCardData[], connections: llmConnectionData[], payload: PreparedLlmPayload }> {
     const { prompt, userText } = await buildFilePromptRequest(file, {
         text: "CardsFromText",
         image: "CardsFromImage",
@@ -565,7 +586,7 @@ export async function requestCardsLLM(
         throw new Error("The model returned a response that could not be read as cards.");
     }
 
-    return normalizeLlmCardsResponse(parsedData);
+    return { ...normalizeLlmCardsResponse(parsedData), payload: { prompt, userText } };
 }
 
 export async function requestArtifactLLM(

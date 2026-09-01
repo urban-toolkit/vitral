@@ -16,6 +16,10 @@
     "test:connection-rule": "esbuild src/pages/projectEditor/graphInvariants.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/graphInvariants.test.mjs --log-level=warning && node node_modules/.cache/graphInvariants.test.mjs",
     "test:report": "esbuild src/pages/projectEditor/report/projectReport.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/projectReport.test.mjs --log-level=warning && node node_modules/.cache/projectReport.test.mjs",
     "test:locators": "esbuild src/pages/projectEditor/locators.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/locators.test.mjs --log-level=warning && node node_modules/.cache/locators.test.mjs",
+    "eval:run": "node eval/build.mjs runBenchmark && node node_modules/.cache/evalRun.mjs",
+    "eval:crosslink": "node eval/build.mjs runCrossLink && node node_modules/.cache/evalCrossLink.mjs",
+    "eval:report": "node eval/build.mjs report && node node_modules/.cache/evalReport.mjs",
+    "test:eval-metrics": "esbuild src/eval/evalMetrics.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/evalMetrics.test.mjs --log-level=warning && node node_modules/.cache/evalMetrics.test.mjs",
     "test:blueprint-surfaces": "esbuild src/pages/projectEditor/blueprintSurfaces.test.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=node_modules/.cache/blueprintSurfaces.test.mjs --log-level=warning && node node_modules/.cache/blueprintSurfaces.test.mjs"
   },
   "dependencies": {
