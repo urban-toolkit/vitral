@@ -1,6 +1,6 @@
 # Sharding, cross-link and hallucination benchmark
 
-Captured 2026-09-01T22:23:07.744Z. 5 runs, 0 failed, 5 repetitions per document per configuration.
+Captured 2026-09-02T21:34:52.419Z. 20 runs, 0 failed, 10 repetitions per document per configuration.
 
 Every figure below is computed from stored output by `src/eval/`, whose arithmetic is pinned by `npm run test:eval-metrics`. Rates are never averaged across documents: an artifact that is easy to decompose and one that is hard are two findings, not one mean.
 
@@ -10,7 +10,8 @@ Runs of the same artifact are compared with each other, so no labelling is invol
 
 | Document | Config | Runs | Shards/run | CV | Distinct | Unanimous | Once only | Mean support | Run agreement |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| notes-week4.md | baseline | 5 | 6.6 ± 1.1 | 17.3% | 12 | 16.7% | 33.3% | 51.7% | 45.5% |
+| meeting_notes.txt | gpt-5.2 | 10 | 19.2 ± 2.3 | 11.7% | 34 | 20.6% | 35.3% | 50.0% | 63.1% |
+| notes-week4.md | gpt-5.2 | 10 | 22.5 ± 2.0 | 9.0% | 26 | 69.2% | 15.4% | 79.2% | 87.0% |
 
 *Distinct* is how many different shards the runs found between them; *unanimous* the share found by every run and *once only* the share found by a single run. A shard found once in ten is, by the system's own behaviour, not a finding.
 
@@ -20,7 +21,8 @@ How much of each artifact reaches the canvas, and how often the same passage is 
 
 | Document | Config | Mean coverage | Mean redundancy |
 | --- | --- | --- | --- |
-| notes-week4.md | baseline | 19.3% | 1.04 |
+| meeting_notes.txt | gpt-5.2 | 18.8% | 1.08 |
+| notes-week4.md | gpt-5.2 | 64.1% | 1.07 |
 
 ## C. Hallucination: are the quotations real?
 
@@ -38,7 +40,8 @@ The two rightmost columns are the ones to quote. *Unresolved* is what the produc
 
 | Document | Config | Claims | Exact | Drifted | Reassembled | Context | Unresolved | Fabricated |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| notes-week4.md | baseline | 33 | 51.5% | 36.4% | 0.0% | 12.1% | 12.1% | 0.0% (per run 0.0% ± 0.0pp) |
+| meeting_notes.txt | gpt-5.2 | 192 | 93.2% | 6.8% | 0.0% | 0.0% | 0.0% | 0.0% (per run 0.0% ± 0.0pp) |
+| notes-week4.md | gpt-5.2 | 225 | 100.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% (per run 0.0% ± 0.0pp) |
 
 ## D. Written prose, and what the pipeline does not check
 
@@ -46,6 +49,7 @@ A shard's title and description are written rather than quoted, so a figure in t
 
 | Document | Config | Shards | With unsupported number | Bad entity | Empty title | Empty description | Duplicates |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| notes-week4.md | baseline | 33 | 12.1% | 0 | 0 | 0 | 0 |
+| meeting_notes.txt | gpt-5.2 | 192 | 0.0% | 0 | 0 | 0 | 0 |
+| notes-week4.md | gpt-5.2 | 225 | 0.0% | 0 | 0 | 0 | 0 |
 
 *Bad entity*, *empty title* and *duplicates* are all reachable today: the response is coerced rather than rejected, the model's raw entity string is stored, and nothing dedupes shards within a document.

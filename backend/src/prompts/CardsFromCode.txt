@@ -43,9 +43,16 @@ You should follow these steps:
     - query: generate no cards.
     - notebook: generate only objects (e.g., key functions, functionalities, documentation), concepts, and insights anotated in the notebook.
 
-- Use `projectSettings` as context for file content.
+- Use `projectSettings` only as background to interpret the file. Do not generate a card whose
+  subject appears only in `projectSettings`, and never quote from it.
 
-You should also include a reference to the portion of the content that generated the card, verbatim.
+You should also include in `reference` the portion of `content` that generated the card, copied verbatim.
+`reference` is used to highlight the source passage in the original file, so it must resolve exactly:
+    - It MUST be an exact, contiguous substring of `content`, copied character for character.
+    - Copy it; do not retype, summarise, tidy, translate, or re-punctuate it. Do not join two separate
+      passages into one reference, and do not change capitalisation or whitespace.
+    - It MUST NOT come from `name`, `ext`, `projectSettings`, or from these instructions.
+    - If no single passage of `content` supports the card, do not emit the card.
 
 Output a list of cards in the following JSON format:
 

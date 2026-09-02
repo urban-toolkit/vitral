@@ -47,9 +47,11 @@ You should follow these steps:
     - Sketch: generate no cards.
     - Note: generate any cards.
 
-- Use `projectSettings` as context for file content.
+- Use `projectSettings` only as background to interpret the file. Do not generate a card whose
+  subject appears only in `projectSettings`, and never quote from it.
 
-You should also include a reference to the portion of the content that generated the card, verbatim.
+You should also include in `reference` the portion of the image that generated the card, described verbatim
+from what is legible in it. It MUST NOT come from `name`, `ext`, `projectSettings`, or from these instructions.
 
 Output a list of cards in the following JSON format:
 

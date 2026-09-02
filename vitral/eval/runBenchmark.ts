@@ -48,7 +48,10 @@ type Config = {
 };
 
 const DEFAULT_CONFIGS: Config[] = [
+    // `baseline` leaves the model unset, so the backend picks it — today that is `gpt-5-nano`, not
+    // the model the paper reports. Pin it explicitly when the number is going into print.
     { name: "baseline", model: undefined, withProjectSettings: true },
+    { name: "gpt-5.2", model: "gpt-5.2", withProjectSettings: true },
     { name: "no-context", model: undefined, withProjectSettings: false },
     { name: "gpt-5-mini", model: "gpt-5-mini", withProjectSettings: true },
 ];
@@ -102,11 +105,18 @@ function parseArgs(argv: readonly string[]): Record<string, string> {
     return args;
 }
 
+/**
+ * A corpus directory documents itself, and `README.md` is a supported extension, so without this the
+ * harness benchmarks its own instructions and puts a row for them in the paper's table.
+ */
+const NOT_CORPUS = new Set(["readme.md", "readme.txt"]);
+
 async function loadCorpus(directory: string): Promise<Array<{ name: string; bytes: Buffer }>> {
     const entries = await readdir(directory, { withFileTypes: true });
     const files: Array<{ name: string; bytes: Buffer }> = [];
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
         if (!entry.isFile()) continue;
+        if (NOT_CORPUS.has(entry.name.toLowerCase())) continue;
         const ext = extname(entry.name).replace(".", "").toLowerCase();
         if (!SUPPORTED.has(ext)) continue;
         files.push({ name: entry.name, bytes: await readFile(join(directory, entry.name)) });
