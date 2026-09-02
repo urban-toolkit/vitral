@@ -8,7 +8,6 @@ import path from "node:path";
 import OpenAI from "openai";
 import { fileURLToPath } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
-import { createGzip } from "node:zlib";
 import { streamToBuffer, streamToString } from "../utils/streams.js";
 import { safeFilename } from "../utils/files.js";
 import {
@@ -28,9 +27,9 @@ import {
     type ProvenanceSnapshot,
 } from "../services/canvasProvenance.js";
 import {
+    createProjectViCompressStream,
     createProjectViHeader,
     decodeProjectVi,
-    resolveProjectViGzipLevel,
     type ProjectViBundleV1,
 } from "../utils/projectVi.js";
 
@@ -109,6 +108,73 @@ const MAX_VI_EXPORT_FILE_FETCH_CONCURRENCY = 16;
 const EXPORT_REVISIONS_BATCH_SIZE = 50;
 const EXPORT_EMBEDDINGS_BATCH_SIZE = 250;
 const EXPORT_GITHUB_EVENTS_BATCH_SIZE = 250;
+
+/**
+ * Row shapes for the streaming export's keyset-paged sections.
+ *
+ * These are named rather than inlined into `app.pg.query<...>()` so the result
+ * variable can be annotated: the page cursor is assigned from the rows and then
+ * fed back into the next query's parameters, and without an annotation the
+ * compiler tries to narrow the cursor through that assignment and hits a cycle.
+ */
+type ExportedRows<T> = { rows: T[] };
+
+type ExportedEmbeddingRow = {
+    node_id: string;
+    node_text: string;
+    embedding: unknown;
+};
+
+type ExportedGithubEventRow = {
+    repo_owner: string;
+    repo_name: string;
+    event_type: string;
+    event_key: string;
+    actor_login: string | null;
+    title: string | null;
+    url: string | null;
+    occurred_at: string;
+    /** See `ExportedRevisionRow.cursor_captured_at`. */
+    cursor_occurred_at: string;
+    issue_number: number | null;
+    pr_number: number | null;
+    commit_sha: string | null;
+    branch_name: string | null;
+    payload: string | null;
+    inserted_at: string;
+};
+
+type ExportedRevisionRow = {
+    id: string;
+    version: number;
+    captured_at: string;
+    /**
+     * The page cursor, and the reason it is a separate `::text` column.
+     *
+     * `captured_at` is a microsecond `timestamptz`, but `pg` hands it over as a
+     * JS `Date`, which only holds milliseconds. Feeding that back as the cursor
+     * rounds it *down*, so every row sharing the truncated millisecond stays
+     * greater than the cursor and comes back on the next page — the export never
+     * reaches the end of the log. Postgres' own text rendering keeps the
+     * microseconds, so this column round-trips exactly.
+     */
+    cursor_captured_at: string;
+    state: string | null;
+    timeline: string | null;
+};
+
+/**
+ * A keyset page whose cursor does not move re-reads the same rows forever, and
+ * because the export streams as it goes, that failure is an endless download
+ * rather than an error anyone can see. Every paged section checks its cursor
+ * moved, so the same class of bug surfaces as a failed export instead.
+ */
+function assertCursorAdvanced(section: string, previous: string | null, next: string): void {
+    if (previous !== null && previous === next) {
+        throw new Error(`Export cursor for ${section} did not advance past ${next}; aborting to avoid an endless stream.`);
+    }
+}
+
 const DUPLICATE_JOB_RETENTION_MS = 60 * 60 * 1000;
 const MAX_DUPLICATE_JOBS = 500;
 const DUPLICATE_JOB_ERROR_MESSAGE = "Failed to duplicate project.";
@@ -270,6 +336,25 @@ function normalizeTemplateDefinition(raw: SetupTemplateDefinition): SetupTemplat
     };
 }
 
+/**
+ * Splice a `jsonb::text` column straight into the export stream.
+ *
+ * The export used to let `pg` parse each snapshot into a JS object graph and
+ * then `JSON.stringify` it back out — two full passes over ~100 MB, and 1204
+ * live object graphs on the heap, to reproduce bytes Postgres had already
+ * rendered. Selecting `::text` and passing it through skips both. The extra
+ * whitespace `jsonb::text` emits costs nothing once compressed.
+ */
+function jsonbText(raw: unknown): string {
+    return typeof raw === "string" && raw.trim() !== "" ? raw : "null";
+}
+
+/** As `jsonbText`, but for the columns the bundle guarantees as objects. */
+function jsonbObjectText(raw: unknown): string {
+    const text = jsonbText(raw);
+    return text === "null" ? "{}" : text;
+}
+
 function parseVectorValue(raw: unknown): number[] {
     if (Array.isArray(raw)) {
         return raw
@@ -290,6 +375,19 @@ function parseVectorValue(raw: unknown): number[] {
     }
 
     return [];
+}
+
+/**
+ * pgvector renders a vector as `[0.1,0.2,...]`, which is already the JSON the
+ * bundle wants — no reason to parse it into numbers and re-print them. Falls
+ * back to `parseVectorValue` if a driver ever hands the column over parsed.
+ */
+function vectorText(raw: unknown): string {
+    if (typeof raw === "string") {
+        const trimmed = raw.trim();
+        if (trimmed.startsWith("[") && trimmed.endsWith("]")) return trimmed;
+    }
+    return JSON.stringify(parseVectorValue(raw));
 }
 
 function vectorToLiteral(values: number[]): string {
@@ -3116,14 +3214,22 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             id: string;
             title: string;
             description: string | null;
-            state: unknown;
-            timeline: unknown;
+            state: string | null;
+            timeline: string | null;
             version: number;
             created_at: string;
             updated_at: string;
         }>(
             `
-            SELECT id, title, description, state, timeline, version, created_at, updated_at
+            SELECT
+                id,
+                title,
+                description,
+                state::text AS state,
+                timeline::text AS timeline,
+                version,
+                created_at,
+                updated_at
             FROM documents
             WHERE id = $1
             `,
@@ -3224,43 +3330,45 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         reply.header("Content-Disposition", `attachment; filename="${safeFilename(fileName)}"`);
 
         const responseStream = new PassThrough();
-        const gzipStream = createGzip({ level: resolveProjectViGzipLevel() });
+        const bundleStream = createProjectViCompressStream();
         const headerBytes = createProjectViHeader();
         let encodedBytes = headerBytes.length;
+        let rawBytes = 0;
 
-        gzipStream.on("data", (chunk: Buffer) => {
+        bundleStream.on("data", (chunk: Buffer) => {
             encodedBytes += chunk.length;
         });
-        gzipStream.on("error", (error) => {
+        bundleStream.on("error", (error) => {
             request.log.error({ error, docId: id }, "Streaming project export failed.");
             if (!responseStream.destroyed) responseStream.destroy(error);
         });
 
         responseStream.write(headerBytes);
-        gzipStream.pipe(responseStream);
+        bundleStream.pipe(responseStream);
+
+        const write = async (chunk: string | Buffer): Promise<void> => {
+            rawBytes += Buffer.byteLength(chunk);
+            await writeChunk(bundleStream, chunk);
+        };
 
         void (async () => {
             try {
-                await writeChunk(gzipStream, '{"format":"vitral-project","version":1');
-                await writeChunk(gzipStream, `,"exportedAt":${JSON.stringify(new Date().toISOString())}`);
-                await writeChunk(
-                    gzipStream,
+                await write('{"format":"vitral-project","version":1');
+                await write(`,"exportedAt":${JSON.stringify(new Date().toISOString())}`);
+                await write(
                     `,"source":{"documentId":${JSON.stringify(documentRow.id)},"title":${JSON.stringify(documentRow.title)}}`,
                 );
-                await writeChunk(
-                    gzipStream,
-                    `,"document":${JSON.stringify({
-                        title: documentRow.title,
-                        description: documentRow.description,
-                        state: documentRow.state,
-                        timeline: documentRow.timeline,
-                        version: documentRow.version,
-                        createdAt: new Date(documentRow.created_at).toISOString(),
-                        updatedAt: new Date(documentRow.updated_at).toISOString(),
-                    })}`,
+                await write(
+                    `,"document":{"title":${JSON.stringify(documentRow.title)}`
+                    + `,"description":${JSON.stringify(documentRow.description ?? null)}`
+                    + `,"state":${jsonbText(documentRow.state)}`
+                    + `,"timeline":${jsonbText(documentRow.timeline)}`
+                    + `,"version":${JSON.stringify(documentRow.version)}`
+                    + `,"createdAt":${JSON.stringify(new Date(documentRow.created_at).toISOString())}`
+                    + `,"updatedAt":${JSON.stringify(new Date(documentRow.updated_at).toISOString())}}`,
                 );
 
-                await writeChunk(gzipStream, ',"files":[');
+                await write(',"files":[');
                 let firstFile = true;
                 for (const metadataChunk of chunkItems(fileRows.rows, exportFileFetchConcurrency)) {
                     const fileEntries = await mapWithConcurrencyLimit(
@@ -3292,70 +3400,58 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     );
 
                     for (const entry of fileEntries) {
-                        if (!firstFile) await writeChunk(gzipStream, ",");
-                        await writeChunk(gzipStream, JSON.stringify(entry));
+                        if (!firstFile) await write(",");
+                        await write(JSON.stringify(entry));
                         firstFile = false;
                     }
                 }
-                await writeChunk(gzipStream, "]");
+                await write("]");
 
-                await writeChunk(gzipStream, ',"embeddings":[');
+                await write(',"embeddings":[');
                 let firstEmbedding = true;
                 if (hasEmbeddingTable) {
-                    for (let offset = 0; ; ) {
-                        const embeddingRows = await app.pg.query<{
-                            node_id: string;
-                            node_text: string;
-                            embedding: unknown;
-                        }>(
+                    // Keyset, not OFFSET: with OFFSET, batch N makes Postgres sort and walk
+                    // the first N*batch rows again, so paging a long table is quadratic.
+                    let afterNodeId: string | null = null;
+                    for (;;) {
+                        const embeddingRows: ExportedRows<ExportedEmbeddingRow> = await app.pg.query<ExportedEmbeddingRow>(
                             `
-                            SELECT node_id, node_text, embedding
+                            SELECT node_id, node_text, embedding::text AS embedding
                             FROM document_node_embeddings
                             WHERE doc_id = $1
+                              AND ($3::text IS NULL OR node_id > $3::text)
                             ORDER BY node_id ASC
                             LIMIT $2
-                            OFFSET $3
                             `,
-                            [id, EXPORT_EMBEDDINGS_BATCH_SIZE, offset],
+                            [id, EXPORT_EMBEDDINGS_BATCH_SIZE, afterNodeId],
                         );
                         if (embeddingRows.rows.length === 0) break;
 
                         for (const row of embeddingRows.rows) {
-                            const entry = {
-                                nodeId: row.node_id,
-                                nodeText: row.node_text,
-                                embedding: parseVectorValue(row.embedding),
-                            };
-                            if (!firstEmbedding) await writeChunk(gzipStream, ",");
-                            await writeChunk(gzipStream, JSON.stringify(entry));
+                            if (!firstEmbedding) await write(",");
+                            await write(
+                                `{"nodeId":${JSON.stringify(row.node_id)}`
+                                + `,"nodeText":${JSON.stringify(row.node_text ?? "")}`
+                                + `,"embedding":${vectorText(row.embedding)}}`,
+                            );
                             firstEmbedding = false;
                         }
 
-                        offset += embeddingRows.rows.length;
+                        if (embeddingRows.rows.length < EXPORT_EMBEDDINGS_BATCH_SIZE) break;
+                        const nextNodeId = embeddingRows.rows[embeddingRows.rows.length - 1].node_id;
+                        assertCursorAdvanced("embeddings", afterNodeId, nextNodeId);
+                        afterNodeId = nextNodeId;
                     }
                 }
-                await writeChunk(gzipStream, "]");
+                await write("]");
 
-                await writeChunk(gzipStream, ',"githubEvents":[');
+                await write(',"githubEvents":[');
                 if (includeGithubData) {
                     let firstGithubEvent = true;
-                    for (let offset = 0; ; ) {
-                        const githubEventRows = await app.pg.query<{
-                            repo_owner: string;
-                            repo_name: string;
-                            event_type: string;
-                            event_key: string;
-                            actor_login: string | null;
-                            title: string | null;
-                            url: string | null;
-                            occurred_at: string;
-                            issue_number: number | null;
-                            pr_number: number | null;
-                            commit_sha: string | null;
-                            branch_name: string | null;
-                            payload: unknown;
-                            inserted_at: string;
-                        }>(
+                    let afterOccurredAt: string | null = null;
+                    let afterEventKey: string | null = null;
+                    for (;;) {
+                        const githubEventRows: ExportedRows<ExportedGithubEventRow> = await app.pg.query<ExportedGithubEventRow>(
                             `
                             SELECT
                                 repo_owner,
@@ -3366,91 +3462,125 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                                 title,
                                 url,
                                 occurred_at,
+                                occurred_at::text AS cursor_occurred_at,
                                 issue_number,
                                 pr_number,
                                 commit_sha,
                                 branch_name,
-                                payload,
+                                payload::text AS payload,
                                 inserted_at
                             FROM document_github_events
                             WHERE document_id = $1
+                              AND (
+                                  $3::timestamptz IS NULL
+                                  OR (occurred_at, event_key) > ($3::timestamptz, $4::text)
+                              )
                             ORDER BY occurred_at ASC, event_key ASC
                             LIMIT $2
-                            OFFSET $3
                             `,
-                            [id, EXPORT_GITHUB_EVENTS_BATCH_SIZE, offset],
+                            [id, EXPORT_GITHUB_EVENTS_BATCH_SIZE, afterOccurredAt, afterEventKey],
                         );
                         if (githubEventRows.rows.length === 0) break;
 
                         for (const row of githubEventRows.rows) {
-                            const entry = {
-                                repoOwner: row.repo_owner,
-                                repoName: row.repo_name,
-                                eventType: row.event_type,
-                                eventKey: row.event_key,
-                                actorLogin: row.actor_login,
-                                title: row.title,
-                                url: row.url,
-                                occurredAt: new Date(row.occurred_at).toISOString(),
-                                issueNumber: row.issue_number,
-                                prNumber: row.pr_number,
-                                commitSha: row.commit_sha,
-                                branchName: row.branch_name,
-                                payload: row.payload,
-                                insertedAt: new Date(row.inserted_at).toISOString(),
-                            };
-                            if (!firstGithubEvent) await writeChunk(gzipStream, ",");
-                            await writeChunk(gzipStream, JSON.stringify(entry));
+                            if (!firstGithubEvent) await write(",");
+                            await write(
+                                `{"repoOwner":${JSON.stringify(row.repo_owner)}`
+                                + `,"repoName":${JSON.stringify(row.repo_name)}`
+                                + `,"eventType":${JSON.stringify(row.event_type)}`
+                                + `,"eventKey":${JSON.stringify(row.event_key)}`
+                                + `,"actorLogin":${JSON.stringify(row.actor_login ?? null)}`
+                                + `,"title":${JSON.stringify(row.title ?? null)}`
+                                + `,"url":${JSON.stringify(row.url ?? null)}`
+                                + `,"occurredAt":${JSON.stringify(new Date(row.occurred_at).toISOString())}`
+                                + `,"issueNumber":${JSON.stringify(row.issue_number ?? null)}`
+                                + `,"prNumber":${JSON.stringify(row.pr_number ?? null)}`
+                                + `,"commitSha":${JSON.stringify(row.commit_sha ?? null)}`
+                                + `,"branchName":${JSON.stringify(row.branch_name ?? null)}`
+                                + `,"payload":${jsonbObjectText(row.payload)}`
+                                + `,"insertedAt":${JSON.stringify(new Date(row.inserted_at).toISOString())}}`,
+                            );
                             firstGithubEvent = false;
                         }
 
-                        offset += githubEventRows.rows.length;
+                        if (githubEventRows.rows.length < EXPORT_GITHUB_EVENTS_BATCH_SIZE) break;
+                        const lastGithubEvent = githubEventRows.rows[githubEventRows.rows.length - 1];
+                        assertCursorAdvanced(
+                            "githubEvents",
+                            `${afterOccurredAt}|${afterEventKey}`,
+                            `${lastGithubEvent.cursor_occurred_at}|${lastGithubEvent.event_key}`,
+                        );
+                        afterOccurredAt = lastGithubEvent.cursor_occurred_at;
+                        afterEventKey = lastGithubEvent.event_key;
                     }
                 }
-                await writeChunk(gzipStream, "]");
+                await write("]");
 
-                await writeChunk(gzipStream, ',"revisions":[');
+                // The revision log is the bulk of any large export — on a 1204-revision
+                // project it is ~100 MB of the ~135 MB bundle. Both things that made it
+                // expensive are avoided here: the snapshots stream as text rather than
+                // round-tripping through JS objects, and paging is keyset rather than
+                // OFFSET so Postgres does not re-sort the log once per batch.
+                await write(',"revisions":[');
                 let firstRevision = true;
-                for (let offset = 0; ; ) {
-                    const revisionRows = await app.pg.query<{
-                        version: number;
-                        captured_at: string;
-                        state: unknown;
-                        timeline: unknown;
-                    }>(
+                let afterCapturedAt: string | null = null;
+                let afterVersion: number | null = null;
+                let afterId: string | null = null;
+                for (;;) {
+                    const revisionRows: ExportedRows<ExportedRevisionRow> = await app.pg.query<ExportedRevisionRow>(
                         `
-                        SELECT version, captured_at, state, timeline
+                        SELECT
+                            id,
+                            version,
+                            captured_at,
+                            captured_at::text AS cursor_captured_at,
+                            state::text AS state,
+                            timeline::text AS timeline
                         FROM document_state_revisions
                         WHERE document_id = $1
+                          AND (
+                              $3::timestamptz IS NULL
+                              OR (captured_at, version, id) > ($3::timestamptz, $4::integer, $5::uuid)
+                          )
                         ORDER BY captured_at ASC, version ASC, id ASC
                         LIMIT $2
-                        OFFSET $3
                         `,
-                        [id, EXPORT_REVISIONS_BATCH_SIZE, offset],
+                        [id, EXPORT_REVISIONS_BATCH_SIZE, afterCapturedAt, afterVersion, afterId],
                     );
                     if (revisionRows.rows.length === 0) break;
 
                     for (const row of revisionRows.rows) {
-                        const entry = {
-                            version: Number.isFinite(row.version) ? Math.max(1, Math.trunc(row.version)) : 1,
-                            capturedAt: new Date(row.captured_at).toISOString(),
-                            state: row.state ?? {},
-                            timeline: row.timeline ?? {},
-                        };
-                        if (!firstRevision) await writeChunk(gzipStream, ",");
-                        await writeChunk(gzipStream, JSON.stringify(entry));
+                        const version = Number.isFinite(row.version) ? Math.max(1, Math.trunc(row.version)) : 1;
+                        if (!firstRevision) await write(",");
+                        await write(
+                            `{"version":${version}`
+                            + `,"capturedAt":${JSON.stringify(new Date(row.captured_at).toISOString())}`
+                            + `,"state":${jsonbObjectText(row.state)}`
+                            + `,"timeline":${jsonbObjectText(row.timeline)}}`,
+                        );
                         firstRevision = false;
                     }
 
-                    offset += revisionRows.rows.length;
+                    if (revisionRows.rows.length < EXPORT_REVISIONS_BATCH_SIZE) break;
+                    const lastRevision = revisionRows.rows[revisionRows.rows.length - 1];
+                    assertCursorAdvanced(
+                        "revisions",
+                        `${afterCapturedAt}|${afterVersion}|${afterId}`,
+                        `${lastRevision.cursor_captured_at}|${lastRevision.version}|${lastRevision.id}`,
+                    );
+                    afterCapturedAt = lastRevision.cursor_captured_at;
+                    afterVersion = lastRevision.version;
+                    afterId = lastRevision.id;
                 }
-                await writeChunk(gzipStream, "]}");
+                await write("]}");
 
-                gzipStream.end();
-                await finished(gzipStream);
+                bundleStream.end();
+                await finished(bundleStream);
                 request.log.info({
                     docId: id,
                     encodedBytes,
+                    rawBytes,
+                    compressionRatio: rawBytes > 0 ? Number((rawBytes / encodedBytes).toFixed(1)) : null,
                     elapsedMs: Date.now() - exportStartedAt,
                     revisionCount,
                     fileCount: fileRows.rows.length,
@@ -3459,7 +3589,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 }, "Project export completed.");
             } catch (error) {
                 request.log.error({ error, docId: id }, "Project export failed while streaming.");
-                gzipStream.destroy(error instanceof Error ? error : new Error(String(error)));
+                bundleStream.destroy(error instanceof Error ? error : new Error(String(error)));
                 if (!responseStream.destroyed) {
                     responseStream.destroy(error instanceof Error ? error : new Error(String(error)));
                 }

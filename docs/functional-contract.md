@@ -233,6 +233,9 @@ Covered areas:
 
 ### `.vi` Payload Contract (Current)
 - Includes document state/timeline, revisions, files, embeddings, and GitHub events.
+- Sections and field names are unchanged by the brotli container swap; the bundle's own
+  `version` stays `1`. Only the byte after the `VITRALVI` magic moved, from `1` (gzip) to
+  `2` (brotli), and version-1 files still import.
 
 ## 12) Persistence and Provenance Expectations
 
@@ -294,9 +297,13 @@ Covered areas:
 - Current system stores frequent full-state snapshots/revisions.
 - Candidate: delta/diff or tiered retention, only if replay/import guarantees remain intact.
 
-2. **`.vi` size**
-- Current export includes large contributors (file bytes, revisions, embeddings, GitHub events).
-- Candidate: optional export profiles or deduplicated payload sections with explicit compatibility contract.
+2. **`.vi` size** — *addressed for the compressible sections; assets remain*
+- The revision log used to dominate the file. It no longer does: a container with a window wide
+  enough to span consecutive snapshots takes that section from 14.2 MB to 0.17 MB on a
+  1204-revision project, and the whole export from 32.7 MB to 18.6 MB.
+- What is left is ~98% asset bytes — already-compressed PNGs and PDFs. Export profiles would only
+  help by *omitting* assets, so the remaining candidates are downscaling images at upload time, or
+  target 1 above (storing fewer full snapshots), not a change to the export format.
 
 3. **Parallel representations**
 - Similar relationships appear across canvas edges, timeline links, and derived event projections.
