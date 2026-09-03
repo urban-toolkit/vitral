@@ -48,8 +48,8 @@ import type { ReportSnapshot } from "./reportTypes";
  *
  * It is not *erased*, and the distinction matters: `allCards` stays complete so `setAsideCards` can
  * name what was ruled out, because a judgement about the material is itself part of the record. That
- * one section, and the note in "Codes that no longer resolve" that points at it, are the whole of
- * what a set-aside card contributes to the document.
+ * one section is the whole of what a set-aside card contributes to the document — the appendix note
+ * that used to point at it, under "Codes that no longer resolve", was removed on request.
  *
  * `buildAbstractedGraph` is deliberately **not** called. It returns React Flow nodes carrying
  * synthetic `vz:` ids, positions and sizes that mean nothing here, and its `cardCount` /
@@ -119,9 +119,8 @@ export type ReportThread = {
      * The thread is still rendered, and this is the one place the relevance rule bends. An activity is
      * not content in the way a card is: it is the structure the document is organised by, and its
      * satellites are cards in their own right that were not set aside. Dropping the section would take
-     * them with it, which is the one thing the report may not do. So the section stays, says so in a
-     * line of its own, and the appendix does not claim the code is unanchored — see the note where
-     * "Codes that no longer resolve" is emitted.
+     * them with it, which is the one thing the report may not do. So the section stays and says so in
+     * a line of its own.
      */
     relevant: boolean;
     createdAtIso: string | null;

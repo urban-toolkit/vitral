@@ -514,7 +514,11 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
     check("and named under Set aside", md.includes("Set aside"));
 }
 
-// --- 11. Removed content appears only in the removal table -----------------------------------
+// --- 11. Removed content leaves the document entirely -----------------------------------------
+//
+// The deletion table was removed on request, so a deleted card is now absent from the markdown
+// altogether: not listed as live content, and not listed as removed either. It is still counted in
+// the stats, which is where a caller that cares about deletions reads it.
 {
     const withDeletion = studyFixture();
     (withDeletion.nodes.find((n) => n.id === "i1")!.data as Record<string, unknown>).deletedAt = day(50);
@@ -522,15 +526,19 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
     const md = report.markdown;
 
     equal("the deleted card is counted", report.stats.removedNodes, 1);
-    check("the removal section names it", md.includes("Removed from the study"));
+    check("but no removal section names it", !md.includes("Removed from the study"));
 
     const code = codes.byTargetId.get("i1")?.code;
     check("the deleted card still has a code", typeof code === "string");
+    check("and that code is cited nowhere in the document", !md.includes(`[${code}]`));
 
-    // It must not appear as live content: not in a thread table, not in a headline, not in Insights.
+    // It must not appear as live content either: not in a thread table, not in a headline, not in
+    // Insights.
     const insightsSection = md.split("## Insights")[1]?.split("\n## ")[0] ?? "";
     check("a deleted insight is not listed among the insights",
         !insightsSection.includes("Nobody trusted unmarked text"));
+    check("nor is its title anywhere in the document",
+        !md.includes("Nobody trusted unmarked text"));
 }
 
 // --- 11b. A relation never outlives its endpoints ---------------------------------------------
@@ -547,8 +555,8 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
 
     const componentCode = codes.byTargetId.get("b1")?.code;
     check("the component still has a code", typeof componentCode === "string");
-    check("and is reported as removed", md.includes("Removed from the study"));
-    check("but no relation claims to reach it",
+    check("but the document does not name it at all", !md.includes(`[${componentCode}]`));
+    check("and no relation claims to reach it",
         !md.includes(`tackled in→ [${componentCode}]`) && !md.includes(`tackled in→ ` + "`" + componentCode + "`"));
 
     const snapshot = snapshotOf(dangling);
@@ -656,15 +664,16 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
     const md = reportFor(studyFixture()).report.markdown;
 
     check("the how-it-was-made essay is gone", !md.includes("How this document was made"));
+    check("the dead-code list is gone", !md.includes("Codes that no longer resolve"));
     check("the authorship tally is gone", !md.includes("### Authorship"));
     check("the salience weight table is gone", !md.includes("Emphasis, as a formula"));
     check("the relation-origin table is gone", !md.includes("Relations by kind and origin"));
     check("the revision summary is gone", !md.includes("How much the material was worked"));
 
-    // What is left is the two things no other section can say.
+    // What is left is the one thing no other section can say.
     check("Provenance still exists", md.includes("## Provenance"));
-    check("and still records what was removed", md.includes("### Removed from the study"));
-    check("and still records what was set aside", md.includes("### Set aside"));
+    check("the deletion table is gone", !md.includes("Removed from the study"));
+    check("and it still records what was set aside", md.includes("### Set aside"));
 }
 
 // --- 15b. Set-aside cards leave the body entirely ----------------------------------------------
@@ -699,11 +708,11 @@ function reportFor(fixture: Fixture, overrides: Partial<ReportSnapshot> = {}, op
         !model.relations.some((r) => r.sourceNodeId === "o1" || r.targetNodeId === "o1"));
 
     // Its title is the thing that must not be reproduced. It appears once — in the Set aside table —
-    // and the sections that name codes point at that table rather than repeating it.
+    // and nowhere else; the appendix's dead-code list, which used to point at that table, is gone.
     const titleMentions = md.split("Session transcript").length - 1;
     equal("its title appears exactly once, under Set aside", titleMentions, 1);
-    check("and the appendix sends the reader there",
-        md.includes("set aside by the researcher, so it has no entry above"));
+    check("and nothing points at it from a dead-code list",
+        !md.includes("Codes that no longer resolve"));
     check("it has no appendix entry of its own",
         !md.includes(`### ${asideCode}
 `));

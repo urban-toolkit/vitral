@@ -1,5 +1,4 @@
 import {
-    describeLocatorStatus,
     LOCATOR_LENS_HELP,
     LOCATOR_LENS_SUFFIX,
     LOCATOR_NEXT_STEP_LENSES,
@@ -515,37 +514,16 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
 
     // --- Provenance --------------------------------------------------------------------------------
     //
-    // What is left here is the two things the graph cannot show on its own: what was taken out of the
-    // study, and what was kept but ruled out of it. The computed tallies that used to sit above them —
-    // authorship counts, the salience weights, the relation-origin table, the revision summary — were
-    // removed on request. Each restated a mark that every card and every relation already carries
-    // individually in the body, so a reader who doubted a number had to go and check it against the
-    // study regardless.
+    // What is left here is the one thing the graph cannot show on its own: what was kept but ruled out
+    // of the study. The computed tallies that used to sit above it — authorship counts, the salience
+    // weights, the relation-origin table, the revision summary — were removed on request. Each restated
+    // a mark that every card and every relation already carries individually in the body, so a reader
+    // who doubted a number had to go and check it against the study regardless. The deletion table
+    // — "Removed from the study" — was removed on request too, and with the appendix's dead-code list
+    // gone as well, a deleted card is now absent from the document entirely. `model.removedCards` and
+    // `model.removedRelations` stay: the stats count them, and the live sets are derived by
+    // subtracting them.
     heading(out, 2, "Provenance", null);
-
-    heading(out, 3, "Removed from the study", null);
-    if (model.removedCards.length === 0 && model.removedRelations.length === 0) {
-        push(out, "Nothing has been removed from this project.");
-    } else {
-        push(out, "Cards and connections the researcher deleted. They are kept because what a study"
-            + " rejected is part of how it reached what it kept.");
-        blank(out);
-        if (model.removedCards.length > 0) {
-            push(out, ...table(["Code", "Type", "Title", "Created", "Removed"],
-                model.removedCards.map((card) => [
-                    ref(out, card.code),
-                    tableCell(card.label),
-                    tableCell(card.title),
-                    formatIsoDay(card.createdAtIso),
-                    formatIsoDay(card.deletedAtIso),
-                ])));
-            blank(out);
-        }
-        if (model.removedRelations.length > 0) {
-            push(out, `${plural(model.removedRelations.length, "connection")} were also removed.`);
-        }
-    }
-    blank(out);
 
     heading(out, 3, "Set aside", null);
     if (model.setAsideCards.length === 0) {
@@ -608,33 +586,13 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
             }
         }
 
-        // Codes whose target the document cannot anchor still get an entry, stating why. A reference
-        // that cannot resolve must say so rather than look clickable.
+        // The appendix used to close with "Codes that no longer resolve" — an entry per code the
+        // document could name but not anchor, saying why. It was removed on request. The index is now
+        // exactly what the document contains: a code with no entry here is one the document does not
+        // carry, and a reader who meets it in a paper learns that from its absence.
         //
-        // A live target with no anchor is the set-aside case, and it needs its own sentence:
-        // `describeLocatorStatus` takes its "live" branch and would print the card's title under a
-        // heading saying the code does not resolve — reproducing in the appendix exactly the content
-        // the researcher's judgement kept out of the body.
-        //
-        // `out.definitions` is the check, not `inDocument` alone: a set-aside **activity** does still
-        // get a heading, because its thread section organises cards that were not set aside
-        // (`ReportThread.relevant`). Asking what the document actually anchored, rather than what the
-        // index predicted it would, is what stops the appendix denying a section three pages up — and
-        // it will stay right for whatever the next exception turns out to be.
-        const unresolvable = options.codes.entries.filter((entry) => (
-            (entry.status !== "live" || !entry.inDocument) && !out.definitions.has(entry.code)
-        ));
-        if (unresolvable.length > 0) {
-            heading(out, 3, "Codes that no longer resolve", null);
-            for (const entry of unresolvable) {
-                const why = entry.status === "live"
-                    ? "was set aside by the researcher, so it has no entry above. It is listed under"
-                        + " **Set aside**."
-                    : describeLocatorStatus(entry);
-                push(out, `- \`${entry.code}\` — ${why}`);
-            }
-            blank(out);
-        }
+        // The loud-failure rule survives it, in the pass below: a code cited in the body with no
+        // heading to point at is rewritten to plain `R7` rather than left as a link that looks broken.
 
         if (snapshot.files.length > 0) {
             heading(out, 2, "Appendix B. Sources", null);

@@ -381,9 +381,9 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   the unconnected band, the insight and concept sweeps, the requirements and the components answering
   them — and out of any relation with an end in one, which would otherwise cite a code the document has
   no entry for. `allCards` stays complete, because `setAsideCards` is derived from it and a judgement
-  about the material is itself part of the record: the **Set aside** table names the card, and
-  "Codes that no longer resolve" points at that table rather than reprinting the title (which
-  `describeLocatorStatus` would, taking its `"live"` branch). The front-matter totals and
+  about the material is itself part of the record: the **Set aside** table names the card, and is now
+  the only place in the document that does — the appendix note that used to point at it was removed
+  with the rest of "Codes that no longer resolve". The front-matter totals and
   `report.stats.cards` count only what the body contains, or the document promises cards it never
   delivers.
 - **What the report no longer prints, and must not regain by accident.** Removed on request, and
@@ -393,12 +393,17 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   "Relations inside this thread" line ("Reaching beyond it" stays — a thread's internal wiring is the
   card table said twice, and where it *reached* is not), the "Cards" column in "Phases at a glance",
   the "Contains" and "Composition" rows in a phase table, the date-and-counts line under a thread
-  heading (participants stay), and the five computed Provenance subsections — "How this document was
+  heading (participants stay), the five computed Provenance subsections — "How this document was
   made", "Authorship", "Emphasis, as a formula", "Relations by kind and origin", "How much the
-  material was worked". Provenance now holds only "Removed from the study" and "Set aside": the two
-  things the graph cannot show on its own. `salienceWeightRows`, `buildRelationKindTallies` and
-  `buildRevisionSummary` are left in `reportProvenance.ts` unused; `buildAuthorshipTally` still feeds
-  the front-matter Contents row.
+  material was worked" — the deletion table "Removed from the study", and the appendix's dead-code
+  list "Codes that no longer resolve". Provenance now holds only "Set aside": the one thing the graph
+  cannot show on its own. A deleted card is therefore absent from the document entirely, and the index
+  is exactly what the document contains — a code with no entry there is one the document does not
+  carry. `model.removedCards` and `model.removedRelations` stay, because `report.stats.removedNodes`
+  counts them and the live sets are derived by subtracting them; `salienceWeightRows`,
+  `buildRelationKindTallies` and `buildRevisionSummary` are left in `reportProvenance.ts` unused;
+  `buildAuthorshipTally` still feeds the front-matter Contents row. The loud-failure rule survives all
+  of it: a code cited in the body with no heading to anchor becomes plain `R7`, never a broken link.
 - **"How to read a reference" is a section of its own**, immediately before Appendix A, generated
   from `LOCATOR_LENS_HELP` — the same table the canvas box puts in its tooltip, so the document and
   the box cannot come to describe different grammars. It explains two conventions now, the codes in
