@@ -1,0 +1,101 @@
+/*
+ * The second full-viewport, centred screen in the app, after the login page — and it borrows that
+ * page's shape on purpose, because a reader who is about to be offered an account should recognise
+ * where they are being sent.
+ *
+ * `min-height: 100vh`, not `height: 100%`. Nothing sets a height on the document root (`index.html`
+ * is a bare `<div id="root">` and `global.css` sets only typography and `margin: 0`), and this
+ * element is the route's own root, so a percentage height would resolve to `auto`: the card would sit
+ * at the top of a white page with the centring doing nothing.
+ */
+.page {
+    min-height: 100vh;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-5);
+    padding: var(--space-6) var(--space-4);
+    background: var(--color-surface-sunken);
+    color: var(--color-text);
+}
+
+.card {
+    width: 100%;
+    max-width: 460px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-5);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-md);
+    text-align: center;
+}
+
+.title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+}
+
+.body {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+    line-height: 1.55;
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: center;
+}
+
+.primary,
+.secondary {
+    border-radius: var(--radius-pill);
+    padding: var(--space-2) var(--space-5);
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.primary {
+    border: 1px solid transparent;
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+}
+
+.primary:hover {
+    background: var(--color-accent-hover);
+}
+
+.secondary {
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
+}
+
+.secondary:hover {
+    background: var(--color-surface-hover);
+}
+
+/*
+ * The reference the reader followed, shown back to them. Somebody who cannot open a project at all
+ * should still be able to see which artifact they were pointed at, and to quote it to whoever sent
+ * the link.
+ */
+.reference {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-xs);
+    line-height: 1.5;
+    word-break: break-word;
+}

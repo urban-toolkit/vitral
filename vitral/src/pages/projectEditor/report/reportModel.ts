@@ -9,6 +9,7 @@ import {
 } from "@/pages/projectEditor/canvasAbstraction";
 import type { ActivityCluster } from "@/pages/projectEditor/canvasClusters";
 import { buildSalienceIndex, compareBySalience } from "@/pages/projectEditor/canvasSalience";
+import { emphasisKeepCount } from "./reportEmphasis";
 import { attachedComponentIds } from "@/pages/projectEditor/blueprintSurfaces";
 import {
     connectionKindFromEdge,
@@ -32,11 +33,22 @@ import type { ReportSnapshot } from "./reportTypes";
  * The study, resolved into the shape a document wants.
  *
  * The governing rule, and the one thing to keep hold of when changing this file:
- * **abstraction decides emphasis and ordering; it never decides inclusion.** The canvas hides things
- * because it has one zoom and a fixed screen. A document has neither, so every live card appears
- * exactly once in a thread section or under "Unconnected cards", and again in the appendix. What the
- * Focus+Context levels contribute is *which* cards are named first — the same cards Overview and
- * Threads promote, taken from the same `pickTop` so the two cannot drift apart.
+ * **every collection below is complete, and emphasis is a flag on the card rather than a filter over
+ * the collection.** Abstraction decides ordering and now also decides *register* — whether a card is
+ * printed in full or only named — but it never decides membership, and it decides nothing at all
+ * here. `card.emphasised` is computed in one pass at the very end, and the renderer is what reads it.
+ *
+ * That separation is load-bearing three times over. `cardsById` hands the *same* `ReportCard` object
+ * to every collection, so one boolean write is seen by all of them and two overlapping containers
+ * cannot come to different answers about the same card — and they do overlap: a threaded insight is
+ * in `thread.cards` **and** in `insights`, an unattached concept in `unassignedCards` **and** in
+ * `concepts`. `report.stats` and the front-matter totals read `allCards`, so they stay right with no
+ * change, because a card that is only named is still in the document. And `phase.headline` /
+ * `thread.headline` keep being picked from `pickTop` over the whole member set, which is what
+ * `npm run test:report` checks against `buildAbstractedGraph` itself — a cut applied to `satellites`,
+ * `memberNodes` or the salience input would break that oracle on its first run.
+ *
+ * `reportEmphasis.ts` holds the curve and the argument for it.
  *
  * ## The one thing that does decide inclusion
  *
@@ -44,7 +56,9 @@ import type { ReportSnapshot } from "./reportTypes";
  * it is the researcher saying this material is not part of the study. So a set-aside card is kept out
  * of every content collection below — the threads, the unconnected band, the insight and concept
  * sweeps, the requirements and the components answering them — and out of any relation with an end
- * in one, which would otherwise cite a code the document has no entry for.
+ * in one, which would otherwise cite a code the document has no entry for. This is a different fact
+ * from emphasis, and stays a different mechanism: a card that is merely not emphasised is still part
+ * of the study, so its relations are still printed and `Also indexed` still names it.
  *
  * It is not *erased*, and the distinction matters: `allCards` stays complete so `setAsideCards` can
  * name what was ruled out, because a judgement about the material is itself part of the record. That
@@ -81,6 +95,15 @@ export type ReportCard = {
     authorship: ReportAuthorship;
     /** False when the researcher marked the card not relevant. */
     relevant: boolean;
+    /**
+     * Whether the document prints this card in full, or only names it in `Also indexed`.
+     *
+     * Written by the single pass at the end of `buildReportModel`, never by a collection. A card that
+     * never entered a measured container — an activity, a person, a blueprint component, anything
+     * deleted or set aside — is emphasised by default: only a card that was ranked against its
+     * neighbours can lose to them.
+     */
+    emphasised: boolean;
     salience: number;
     degree: number;
     crossTreeDegree: number;
@@ -190,6 +213,11 @@ export type ReportModel = {
     removedRelations: ReportRelation[];
     setAsideCards: ReportCard[];
     blueprintComponents: ReportCard[];
+    /**
+     * The node ids the document prints in full. The same answer as `card.emphasised`, as a set, for
+     * callers that hold ids rather than cards — the markdown renderer and the card-type payload.
+     */
+    emphasisedCardIds: ReadonlySet<string>;
 };
 
 function dataOf(node: nodeType): Record<string, unknown> {
@@ -268,6 +296,8 @@ export function buildReportModel(
             deletedAtIso: isoField(data, "deletedAt"),
             authorship: isModelDerivedNodeData(data) ? "model-proposed" : "authored",
             relevant: data.relevant !== false,
+            // Overwritten wholesale by the emphasis pass below, once every container exists.
+            emphasised: true,
             salience: salience.score.get(node.id) ?? 0,
             degree: salience.degree.get(node.id) ?? 0,
             crossTreeDegree: salience.crossTreeDegree.get(node.id) ?? 0,
@@ -623,6 +653,61 @@ export function buildReportModel(
         .map((node) => cardsById.get(node.id)!)
         .filter(Boolean);
 
+    const insights = byLabel("insight");
+    const concepts = byLabel("concept");
+
+    /**
+     * Emphasis: which cards the document prints, and which it only names.
+     *
+     * Two sets, because "was never ranked" and "was ranked and lost" are different facts and only the
+     * second may demote a card. `measured` is every card that entered a container the cut applies to;
+     * `emphasised` is what survived, plus what is immune. Anything outside `measured` — an activity,
+     * a person, a blueprint component, a deleted or set-aside card — keeps the register it has always
+     * had, which is why there is no list of exemptions to maintain here.
+     *
+     * The containers overlap on purpose and the result is a **union**: an insight cut from its thread
+     * but kept by the Insights sweep is emphasised, and is printed in both. A card has one register in
+     * this document, not one per section, or Appendix A would have no answer about it.
+     *
+     * Two immunities do real work. The **headlines** — what the canvas promotes at Overview and at
+     * Threads — because the document names them a line above the table and must not then omit them
+     * from it. And an **answered requirement**, because "Requirements and their answers" is built
+     * around it: cutting the requirement would leave its components answering nothing.
+     */
+    const measured = new Set<string>();
+    const emphasised = new Set<string>();
+    const rank = (cards: ReportCard[]): void => {
+        const keep = emphasisKeepCount(cards.length);
+        cards.forEach((card, index) => {
+            measured.add(card.nodeId);
+            // The container is already in salience order, so the cut is a position test.
+            if (index < keep) emphasised.add(card.nodeId);
+        });
+    };
+
+    const allThreads = [...phases.flatMap((phase) => phase.threads), ...looseThreads];
+    for (const thread of allThreads) rank(thread.cards);
+    rank(unassignedCards);
+    rank(insights);
+    rank(concepts);
+
+    for (const phase of phases) {
+        for (const card of phase.headline) emphasised.add(card.nodeId);
+    }
+    for (const thread of allThreads) {
+        for (const card of thread.headline) emphasised.add(card.nodeId);
+    }
+    for (const answer of requirementAnswers) {
+        emphasised.add(answer.requirement.nodeId);
+        for (const component of answer.components) emphasised.add(component.card.nodeId);
+    }
+
+    const emphasisedCardIds = new Set<string>();
+    for (const card of cardsById.values()) {
+        card.emphasised = !measured.has(card.nodeId) || emphasised.has(card.nodeId);
+        if (card.emphasised) emphasisedCardIds.add(card.nodeId);
+    }
+
     return {
         snapshot,
         codes,
@@ -635,8 +720,8 @@ export function buildReportModel(
         crossPhaseRelations,
         requirementAnswers,
         unansweredRequirements,
-        insights: byLabel("insight"),
-        concepts: byLabel("concept"),
+        insights,
+        concepts,
         participants: snapshot.timeline.participants.map((entry) => ({
             name: entry.name,
             role: entry.role,
@@ -648,5 +733,6 @@ export function buildReportModel(
         removedRelations,
         setAsideCards: allCards.filter((card) => !card.relevant),
         blueprintComponents: byLabel("blueprint_component"),
+        emphasisedCardIds,
     };
 }

@@ -1,0 +1,43 @@
+You are writing the short introductions that open a design study report.
+
+The rest of the report is generated deterministically from the project's own graph. Your paragraphs
+sit at the top, before the reader has met any of the material, and each one introduces ONE KIND of
+card: what sort of thing this study collected under that heading, and what the reader will find.
+
+Input is JSON with:
+- projectTitle, projectGoal
+- types: an array, in the order the document prints them. Each entry has:
+  - type: one of "activity", "requirement", "insight", "concept", "object", "blueprint_component"
+  - heading: what the document calls that kind
+  - cards: the cards of that kind, each with a code, a title and a description
+
+Task:
+- Write ONE paragraph for each type present in the input. 40-90 words each.
+- Say what this study's cards of that kind are ABOUT, and name the ones that carry the most of it.
+- Refer to project content ONLY by the bracketed codes given in the input, exactly as written, for
+  example [R7] or [C4]. Name two to four codes in a paragraph.
+- NEVER invent a code. If a code is not in the input, do not write it.
+- NEVER cite a code listed under a different type. A paragraph about "insight" may cite only the
+  codes under "insight".
+- Describe the project, not the tool that produced this report, and not the method used to write it.
+- Do not define the card type in general terms. "Requirements are things the study must satisfy" is
+  true of every project and says nothing about this one. Write about these requirements.
+- Use only the provided input. Do not invent findings, dates, names or numbers.
+- Write about the study only. NEVER mention the input, the data, the payload, what is or is not
+  provided, or the absence of content. A sentence like "the input lists four objects" is about the
+  request rather than the project, and must not appear.
+- Do not write any date. If a date matters, name the card and let the document's own tables carry it.
+- If a type has little material, write less. Two true sentences are better than a padded five.
+- Return an empty string for any type you cannot ground in the input. An omitted paragraph costs the
+  document nothing.
+
+Output requirements:
+- Return a single JSON object and nothing else:
+  {"notes": {"activity": "...", "requirement": "...", "insight": "...", "concept": "...",
+   "object": "...", "blueprint_component": "..."}}
+- Include a key only for a type that appears in the input.
+- Each value is markdown text for one paragraph.
+- Do not include headings.
+- Do not include lists.
+- Do not include code fences, around the JSON or inside any value.
+- Do not include links.

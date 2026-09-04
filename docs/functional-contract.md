@@ -215,8 +215,17 @@ Covered areas:
 - Export/import project as `.vi` binary.
 - Imported `.vi` opens in review-only mode.
 - Export project as a **deterministic** markdown report, generated from the Focus+Context
-  aggregations. Machine-written prose is limited to an optional abstract, fenced by
-  `vitral:abstract:begin` / `:end` comments so it stays findable and removable by a script.
+  aggregations. Machine-written prose is limited to two optional pieces, each validated before it is
+  spliced in and each fenced by its own comment pair so it stays findable and removable by a script:
+  an **abstract** (`vitral:abstract:begin` / `:end`), refused whole if it cites a code the payload
+  never contained; and **"The material"** (`vitral:cardtypes:begin` / `:end`), one short paragraph per
+  kind of card, refused one kind at a time.
+- The document has **two registers**, both derived from the same salience metric the canvas uses to
+  decide what Focus+Context promotes. A **printed** card carries its table row, its description and
+  its own entry in Appendix A with its source quotation and canvas links; a **named** card carries one
+  line under "Also indexed". Activities, phases and threads are always printed whole. Nothing is
+  dropped and no text is ever shortened: every section that trims states how many cards it left to the
+  appendix, and the front-matter Contents row states the total.
 - Cards the researcher marked **not relevant** are excluded from the report body. They are named once,
   under "Set aside", because the judgement is part of the record; nothing else in the document
   reproduces their content.
@@ -285,7 +294,7 @@ Covered areas:
 | Panoramic visual evolution | Screenshot timeline series, zone/subtrack selection state | Open panoramic mode for whole system and subtrack focus; verify expected frame filtering and overlays. |
 | `.vi` export | Document state, revisions, files, embeddings, GitHub events | Export `.vi`, inspect size sanity, re-import, and verify project opens in review mode with expected data. |
 | `.vi` import review-only | Imported doc metadata (`review_only`) + editor gating | Import `.vi`; confirm editing actions are disabled and review badge/banner appears. |
-| Markdown export | Focus+Context aggregations, locator codes, provenance tallies, download | Export markdown twice and verify the bytes are identical; verify Provenance names removed and set-aside cards; verify every cited code resolves to a heading. |
+| Markdown export | Focus+Context aggregations, salience, locator codes, download | Export markdown twice and verify the bytes are identical; verify Provenance names set-aside cards; verify every cited code either resolves to a heading or renders as inert plain text, never as a literal `[R7]`; on a large project verify every live card is named, that "Also indexed" carries the ones not printed, and that each trimmed section says how many it left out. |
 | Locator codes | Node/edge ids, `__history`, clustering anchors | Add a card while the playhead is scrubbed back, correct a card's date, and soft-delete a card; verify no existing code changes what it points at. |
 | JSON settings import/export | Setup config schema (participants/timeline/etc.) | Export JSON, import into new setup, and verify functional equivalence. |
 | Playback visibility over time | Node/edge created/deleted timestamps, projection logic | Move playhead across key timestamps; verify entities appear/disappear exactly at boundaries. |

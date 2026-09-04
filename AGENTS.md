@@ -223,6 +223,13 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 - A failed login says **"Wrong username or password"** for both a missing account and a bad password, and burns a scrypt verification against a dummy hash in the missing-account case. Answering instantly for an unknown name while a real one costs ~100ms is the same enumeration oracle as a distinct message, by timing.
 - **`credentials: "include"` is not optional.** The session is a cookie, so every call in `api/stateApi.ts` goes through the `apiFetch` wrapper. Before this feature only 3 of 23 set it by hand; a call that forgets is silently anonymous, which means the ownerless legacy projects and a 403 on every write.
 - **Three session states, and `guest` is a real one.** `anonymous` is the only one `RequireSession` redirects; a guest has answered the login screen and gets the whole app. The guest flag lives in `localStorage` (`vitral.guest`) because it has to survive a reload, and reading it is wrapped in try/catch — a private window throws on access rather than returning null.
+- **`anonymous` carries `verified`, and it is a safety gate rather than bookkeeping.** `SessionProvider` reaches `anonymous` two ways: the server answered "nobody", and the session request *failed*. They look identical and are not — after a failure this browser may still hold a live cookie nobody could ask about. Anything that *acts* on being signed out has to decline on `verified: false`, because `continueAsGuest` calls `logoutAccount()` and that really does delete the session row. Without the gate, a proxy hiccup plus a link in a PDF signs a researcher out of every tab and every device with no interaction and nothing on screen, and any third-party page gains a cross-origin logout: navigate a Vitral user to `/project/anything?ref=x` and hope their lookup fails. An unverified anonymous falls through to `/login` as before and loses nothing — `state.from` carries the whole reference.
+- **A report reference answers the login screen on the reader's behalf.** `RequireSession` enters guest mode instead of redirecting when a *verified* anonymous visit matches `/project/:projectId` **and** carries a non-empty `ref`. Both halves are required: `ref` is also the web's ordinary referral parameter, so a bare test would let `/projects?ref=twitter` change the session state, and `matchPath` is exact by default so the setup screen — which is nothing but edits — is excluded. The `ref` is deliberately **not** parsed here: `resolveLocatorReference` owns the grammar and names the code it could not find, which serves a reader far better than a login screen that explains nothing.
+  - **The render must hold a spinner, not return `<Navigate>`.** `<Navigate>` navigates from an effect of its own and React flushes a child's effects before its parent's, so returning it would put the reader on the screen this exists to skip and the effect would then enter guest mode on a page nobody is looking at.
+  - **Started is a ref claimed before the await; settled is state.** `session.status` stays `anonymous` across at least one more commit, so a guard read off the session would re-fire the request every render, and `StrictMode` invokes the effect twice in development. Settled has to be state because the *render* reads it, and it answers a question the ref cannot: "anonymous *again*" rather than "anonymous *still*" — the unavailable-project screen leaves guest mode, and without it this component holds the spinner forever.
+  - **The flag it writes is `sessionStorage` (`vitral.guest.session`), not `localStorage`.** Clicking a citation is not the decision "Continue as a guest" is, and must not skip the login screen on that machine from then on. `continueAsGuest` takes `{remember}` for exactly this; `readGuestFlag` treats either store as guest with a try/catch each, and `writeGuestFlag(false)` clears **both**, or a stale flag reinstates guest mode on the next load. Note that `sessionStorage` is copied into a tab opened from this one.
+  - **Ordering property worth keeping:** because the spinner is held until the session flips, `ProjectEditorPage` mounts with `setGuestApiMode(true)` already applied, so its first `loadDocument` goes out with `credentials: "omit"`.
+  - **The 404 that follows is a screen, not a bare error line.** A reader auto-guested into an unpublished project used to be able to sign in from the login screen; `ProjectUnavailable` is where that offer moved. Its sign-in action calls `leaveGuestMode()` **before** navigating, because `LoginPage` bounces a `guest` session straight back to its destination and would return the reader to the failing project in one frame. The status comes from `DocumentLoadError`, never from matching on the message: four things reach `error` and they format themselves differently, so a screen built to explain "this project is not yours" would otherwise explain it to somebody whose autosave failed.
 - **A guest's API calls carry no cookie at all.** `apiCredentials()` in `api/guestMode.ts` answers `"omit"` while the session is `guest`, and `stateApi`, `githubApi` and `eventsApi` all route through it. `authApi` deliberately does not: signing in has to receive a cookie and signing out has to clear one, which is how guest mode is entered in the first place.
 - **The flag is set synchronously, in `setSession`, never in an effect.** React runs a child's effects before its parent's, so an effect in `SessionProvider` lands *after* the page below has mounted and issued its first document request — the one request that must not speak for an account.
 - **Why any of this matters:** a browser can be a guest in the UI and still hold a live session cookie (a second tab signing in is enough). The server then answers that cookie honestly — `can_edit: true` on that account's own projects — and accepts the writes. What the researcher saw was the whole editor, on a published project, while the header said "Guest": card delete buttons, timeline add controls, asset deletion, GitHub repo linking. Two independent layers close it now: the request is anonymous, **and** the client asserts the rule below.
@@ -371,10 +378,41 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   from `canvasAbstraction.ts` and called over the complete member set, and `buildAbstractedGraph` is
   used in `npm run test:report` as the **oracle**: the report's headline codes must equal what levels
   1 and 2 promote. That check is what stops the document and the canvas drifting apart.
-- **Abstraction decides emphasis and ordering; it never decides inclusion.** The canvas hides because
-  it has one zoom; a document has none. Every live *and relevant* card appears once in a thread
-  section or under "Unconnected cards", and again in the appendix. Nothing is truncated for length —
-  the old report was superficial *because* it summarised, and length belongs in appendices.
+- **Abstraction decides emphasis, ordering and *register*; it never decides membership.** The
+  document has two registers and every live, relevant card is in one of them. A **printed** card gets
+  its table row, its description, and its own `### R7` entry in Appendix A with its source quotation
+  and its canvas links. A **named** card gets one line under `Also indexed`. Nothing is dropped, no
+  text is ever cut mid-way, and no section summarises what it declines to print — the old report was
+  superficial *because* it summarised, and that is still the failure to avoid. What changed is only
+  that an appendix printing a description and a quotation for every card grew without bound, and a
+  file nobody can read is not a record either.
+  - **The cut is a flag on the card, never a filter over a collection.** `card.emphasised`, written by
+    one pass at the end of `buildReportModel` after every container exists; `reportEmphasis.ts` holds
+    the curve and the argument for it. `cardsById` hands the *same* object to every collection, so one
+    boolean write is seen by all of them — which is required, because the containers **overlap**: a
+    threaded insight is in `thread.cards` *and* in `insights`, an unattached concept in
+    `unassignedCards` *and* in `concepts`. Emphasis is therefore a **union** across them, and a card
+    kept by any container is printed everywhere it appears. A per-container flag would leave Appendix A
+    with no answer about a card that two sections disagreed on.
+  - **Applying it to `satellites`, `memberNodes`, `allCards` or the salience input breaks the oracle.**
+    `phase.headline` / `thread.headline` are still `pickTop` over the whole member set, which is what
+    `npm run test:report` checks against `buildAbstractedGraph` itself. Filter those inputs and the
+    check fails on its first run — correctly.
+  - **Two immunities, and only two.** The headlines, because the document names them a line above the
+    table and must not then omit them from it; and a requirement carrying an answering component,
+    because "Requirements and their answers" is built around it. Activities, people and blueprint
+    components need no exemption and must not be given one: they never enter a measured container, and
+    a card that was never ranked cannot lose. The default is `!measured.has(id)`.
+  - **Every section that trims says so, and says it truthfully.** Because emphasis is a union, the
+    printed set is *not* "the N most central" and no sentence may claim it is. What is said is the
+    count and where the rest are — per section, and once in the front-matter Contents row.
+  - **A named card's code goes inert, and the document explains that.** No heading means no link
+    definition, so the loud-failure pass rewrites `[R12]` to plain `` `R12` `` — the same house rule as
+    the inert source icon in `Card.tsx`. `referenceMechanismLines()` states it: two sentences there
+    would otherwise be false, because they promise every code an index entry and further views.
+  - **Relations naming a named card are kept.** A card that is merely not emphasised is still part of
+    the study, unlike a set-aside one — which is why the relevance rule below drops relations and this
+    one does not.
 - **Relevance is the one thing that does decide inclusion.** `data.relevant === false` is not the
   abstraction hiding something for want of room; it is the researcher saying this material is not part
   of the study. So a set-aside card is kept out of every content collection in `reportModel` — threads,
@@ -385,11 +423,15 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   the only place in the document that does — the appendix note that used to point at it was removed
   with the rest of "Codes that no longer resolve". The front-matter totals and
   `report.stats.cards` count only what the body contains, or the document promises cards it never
-  delivers.
+  delivers — and a card that is *named* rather than printed is still content the body contains, so it
+  is still counted. The Contents row states how many of them there are rather than leaving the reader
+  to reconcile a total against a shorter appendix, and it counts over exactly the set
+  `buildAuthorshipTally` counts (relevant, non-person) so the two halves of that row cannot drift.
 - **What the report no longer prints, and must not regain by accident.** Removed on request, and
   pinned as absent in `npm run test:report`: the front-matter paragraph explaining the code system
   (it moved into Appendix A, where the codes resolve), the abstract's "Machine-written" disclaimer
-  (the `vitral:abstract:*` sentinels remain, which is the half a script needs), a thread's
+  (the `vitral:abstract:*` sentinels remain, which is the half a script needs — and there is now a
+  second pair, `vitral:cardtypes:*`, so a script stripping machine text has to know about both), a thread's
   "Relations inside this thread" line ("Reaching beyond it" stays — a thread's internal wiring is the
   card table said twice, and where it *reached* is not), the "Cards" column in "Phases at a glance",
   the "Contains" and "Composition" rows in a phase table, the date-and-counts line under a thread
@@ -462,15 +504,47 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 - Inputs are the whole live graph, **unfiltered**. `buildSalienceIndex` normalises its degree terms
   against whatever set it is handed, so passing the filtered canvas would rescale every card's
   emphasis to whatever the researcher last clicked. The report states this about itself.
-- **One LLM call, for the abstract only, and it is refused rather than trusted.** `acceptAbstract`
-  rejects the whole paragraph if it cites a code the payload never contained; a fabricated citation is
-  the one failure a reader cannot check. It is written from the **requirements and concepts** — the
-  two card kinds that describe intent rather than incident, which is what an abstract is for; a
-  summary assembled from activities would read as a diary, and the Timeline section already is one.
-  The call is made every export and never blocks: the deterministic document is complete before it
-  runs, so a refused or unreachable paragraph costs one italic line. The export itself is **not**
-  gated on `interactionLocked` — it writes nothing, and a reader of a published study is exactly who
-  the document is for.
+- **Two LLM calls, both refused rather than trusted, and neither able to block.** The deterministic
+  document is complete before either runs, so a refused or unreachable paragraph costs one italic line.
+  Both payloads carry **codes, never ids and never raw graph**, so a model can only refer to things the
+  document itself names. `acceptModelProse` is the shared gate — empty, fenced, heading, list, over
+  budget, a locale-formatted date, or a code outside the allowed set — and the two callers differ only
+  in the budget and in *what a refusal costs*. The export is **not** gated on `interactionLocked`: it
+  writes nothing, and a reader of a published study is exactly who the document is for.
+  - **The abstract** is one claim, so `acceptAbstract` rejects the whole paragraph. It is written from
+    the **requirements and concepts** — the two card kinds that describe intent rather than incident,
+    which is what an abstract is for; a summary assembled from activities would read as a diary, and
+    the Timeline section already is one.
+  - **The card-type notes** (`## The material`, above the Overview) are one short paragraph per kind of
+    card, so a reader learns what sort of material the study holds before meeting any of it. Six
+    independent claims, so **refusal is per kind** and a fabricated citation about objects costs the
+    note about objects. One call returning `{"notes": {...}}`, unwrapped from a code fence *before*
+    `JSON.parse` — a model that wraps its JSON would otherwise cost every paragraph at once, which is
+    the all-or-nothing failure the shape exists to avoid. A kind the model declined to write about is
+    **not** a refusal and is not reported as one, or a project with no object cards would report a
+    failure on a perfect export.
+    - **`person` is not one of the kinds.** People are context rather than content everywhere else —
+      never counted, never promoted, never given a row — and this would be the one place the document
+      characterised them, and the one place real names left the project for a model.
+    - Written from the **emphasised** cards only: a note built from a card the reader will only meet as
+      a line in `Also indexed` would be describing a page that is not there.
+    - Each kind may cite **only its own** codes. A note about requirements reaching for an insight's
+      code answers the question the note beside it answers.
+  - **The payload is wrapped as `{content: ...}`.** `/llm/chat` builds a "Structured input context"
+    block out of every top-level key *and* re-sends the raw body as primary content, so an unwrapped
+    payload crosses the wire twice; `content` is one of the three keys that block skips. `ReportAbstract`
+    is deliberately left unwrapped — its prompt has always seen the doubled form, and changing what a
+    prompt is shown is not a change to make in passing.
+- **Model prose is pushed verbatim, and its codes are registered as if it had used `ref()`.**
+  `machineProse` in `reportMarkdown.ts`, and it is not optional. Both passes at the foot of that file
+  key off `out.cited`: one emits a link definition, the other rewrites an unanchored code to inert
+  `` `R7` ``. Prose that skips `ref()` is in neither, so a `[H1]` inside it reaches the file as a
+  literal broken link — the one way one can still get out, and exactly what test 5 exists to forbid.
+  A person's code is the sharpest case: the card gets an appendix entry and is cited nowhere else in
+  the document, so before this the abstract was the only thing that could name it.
+- **What a model may cite is what the document *anchors*, not `codes.entries`.** That index also
+  carries deleted cards, set-aside cards, stages and milestones, none of which the document gives a
+  heading; `entry.status === "live" && entry.inDocument` is the index's own answer to this question.
 - **The domain noun is `locator`; the word on screen is "reference".** `cardData.reference` already
   means the verbatim excerpt a card was extracted from, so anything to do with codes carries the
   `Locator` prefix in source. The canvas box is labelled **Go to reference** (it was "Go to code"),

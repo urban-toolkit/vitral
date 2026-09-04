@@ -13,7 +13,7 @@ import type {
 } from "@/config/types";
 
 import { useDocumentSync } from "@/hooks/useDocumentSync";
-import { requestReportAbstractLLM } from "@/func/LLMRequest";
+import { requestReportAbstractLLM, requestReportCardTypesLLM } from "@/func/LLMRequest";
 import {
     requestSystemScreenshotZonesLLM,
 } from "@/func/LLMRequest";
@@ -48,6 +48,7 @@ import { autoLinkNewCards } from "@/pages/projectEditor/autoLinkCards";
 import { RelationEdge } from "@/components/edges/RelationEdge";
 import { CanvasSidebar } from "@/components/sidebar/CanvasSidebar";
 import { RightSidebar } from "@/components/sidebar/RightSidebar";
+import { ProjectUnavailable } from "@/pages/projectEditor/ProjectUnavailable";
 import { BlueprintNode } from "@/components/blueprint/BlueprintNode";
 import { BlueprintComponentNode } from "@/components/blueprint/BlueprintComponentNode";
 import { BlueprintGroupNode } from "@/components/blueprint/BlueprintGroupNode";
@@ -109,11 +110,15 @@ import {
 } from "@/store/cardPreviewStore";
 import {
     acceptAbstract,
+    acceptCardTypeNotes,
+    allowedCodesByCardType,
     buildAbstractPayload,
+    buildCardTypePayload,
     buildProjectReport,
     buildReportGraphContext,
     buildReportModel,
     type ReportAbstract,
+    type ReportCardTypeNotes,
     type ReportSnapshot,
 } from "@/pages/projectEditor/report/projectReport";
 import { isAllowedConnection, relationLabelFor, relationPartnersFor } from "@/utils/relationships";
@@ -521,7 +526,7 @@ function isKnowledgeCardNode(node: nodeType): boolean {
 
 
 const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
-    const { status, error, reviewOnly, canEdit, isOwner, published, ownerUsername } =
+    const { status, error, errorStatus, reviewOnly, canEdit, isOwner, published, ownerUsername } =
         useDocumentSync(projectId);
     // Publishing is an account action, so the control needs to know whether there is one — a guest
     // reading an ownerless legacy project counts as its "owner" under the pre-accounts rule, and
@@ -3907,31 +3912,103 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             });
 
             /**
-             * The abstract, written from the requirements and the concepts.
+             * The two machine-written pieces: the abstract, and one paragraph per kind of card.
              *
              * Requested every time, and never allowed to block: the deterministic document is already
              * complete when this runs, so a refused or unavailable paragraph costs one italic line
-             * rather than an export. `acceptAbstract` throws the whole paragraph away if it cites a
-             * code the payload never contained, because a fabricated citation is the one failure a
-             * reader cannot check for themselves.
+             * rather than an export. The acceptors throw prose away if it cites a code the payload
+             * never contained, because a fabricated citation is the one failure a reader cannot check
+             * for themselves.
+             *
+             * Both requests, and the two payload builds that feed them, sit **inside** the try. The
+             * model build is in here too and has to be: it is the one call that can throw on a
+             * malformed document, and hoisting it out of the guard would turn "the export has no
+             * abstract" into "there is no export".
              */
             let abstract: ReportAbstract | null = null;
+            let cardTypeNotes: ReportCardTypeNotes | null = null;
             try {
                 const model = buildReportModel(snapshot, codes, reportContext);
-                const payload = buildAbstractPayload(model);
-                const raw = await requestReportAbstractLLM(payload, llmModel ?? undefined);
-                const prose = acceptAbstract(raw, new Set(codes.entries.map((entry) => entry.code)));
-                if (prose !== null) {
-                    abstract = { prose, model: llmModel ?? "unknown", prompt: "ReportAbstract" };
+
+                /**
+                 * What a model is allowed to cite: the codes this document gives a heading to.
+                 *
+                 * Narrower than `codes.entries`, which is what this used to pass. That index also
+                 * carries deleted cards, set-aside cards, stages and milestones — none of which the
+                 * document anchors — so a paragraph citing `S1` passed the acceptor and then reached
+                 * the file as a link to nothing. `inDocument` is the index's own answer to exactly
+                 * this question.
+                 */
+                const anchoredCodes = new Set(
+                    codes.entries
+                        .filter((entry) => entry.status === "live" && entry.inDocument)
+                        .map((entry) => entry.code),
+                );
+
+                const cardTypePayload = buildCardTypePayload(model);
+                const allowedByType = allowedCodesByCardType(cardTypePayload);
+
+                // Both requests at once. They are independent, the export is already waiting on the
+                // network, and running them in series would double the wait for no benefit.
+                // `allSettled`, so a refused abstract cannot take the card-type notes with it.
+                const [abstractResult, cardTypeResult] = await Promise.allSettled([
+                    requestReportAbstractLLM(buildAbstractPayload(model), llmModel ?? undefined),
+                    allowedByType.size > 0
+                        ? requestReportCardTypesLLM(cardTypePayload, llmModel ?? undefined)
+                        : Promise.resolve(""),
+                ]);
+
+                if (abstractResult.status === "fulfilled") {
+                    const prose = acceptAbstract(abstractResult.value, anchoredCodes);
+                    if (prose !== null) {
+                        abstract = { prose, model: llmModel ?? "unknown", prompt: "ReportAbstract" };
+                    } else {
+                        showCanvasNotice(
+                            "The report was exported without a written abstract: the model's paragraph"
+                            + " referred to something this project does not contain.",
+                        );
+                    }
                 } else {
+                    const reason = abstractResult.reason instanceof Error
+                        ? abstractResult.reason.message
+                        : "the request failed";
+                    showCanvasNotice(`The report was exported without a written abstract (${reason}).`);
+                }
+
+                if (allowedByType.size > 0 && cardTypeResult.status === "fulfilled") {
+                    const accepted = acceptCardTypeNotes(cardTypeResult.value, allowedByType);
+                    if (accepted === null) {
+                        showCanvasNotice(
+                            "The report was exported without its card-type introductions: the model's"
+                            + " answer could not be read.",
+                        );
+                    } else {
+                        cardTypeNotes = {
+                            notes: accepted.notes,
+                            model: llmModel ?? "unknown",
+                            prompt: "ReportCardTypes",
+                        };
+                        // Only a *refusal* is worth saying out loud. A kind the model declined to
+                        // write about is not a failure and is not reported as one.
+                        if (accepted.refused.length > 0) {
+                            showCanvasNotice(
+                                `${accepted.refused.length === 1 ? "One card type was" : `${accepted.refused.length} card types were`}`
+                                + " left without an introduction: the model referred to something this"
+                                + " project does not contain.",
+                            );
+                        }
+                    }
+                } else if (allowedByType.size > 0) {
+                    const reason = cardTypeResult.status === "rejected" && cardTypeResult.reason instanceof Error
+                        ? cardTypeResult.reason.message
+                        : "the request failed";
                     showCanvasNotice(
-                        "The report was exported without a written abstract: the model's paragraph"
-                        + " referred to something this project does not contain.",
+                        `The report was exported without its card-type introductions (${reason}).`,
                     );
                 }
             } catch (caught) {
                 const reason = caught instanceof Error ? caught.message : "the request failed";
-                showCanvasNotice(`The report was exported without a written abstract (${reason}).`);
+                showCanvasNotice(`The report was exported without machine-written framing (${reason}).`);
             }
 
             const report = buildProjectReport(snapshot, {
@@ -3944,6 +4021,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     at: capturedAtIso,
                 }),
                 abstract,
+                cardTypeNotes,
                 includeAppendices: true,
             });
 
@@ -4700,7 +4778,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     ]);
 
     if (status === "loading") return <div>Loading...</div>;
-    if (status === "error") return <div>Error: {error}</div>;
+    if (status === "error") {
+        // A 404 from the *load* is the one failure with something to do about it, and it is now the
+        // one a reader is most likely to meet: `RequireSession` puts anyone following a reference link
+        // straight into guest mode, so an unpublished project reaches them here instead of at the
+        // login screen that used to offer them an account. Every other failure keeps the bare line —
+        // it is a fault rather than a permission, and there is nothing to click.
+        if (errorStatus === 404) return <ProjectUnavailable isGuest={isGuest} />;
+        return <div>Error: {error}</div>;
+    }
 
     const canvasSidebarBottomOffset = timelineOpen
         ? TIMELINE_DOCK_HEIGHT + TIMELINE_DOCK_TOGGLE_HEIGHT

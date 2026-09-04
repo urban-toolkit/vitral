@@ -10,7 +10,18 @@ export type { ProjectReport, ReportAbstract, ReportOptions, ReportSnapshot } fro
 export type { ReportModel } from "./reportModel";
 export { buildReportModel, buildReportGraphContext } from "./reportModel";
 export type { ReportGraphContext } from "./reportModel";
-export { buildAbstractPayload, acceptAbstract } from "./reportAbstract";
+export {
+    acceptAbstract,
+    acceptCardTypeNotes,
+    acceptModelProse,
+    allowedCodesByCardType,
+    buildAbstractPayload,
+    buildCardTypePayload,
+    REPORT_CARD_TYPES,
+    REPORT_CARD_TYPE_HEADING,
+} from "./reportAbstract";
+export type { ReportCardType, ReportCardTypeNotes, ReportCardTypePayload } from "./reportAbstract";
+export { emphasisKeepCount } from "./reportEmphasis";
 
 /**
  * The whole report, from a snapshot. One call, no I/O, no clock, no randomness.
@@ -21,8 +32,9 @@ export { buildAbstractPayload, acceptAbstract } from "./reportAbstract";
  * impure — reading the store, stamping the export instant, asking a model for an abstract, writing a
  * file — belongs to the caller.
  *
- * The abstract is passed in already validated, and never blocks: the deterministic document is
- * complete on its own, so a failed or refused abstract costs one italic line and nothing else.
+ * The machine-written pieces — the abstract, and the card-type notes at the top — are passed in
+ * already validated, and neither blocks: the deterministic document is complete on its own, so a
+ * failed or refused paragraph costs one italic line and nothing else.
  */
 export function buildProjectReport(
     snapshot: ReportSnapshot,
@@ -51,6 +63,7 @@ export function buildProjectReport(
             threads,
             removedNodes: model.removedCards.length,
             setAsideCards: model.setAsideCards.length,
+            emphasisedCards: contentCards.filter((card) => card.emphasised).length,
             codes: options.codes.entries.length,
         },
     };

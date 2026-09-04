@@ -433,13 +433,37 @@ export async function createDocument(
     return res.json();
 }
 
+/**
+ * A failed load, carrying the status rather than only a sentence about it.
+ *
+ * The message is unchanged, because things read it. What is new is that a caller can ask *which*
+ * failure this was without matching on prose — and one caller has to: a 404 here means "published to
+ * nobody, or not yours", which is the answer a reader following a citation out of a paper needs, and
+ * it is indistinguishable by string from `Save failed: 404`, from a file listing that throws the
+ * response body, and from a guest project that is simply not in this browser.
+ *
+ * 404 rather than 403 is the server's deliberate choice: a 403 would confirm that an id names
+ * somebody's real private project.
+ */
+export class DocumentLoadError extends Error {
+    // A field and an assignment rather than a parameter property: `erasableSyntaxOnly` is on, and a
+    // parameter property is the one class syntax that does not erase.
+    readonly status: number;
+
+    constructor(status: number) {
+        super(`Load failed: ${status}`);
+        this.name = "DocumentLoadError";
+        this.status = status;
+    }
+}
+
 export async function loadDocument(docId: string): Promise<DocumentResponse> {
     if (isLocalProjectId(docId)) return loadLocalDocument(docId);
 
     const res = await apiFetch(`${API_BASE}/state/${docId}`);
 
     if (!res.ok) {
-        throw new Error(`Load failed: ${res.status}`);
+        throw new DocumentLoadError(res.status);
     }
 
     return res.json();

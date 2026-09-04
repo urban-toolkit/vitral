@@ -1,5 +1,8 @@
 import type { edgeType, nodeType } from "@/config/types";
 import type { LocatorIndex } from "@/pages/projectEditor/locators";
+// Type-only, so it erases: `reportAbstract` imports `reportModel`, which imports this file, and a
+// value import here would close that ring at runtime.
+import type { ReportCardTypeNotes } from "./reportAbstract";
 
 /**
  * What the report generator is given, and what it hands back.
@@ -100,6 +103,12 @@ export type ReportOptions = {
     canvasUrlForCode: ((code: string) => string | null) | null;
     /** The abstract, when one was requested, produced and accepted. */
     abstract: ReportAbstract | null;
+    /**
+     * One paragraph per kind of card, printed together at the top. Same standing as the abstract:
+     * requested every export, validated kind by kind, and never required — the document is complete
+     * without it, so `null` costs one italic line.
+     */
+    cardTypeNotes: ReportCardTypeNotes | null;
     /** Appendices are most of the length; a caller may want the body alone. */
     includeAppendices: boolean;
 };
@@ -116,9 +125,16 @@ export type ProjectReport = {
         threads: number;
         removedNodes: number;
         setAsideCards: number;
+        /** How many of `cards` the document prints in full, rather than only naming. */
+        emphasisedCards: number;
         codes: number;
     };
 };
 
-/** Bumped when the document's shape changes, so a stored report can be read back knowingly. */
-export const REPORT_FORMAT_VERSION = 1;
+/**
+ * Bumped when the document's shape changes, so a stored report can be read back knowingly.
+ *
+ * 2: the card-type notes at the top, and the two registers in Appendix A — full entries for the
+ * emphasised cards, `Also indexed` for the rest.
+ */
+export const REPORT_FORMAT_VERSION = 2;

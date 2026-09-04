@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { useSelector, useDispatch } from 'react-redux';
 import { setNodes, setEdges, setTitle } from "@/store/flowSlice";
-import { appendDocumentRevisionSnapshot, listFiles, loadDocument, saveDocument } from "@/api/stateApi";
+import { appendDocumentRevisionSnapshot, DocumentLoadError, listFiles, loadDocument, saveDocument } from "@/api/stateApi";
 import { debounce } from "@/utils/debounce";
 
 import type { RootState } from '@/store';
@@ -67,6 +67,16 @@ export function useDocumentSync(projectId: string) {
     const [status, setStatus] = useState<SyncStatus>("idle");
     const [error, setError] = useState<string | null>(null);
     /**
+     * The HTTP status behind a failed *load*, when there was one.
+     *
+     * Reported beside `error` rather than sniffed out of it. Four things reach `error` and they
+     * format themselves differently — a load throws `DocumentLoadError`, a save throws its own
+     * sentence, `listFiles` throws the response body, and a guest project that is not in this browser
+     * throws prose — so matching on the message is how a screen built to explain "this project is not
+     * yours" ends up explaining it to somebody whose autosave failed.
+     */
+    const [errorStatus, setErrorStatus] = useState<number | null>(null);
+    /**
      * Whether this session may change the document.
      *
      * Named for what it does rather than for `review_only`, which stopped being the whole answer
@@ -116,6 +126,7 @@ export function useDocumentSync(projectId: string) {
                 try {
                     setStatus("saving");
                     setError(null);
+                    setErrorStatus(null);
 
                     await saveDocument(id, {
                         flow: { nodes, edges },
@@ -210,6 +221,7 @@ export function useDocumentSync(projectId: string) {
         async function init() {
             setStatus("loading");
             setError(null);
+            setErrorStatus(null);
             setReviewOnly(false);
             setCanEdit(true);
             setIsOwner(true);
@@ -296,6 +308,7 @@ export function useDocumentSync(projectId: string) {
                 if (ac.signal.aborted) return;
                 setStatus("error");
                 setError(e?.message ?? "Failed to load project");
+                setErrorStatus(e instanceof DocumentLoadError ? e.status : null);
                 setReviewOnly(false);
                 // Closed rather than open on a failed load: a session that could not read the
                 // document must not autosave over it.
@@ -368,5 +381,5 @@ export function useDocumentSync(projectId: string) {
         debouncedSave(projectId, currentHash, flow.nodes, flow.edges, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, participants, defaultStages, llmModel, timelineStartEnd, flow.title);
     }, [projectId, flow.nodes, flow.edges, flow.title, status, canEdit, debouncedSave, debouncedRevision, stages, designStudyEvents, blueprintEvents, blueprintCodebaseLinks, systemScreenshotMarkers, subStages, codebaseSubtracks, knowledgeSubtracks, knowledgePillTrackAssignments, defaultStages, llmModel, timelineStartEnd, participants]);
 
-    return { status, error, reviewOnly, canEdit, isOwner, published, ownerUsername };
+    return { status, error, errorStatus, reviewOnly, canEdit, isOwner, published, ownerUsername };
 }

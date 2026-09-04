@@ -5,6 +5,11 @@ import {
     resolveLocatorReference,
 } from "@/pages/projectEditor/locators";
 import type { ReportCard, ReportModel, ReportRelation, ReportThread } from "./reportModel";
+import {
+    CODE_TOKEN,
+    REPORT_CARD_TYPES,
+    REPORT_CARD_TYPE_HEADING,
+} from "./reportAbstract";
 import { buildAuthorshipTally } from "./reportProvenance";
 import {
     daysBetween,
@@ -38,15 +43,23 @@ import type { ReportOptions } from "./reportTypes";
  * the heading, so the two are generated from one string and cannot disagree. If a definition were
  * ever missing the body would show a literal `[R7]`, which the test forbids — the failure is loud.
  *
- * ## What is never done here
+ * ## Two registers, and what is still never done here
  *
- * Nothing is truncated, nothing is summarised, and nothing is dropped for length. The document the
- * reviewers saw was superficial because it summarised; length is the cheaper problem, and appendices
- * are where it goes.
+ * Nothing is truncated and nothing is dropped. What the document now has is two registers: a card is
+ * either **printed** — its table row, its description, its own appendix entry with its source
+ * quotation and its canvas links — or **named**, as one line under `Also indexed`. `card.emphasised`
+ * decides which, `reportEmphasis.ts` argues the curve, and every section that trims says how many it
+ * left to the appendix rather than quietly shortening itself. A reader is never left to wonder
+ * whether the document holds a card; only whether this file quotes it.
+ *
+ * Text is still never cut mid-way, no table cell is ever shortened, and no section summarises what it
+ * declines to print. The report the reviewers saw was superficial because it summarised.
  */
 
 const MACHINE_TEXT_BEGIN = "vitral:abstract:begin";
 const MACHINE_TEXT_END = "vitral:abstract:end";
+const CARD_TYPE_TEXT_BEGIN = "vitral:cardtypes:begin";
+const CARD_TYPE_TEXT_END = "vitral:cardtypes:end";
 
 type Emitter = {
     lines: string[];
@@ -98,6 +111,26 @@ function ref(out: Emitter, code: string | null): string {
 }
 
 /**
+ * Machine-written prose, pushed verbatim — and its codes registered as if it had used `ref()`.
+ *
+ * Verbatim because the acceptor has already vouched for the whole string and re-writing a model's
+ * sentence would make it no longer the thing that was validated. But the two passes at the foot of
+ * this file both key off `out.cited`: one emits a link definition for every cited code, the other
+ * rewrites a cited code with no heading into inert `` `R7` ``. Prose that skips `ref()` is therefore
+ * in neither set, and a `[I2]` inside it survives to the file as a literal broken link — the exact
+ * shape the shortcut-reference scheme exists to prevent, and the only way one can still get out.
+ *
+ * So the codes are scanned back out and registered. The acceptor has already refused any code the
+ * payload did not contain, so this can only ever register a code the project really has; what it
+ * decides is whether that code gets a link or gets marked inert, which is the same question every
+ * other citation in the document is asked.
+ */
+function machineProse(out: Emitter, text: string): void {
+    push(out, text);
+    for (const match of text.matchAll(CODE_TOKEN)) out.cited.add(match[1]);
+}
+
+/**
  * How to read a code, in the document that uses them.
  *
  * A reader with the paper in front of them and the canvas open on another screen needs to know two
@@ -124,8 +157,14 @@ function referenceMechanismLines(): string[] {
         "Every artifact this study can name carries a short code — `A3`, `R7`, `P1`. The letter says"
         + " what kind of thing it is **and the altitude it is cited at**: `P` is a phase, so it is an"
         + " Overview claim; `A` is an activity, so it is a Threads claim; `R`, `I`, `C` and `O` are"
-        + " cards, so they are Detail claims. A code links to its entry in the index below and, where"
-        + " a canvas link is available, to the same artifact on the canvas at that altitude.",
+        + " cards, so they are Detail claims.",
+        "",
+        "A code that this document prints in full links to its entry in the index below and, where a"
+        + " canvas link is available, to the same artifact on the canvas at that altitude. A code the"
+        + " document only **names** — one listed under **Also indexed** rather than given an entry of"
+        + " its own — is shown as plain `R7` wherever it is cited, because there is nothing here to"
+        + " link it to. It is still a real artifact and the same code still resolves on the canvas;"
+        + " what it does not have is a page in this file.",
         "",
         "A code can carry a **suffix**, which asks for a different view of the same artifact. One"
         + " artifact therefore has one number and six ways of being looked at, rather than six"
@@ -145,10 +184,11 @@ function referenceMechanismLines(): string[] {
     );
     lines.push("");
     lines.push(
-        "**In this document**, each entry in the index below is followed by the further views"
+        "**In this document**, each full entry in the index below is followed by the further views"
         + " available for it, written `R1 (P / A / T / F)`. A letter appears only where there is"
         + " something to show: a card with no attached file has no `F`, and a card that belongs to no"
-        + " thread has no `P`, `A` or `T`.",
+        + " thread has no `P`, `A` or `T`. The **Also indexed** lines carry no further views, but the"
+        + " same suffixes work if the code is typed into the application.",
     );
     lines.push("");
     lines.push(
@@ -207,6 +247,27 @@ function relationSentence(out: Emitter, relation: ReportRelation): string {
     return `${ref(out, relation.sourceCode)} —${relation.label}→ ${ref(out, relation.targetCode)} (${origin}${evidence})`;
 }
 
+/**
+ * The cards a section prints, and how many it leaves to the appendix.
+ *
+ * One place, because the sentence has to be true of every section that says it and the trap is the
+ * same each time: `emphasised` is a **union** across overlapping containers — an insight can be cut
+ * from its thread and kept by the Insights sweep — so the printed set is not "the N most central" and
+ * must not claim to be. What is honest, and what a reader can act on, is the count and where the rest
+ * are.
+ */
+function emphasisSplit(cards: ReportCard[]): { shown: ReportCard[]; omitted: number } {
+    const shown = cards.filter((card) => card.emphasised);
+    return { shown, omitted: cards.length - shown.length };
+}
+
+/** Both forms are given because the noun is a phrase — "card in this thread" pluralises in the middle. */
+function omissionNote(omitted: number, singular: string, pluralForm: string): string {
+    return `_${plural(omitted, `further ${singular}`, `further ${pluralForm}`)}`
+        + ` ${omitted === 1 ? "is" : "are"} named under **Also indexed** in Appendix A rather than`
+        + " printed here._";
+}
+
 function cardRows(out: Emitter, cards: ReportCard[]): string[][] {
     return cards.map((card) => [
         ref(out, card.code),
@@ -250,16 +311,17 @@ function renderThread(out: Emitter, thread: ReportThread, depth: number): void {
         blank(out);
     }
 
-    if (thread.cards.length > 0) {
+    const { shown: threadCards, omitted: threadOmitted } = emphasisSplit(thread.cards);
+    if (threadCards.length > 0) {
         push(out, ...table(
             ["Code", "Type", "Title", "Author", "Evidence", "First seen"],
-            cardRows(out, thread.cards),
+            cardRows(out, threadCards),
         ));
         blank(out);
 
         // Descriptions in full, below the table, because a table cell must not be the place a
         // researcher's own words get squeezed.
-        const described = thread.cards.filter((card) => card.description.trim() !== "");
+        const described = threadCards.filter((card) => card.description.trim() !== "");
         if (described.length > 0) {
             for (const card of described) {
                 push(out, `${ref(out, card.code)} **${card.title}**`);
@@ -268,6 +330,10 @@ function renderThread(out: Emitter, thread: ReportThread, depth: number): void {
                 blank(out);
             }
         }
+    }
+    if (threadOmitted > 0) {
+        push(out, omissionNote(threadOmitted, "card in this thread", "cards in this thread"));
+        blank(out);
     }
 
     // Only the relations that leave. A thread's internal wiring is the table above it said twice —
@@ -292,6 +358,12 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
     );
     const threadCount = model.phases.reduce((sum, phase) => sum + phase.threads.length, 0)
         + model.looseThreads.length;
+    // Counted over exactly the set `buildAuthorshipTally` counts — relevant, non-person — so the two
+    // halves of the Contents row are talking about the same cards. A total the reader cannot
+    // reconcile with the number beside it is worse than no total at all.
+    const namedOnly = model.allCards.filter((card) => (
+        card.relevant && card.label !== "person" && !card.emphasised
+    )).length;
 
     // --- Title and front matter ------------------------------------------------------------------
     push(out, `# ${snapshot.projectTitle}`);
@@ -306,7 +378,12 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
         ["Content fingerprint", `\`${tableCell(snapshot.contentVersion)}\``],
         ["Contents", tableCell(
             `${plural(model.phases.length, "phase")} · ${plural(threadCount, "thread")} · `
-            + `${plural(authorship.cards.total, "card")} · ${plural(authorship.relations.total, "relation")}`,
+            + `${plural(authorship.cards.total, "card")} · ${plural(authorship.relations.total, "relation")}`
+            // Said here rather than only per section, because it is a fact about the whole file and a
+            // reader deciding whether to trust it as a record should meet it before anything else.
+            + (namedOnly > 0
+                ? ` (${namedOnly} of those cards are named under **Also indexed** rather than printed in full)`
+                : ""),
         )],
     ]));
     blank(out);
@@ -317,13 +394,39 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
         // Sentinel comments: invisible in every renderer (`react-markdown` skips raw HTML without
         // `rehype-raw`), and they make the machine-written block findable and removable by a script.
         push(out, `<!-- ${MACHINE_TEXT_BEGIN} model=${options.abstract.model} prompt=${options.abstract.prompt} -->`);
-        push(out, options.abstract.prose.trim());
+        machineProse(out, options.abstract.prose.trim());
         blank(out);
         push(out, `<!-- ${MACHINE_TEXT_END} -->`);
     } else {
         push(out, "_No machine-written framing was included in this export._");
     }
     blank(out);
+
+    // --- The material ------------------------------------------------------------------------------
+    //
+    // One paragraph per kind of card, before the reader meets any of them. It sits here, with the
+    // abstract, because it answers the question that comes before "what happened": what sort of
+    // material is this study made of. Bold lead-ins rather than headings on purpose — six more
+    // headings would swamp the outline, and each of them would claim a slug that the real sections
+    // further down (`## Insights`, `## Concepts`) already want.
+    //
+    // Its own sentinels, so a script can strip the machine-written text without having to know that
+    // this document now has two such blocks rather than one.
+    const cardTypeNotes = options.cardTypeNotes;
+    const notedTypes = cardTypeNotes
+        ? REPORT_CARD_TYPES.filter((type) => (cardTypeNotes.notes[type] ?? "").trim() !== "")
+        : [];
+    if (notedTypes.length > 0 && cardTypeNotes) {
+        heading(out, 2, "The material", null);
+        push(out, `<!-- ${CARD_TYPE_TEXT_BEGIN} model=${cardTypeNotes.model} prompt=${cardTypeNotes.prompt} -->`);
+        blank(out);
+        for (const type of notedTypes) {
+            machineProse(out, `**${REPORT_CARD_TYPE_HEADING[type]}** — ${cardTypeNotes.notes[type]!.trim()}`);
+            blank(out);
+        }
+        push(out, `<!-- ${CARD_TYPE_TEXT_END} -->`);
+        blank(out);
+    }
 
     // --- Overview ---------------------------------------------------------------------------------
     heading(out, 2, "Overview", null);
@@ -395,16 +498,23 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
 
     // --- Unconnected cards ------------------------------------------------------------------------
     if (model.unassignedCards.length > 0) {
+        const { shown, omitted } = emphasisSplit(model.unassignedCards);
         heading(out, 2, "Unconnected cards", null);
         push(out, "Cards that reach no activity. The canvas draws them in a band of their own; they are"
             + " listed here rather than dropped, because the fact that they are unattached is itself"
             + " part of the record.");
         blank(out);
-        push(out, ...table(
-            ["Code", "Type", "Title", "Author", "Evidence", "First seen"],
-            cardRows(out, model.unassignedCards),
-        ));
-        blank(out);
+        if (shown.length > 0) {
+            push(out, ...table(
+                ["Code", "Type", "Title", "Author", "Evidence", "First seen"],
+                cardRows(out, shown),
+            ));
+            blank(out);
+        }
+        if (omitted > 0) {
+            push(out, omissionNote(omitted, "unconnected card", "unconnected cards"));
+            blank(out);
+        }
     }
 
     // --- Relations between phases -----------------------------------------------------------------
@@ -421,8 +531,15 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
 
     // --- Requirements and their answers -----------------------------------------------------------
     heading(out, 2, "Requirements and their answers", null);
-    if (model.requirementAnswers.length === 0 && model.unansweredRequirements.length === 0) {
-        push(out, "_No requirement cards in this project._");
+    // The guard is on the *answers*, not on the requirements. The line that used to close this
+    // section — "Not yet answered by any component: ..." — was removed on request, and with it the
+    // only thing the false branch had to emit for a project that has requirements but has not
+    // attached a component to any of them. That is every project until somebody attaches one, and
+    // without this the section would be a heading with nothing under it.
+    if (model.requirementAnswers.length === 0) {
+        push(out, model.unansweredRequirements.length === 0
+            ? "_No requirement cards in this project._"
+            : "_No system component has been attached to a requirement in this project yet._");
         blank(out);
     }
     for (const answer of model.requirementAnswers) {
@@ -439,17 +556,17 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
         }
         blank(out);
     }
-    if (model.unansweredRequirements.length > 0) {
-        push(out, `Not yet answered by any component: ${model.unansweredRequirements.map((card) => `${ref(out, card.code)} ${card.title}`).join(" · ")}`);
-        blank(out);
-    }
+    // The line that used to close this section — "Not yet answered by any component: ..." — was
+    // removed on request. `model.unansweredRequirements` stays, because the abstract's payload marks
+    // each requirement `answered` and the empty-section sentence above reads it.
 
     // --- Insights and concepts --------------------------------------------------------------------
     if (model.insights.length > 0) {
+        const { shown, omitted } = emphasisSplit(model.insights);
         heading(out, 2, "Insights", null);
         push(out, "The findings, most central first, in the researcher's own words.");
         blank(out);
-        for (const card of model.insights) {
+        for (const card of shown) {
             push(out, `**${ref(out, card.code)} ${card.title}** — ${authorshipWord(card)}`);
             blank(out);
             if (card.description.trim() !== "") {
@@ -457,12 +574,20 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
                 blank(out);
             }
         }
+        if (omitted > 0) {
+            push(out, omissionNote(omitted, "insight", "insights"));
+            blank(out);
+        }
     }
 
     if (model.concepts.length > 0) {
+        const { shown, omitted } = emphasisSplit(model.concepts);
         heading(out, 2, "Concepts", null);
+        // Filtered like every other section, and this one has to be: the Description column carries a
+        // concept's words in full, so leaving it unfiltered would print the very text the
+        // `Also indexed` line promises is not in this file.
         push(out, ...table(["Code", "Concept", "Author", "Description"],
-            model.concepts
+            shown
                 .slice()
                 .sort((a, b) => a.title.localeCompare(b.title))
                 .map((card) => [
@@ -472,6 +597,10 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
                     tableCell(card.description),
                 ])));
         blank(out);
+        if (omitted > 0) {
+            push(out, omissionNote(omitted, "concept", "concepts"));
+            blank(out);
+        }
     }
 
     // --- Timeline ----------------------------------------------------------------------------------
@@ -551,14 +680,22 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
             + " above resolve to, and where a code cited in a paper can be looked up.");
         blank(out);
 
-        for (const card of model.allCards.slice().sort((a, b) => (a.code ?? "").localeCompare(b.code ?? ""))) {
-            if (card.code === null) continue;
-            if (!card.relevant) continue;
+        // The index has the document's two registers in it, and this is where the difference is
+        // visible: an entry of its own, or a line under **Also indexed**. Both are collected in the
+        // same pass over the same sorted list, so a card cannot fall between them.
+        const indexed = model.allCards
+            .slice()
+            .sort((a, b) => (a.code ?? "").localeCompare(b.code ?? ""))
+            .filter((card) => card.code !== null && card.relevant);
+        const alsoIndexed: ReportCard[] = [];
+
+        for (const card of indexed) {
             // An activity already has a heading of its own — its thread section. A second one here
             // would claim the same slug, and `headingSlug` would silently hand it `a3-1`, so half the
             // links to `A3` would land in the appendix and half in the narrative.
             if (card.label === "activity") continue;
-            heading(out, 3, card.code, card.code, `${card.label} — ${card.title}`);
+            if (!card.emphasised) { alsoIndexed.push(card); continue; }
+            heading(out, 3, card.code!, card.code, `${card.label} — ${card.title}`);
             push(out, `**${card.title}** — ${card.label}, ${authorshipWord(card)}, first seen ${formatIsoDay(card.createdAtIso)}`);
             blank(out);
             if (card.description.trim() !== "") {
@@ -574,7 +711,7 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
             // The code itself opens the card; the letters beside it open the further views of it.
             // One line rather than two, because they are one gesture with four destinations, and a
             // reader scanning the index should be able to take the whole of it in at a glance.
-            const url = options.canvasUrlForCode?.(card.code) ?? null;
+            const url = options.canvasUrlForCode?.(card.code!) ?? null;
             if (url !== null) {
                 const hasAttachment = card.attachmentIds.some((id) => (
                     snapshot.files.some((file) => file.id === id)
@@ -586,13 +723,29 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
             }
         }
 
-        // The appendix used to close with "Codes that no longer resolve" — an entry per code the
-        // document could name but not anchor, saying why. It was removed on request. The index is now
-        // exactly what the document contains: a code with no entry here is one the document does not
-        // carry, and a reader who meets it in a paper learns that from its absence.
+        // The other register. One line per card the document names but does not print, so the study's
+        // full extent is still readable off this file even where its text is not.
         //
-        // The loud-failure rule survives it, in the pass below: a code cited in the body with no
-        // heading to point at is rewritten to plain `R7` rather than left as a link that looks broken.
+        // Deliberately **not** headings. A heading per card would put the whole index back into the
+        // document's outline — the thing this section exists to stop growing — and it would claim a
+        // slug, which is how a code comes to link to a line that says nothing about it. Deliberately
+        // **no canvas link** either: the test that forbids raw uuids in the prose exempts exactly one
+        // line shape, `On the canvas: ...`, and that exemption is a contract rather than an accident.
+        // These codes still work when typed into the application, which the reference section says.
+        //
+        // The loud-failure rule does the rest: a code cited in the body with no heading to point at is
+        // rewritten to plain `R7` by the pass below, rather than left as a link that looks broken.
+        if (alsoIndexed.length > 0) {
+            heading(out, 3, "Also indexed", null);
+            push(out, "Cards this study holds that the document names but does not print in full."
+                + " Their descriptions and source quotations are in the project rather than in this"
+                + " file, and their codes resolve on the canvas exactly like the ones above.");
+            blank(out);
+            for (const card of alsoIndexed) {
+                push(out, `- \`${card.code}\` ${card.label} — ${tableCell(card.title)}`);
+            }
+            blank(out);
+        }
 
         if (snapshot.files.length > 0) {
             heading(out, 2, "Appendix B. Sources", null);

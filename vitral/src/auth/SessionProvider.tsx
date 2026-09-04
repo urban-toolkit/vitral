@@ -15,22 +15,53 @@ import { SessionContext, type Session, type SessionContextValue } from "@/auth/s
  */
 const GUEST_FLAG_KEY = "vitral.guest";
 
+/**
+ * The same fact with a shorter life.
+ *
+ * `RequireSession` enters guest mode for a reader who followed a reference link out of an exported
+ * report, and that is not a decision they made. Writing `vitral.guest` for it would mean one click in
+ * a PDF quietly skips the login screen on that machine from then on. `sessionStorage` gives it the
+ * lifetime the gesture deserves: it survives reloading the tab the link opened, and goes when the tab
+ * does. It is copied into a tab opened *from* that one, which is the behaviour a reader following a
+ * link out of the canvas would want anyway.
+ */
+const GUEST_SESSION_FLAG_KEY = "vitral.guest.session";
+
 function readGuestFlag(): boolean {
+    // Either store means guest. Separate try/catch because a browser that refuses one may still
+    // answer the other, and because both throw on *access* in a private window rather than
+    // returning null.
     try {
-        return window.localStorage.getItem(GUEST_FLAG_KEY) === "1";
+        if (window.localStorage.getItem(GUEST_FLAG_KEY) === "1") return true;
     } catch {
-        // Private windows and blocked site data throw on access rather than returning null.
+        // Fall through and ask the session store.
+    }
+    try {
+        return window.sessionStorage.getItem(GUEST_SESSION_FLAG_KEY) === "1";
+    } catch {
         return false;
     }
 }
 
-function writeGuestFlag(value: boolean): void {
+/**
+ * Setting writes exactly one store; **clearing clears both**.
+ *
+ * `signIn`, `signUp`, `signOut`, `leaveGuestMode` and an account found on mount all end guest mode
+ * outright, and a flag left behind in the other store would reinstate it on the next load.
+ */
+function writeGuestFlag(value: boolean, remember = true): void {
     try {
-        if (value) window.localStorage.setItem(GUEST_FLAG_KEY, "1");
-        else window.localStorage.removeItem(GUEST_FLAG_KEY);
+        if (!value) window.localStorage.removeItem(GUEST_FLAG_KEY);
+        else if (remember) window.localStorage.setItem(GUEST_FLAG_KEY, "1");
     } catch {
         // A guest whose browser refuses storage still gets this session; they just get asked again
         // next time. Failing the sign-in over it would be worse.
+    }
+    try {
+        if (!value) window.sessionStorage.removeItem(GUEST_SESSION_FLAG_KEY);
+        else if (!remember) window.sessionStorage.setItem(GUEST_SESSION_FLAG_KEY, "1");
+    } catch {
+        // Same trade as above.
     }
 }
 
@@ -66,12 +97,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                     setSession({ status: "user", user });
                     return;
                 }
-                setSession(readGuestFlag() ? { status: "guest" } : { status: "anonymous" });
+                // `verified`: the server answered, and the answer was nobody.
+                setSession(readGuestFlag()
+                    ? { status: "guest" }
+                    : { status: "anonymous", verified: true });
             } catch {
                 if (cancelled) return;
                 // The backend being unreachable must not lock a guest out of work that is in their
                 // own browser and needs no backend at all.
-                setSession(readGuestFlag() ? { status: "guest" } : { status: "anonymous" });
+                //
+                // `verified: false`, and it is load-bearing. This browser may still be holding a live
+                // cookie that we simply could not ask about, so anything that would *act* on being
+                // signed out has to decline here. `RequireSession`'s automatic guest mode is exactly
+                // that: it calls `logoutAccount()`, which really would delete the session row.
+                setSession(readGuestFlag()
+                    ? { status: "guest" }
+                    : { status: "anonymous", verified: false });
             }
         })();
 
@@ -101,7 +142,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             // Locally signed out even if the request failed: leaving the UI claiming a session the
             // user has asked to end is worse than a session row that expires on its own.
             writeGuestFlag(false);
-            setSession({ status: "anonymous" });
+            setSession({ status: "anonymous", verified: true });
         }
     }, [setSession]);
 
@@ -116,21 +157,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
      * which is how somebody's own published project vanished from a guest's Public projects, filed
      * under `is_owner` for an account the screen claimed not to have.
      *
+     * That reasoning applies *more* to `RequireSession`'s automatic entry than to this button, not
+     * less — it decides off `anonymous`, which is precisely the state named above as untrustworthy
+     * about cookies. Which is why the automatic path additionally refuses to act on an `anonymous`
+     * the provider could not verify: unconditional here means "whoever asked, sign the browser out
+     * first", not "any state that looks signed out may ask".
+     *
      * The request failing must not block the choice: a guest's work needs no backend at all, so the
      * flag is written either way.
      */
-    const continueAsGuest = useCallback(async () => {
+    const continueAsGuest = useCallback(async (options?: { remember?: boolean }) => {
         try {
             await logoutAccount();
         } finally {
-            writeGuestFlag(true);
+            writeGuestFlag(true, options?.remember ?? true);
             setSession({ status: "guest" });
         }
     }, [setSession]);
 
     const leaveGuestMode = useCallback(() => {
         writeGuestFlag(false);
-        setSession({ status: "anonymous" });
+        setSession({ status: "anonymous", verified: true });
     }, [setSession]);
 
     const value = useMemo<SessionContextValue>(() => ({

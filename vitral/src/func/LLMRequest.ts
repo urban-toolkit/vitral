@@ -1522,3 +1522,47 @@ export async function requestReportAbstractLLM(
     const data = await response.json();
     return String(data.output ?? "");
 }
+
+/**
+ * The report's second model call: one short paragraph per kind of card, printed together at the top.
+ *
+ * Separate from the abstract rather than folded into it, because they answer different questions and
+ * fail differently. The abstract is one claim about the study and `acceptAbstract` throws the whole
+ * paragraph away if any part of it is wrong; these are six independent claims and are refused one at a
+ * time. Keeping the prompts apart also keeps `prompt_cache_key` — which the backend buckets by prompt
+ * name — meaningful for both.
+ *
+ * The payload is wrapped in `{content}` deliberately. `/llm/chat` builds a "Structured input context"
+ * block out of every *top-level* key of the parsed body and then appends the raw body again as primary
+ * content, so an unwrapped payload crosses the wire twice; `content` is one of the three keys that
+ * block skips. `ReportAbstract` is left as it is — its prompt has always seen the doubled form, and
+ * changing what a prompt is shown is not a change to make in passing.
+ *
+ * Throws rather than returning `""`, like its sibling: the caller decides what an unavailable
+ * paragraph means, and the old report's habit of turning every failure into an empty string is how a
+ * silent placeholder came to stand in for seven sections at once.
+ */
+export async function requestReportCardTypesLLM(
+    payload: unknown,
+    llmModel?: string,
+    signal?: AbortSignal,
+): Promise<string> {
+    const response = await fetch(API_BASE_URL + "/llm/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            input: JSON.stringify({ content: JSON.stringify(payload) }),
+            prompt: "ReportCardTypes",
+            model: resolveLlmModel(llmModel),
+        }),
+        signal: withDeadline(signal, LLM_REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+        throw new Error(await readLlmErrorMessage(response));
+    }
+
+    const data = await response.json();
+    return String(data.output ?? "");
+}
+
