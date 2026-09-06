@@ -18,6 +18,7 @@
 
 **Vitral** is a framework for reproducible design studies in visual analytics. It structures the design study process as a knowledge pipeline extracting knowledge from heterogeneous study artifacts, representing it as a relational graph, and supporting reasoning across that graph at the level of individual artifacts and across the full study ecosystem.
 
+Vitral is available at **[arcade.evl.uic.edu/vitral](https://arcade.evl.uic.edu/vitral)**
 
 ---
 
@@ -93,12 +94,6 @@ docker compose --file docker-compose.yml up
 ```
 
 Frontend: [http://localhost:9898](http://localhost:9898)
-
----
-
-## Public deploy
-
-Vitral is available at **[arcade.evl.uic.edu/vitral](https://arcade.evl.uic.edu/vitral)**
 
 ---
 
