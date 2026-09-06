@@ -224,7 +224,18 @@ export type LocatorStatus =
 export type LocatorViewpoint = {
     level: CanvasLevel;
     focus: CanvasFocusPath;
-    /** The node to centre and ring, when there is one. Files and timeline entities have none. */
+    /**
+     * The node to centre and ring, when there is one. Files and timeline entities have none.
+     *
+     * Not always a *stored* node, and this is the one field where that is true: a phase has no
+     * entity of its own, so what it centres is the summary glyph `buildAbstractedGraph` invents for
+     * the frame — a `vz:c:` id, valid only at the level and focus this viewpoint also carries. The
+     * "never a `vz:` id" rule lives on `targetId` below, where it still holds absolutely; that is
+     * what keeps the citation renumber-proof while this stays free to name what is drawn.
+     *
+     * So a caller asking "is this a card" must ask `isLocatableId`, not `!== null`. The `file` lens
+     * does, because a glyph holds no attachment.
+     */
     nodeId: string | null;
 };
 
@@ -678,9 +689,21 @@ export function resolveLocatorReference(
         return { ok: false, reference: parsed.reference, reason: describeLocatorStatus(target) };
     }
 
-    const clusterId = target.viewpoint.focus.clusterId;
-    // A phase's own focus names the cluster but no activity; its anchor is the activity to fall back
-    // on, and it is the one thing about a phase code that is guaranteed stable.
+    /*
+     * The phase and the activity the lenses cut down to, each with the fallback a phase code needs.
+     *
+     * A phase's own viewpoint carries neither in its focus — it is `NO_CANVAS_FOCUS`, because that is
+     * the only shape under which the canvas still draws the glyph the code names — so both are read
+     * off the parts of the entry that do hold them. `nodeId` *is* the cluster for a phase, and
+     * `targetId` is its anchor activity, which is the one thing about a phase code that is guaranteed
+     * stable (`LOCATOR_PHASE_CONTRACT`).
+     *
+     * Without these, every lens on a phase code degrades quietly rather than loudly: `P1P` would
+     * refuse with "P1 belongs to no phase", and `P1T`/`P1A` would build a focus with a null cluster —
+     * an activity opened with the phase around it left unstated.
+     */
+    const clusterId = target.viewpoint.focus.clusterId
+        ?? (target.locator.kind === "phase" ? target.viewpoint.nodeId : null);
     const activityId = target.viewpoint.focus.activityId
         ?? (target.locator.kind === "phase" ? target.targetId : null);
 
@@ -707,7 +730,17 @@ export function resolveLocatorReference(
             return resolved(target.viewpoint, null);
 
         case "file":
-            if (target.viewpoint.nodeId === null) {
+            /*
+             * `isLocatableId`, not a null check.
+             *
+             * The test has always been "does this viewpoint land on a real card", and until phases
+             * carried a `nodeId` the two questions had the same answer. They no longer do: a phase
+             * centres its summary glyph, whose id is invented by the lens, and a glyph holds no
+             * attachment because it is not a stored node at all. Asking `null` here would let `P1F`
+             * through to the canvas, which would look the card up, find nothing, and report the phase
+             * as a card with no file attached — a true sentence about the wrong thing.
+             */
+            if (!isLocatableId(target.viewpoint.nodeId)) {
                 return refuse(`${parsed.reference} — ${target.code} is not a card, so nothing is attached to it.`);
             }
             return resolved(target.viewpoint, target.viewpoint.nodeId);
@@ -931,7 +964,33 @@ export function buildLocatorIndex(input: {
             title: cluster.label,
             describedAs: "phase",
             level: LOCATOR_KIND_LEVEL.phase,
-            viewpoint: { level: 1, focus: { clusterId: cluster.id, activityId: null }, nodeId: null },
+            /*
+             * The phase's own summary glyph, centred — not the phase opened out into its threads.
+             *
+             * Both halves of this are load-bearing, and the pair of them is one statement:
+             * **`P1` names the phase, so what a reader must end up looking at is the phase.**
+             *
+             * `nodeId` was `null`, and `null` is the one value the reveal cannot act on: step 6 of
+             * `handleGoToLocatorCode` is `if (viewpoint.nodeId) requestNodeFocus(...)`, so a phase
+             * reference reset every filter and then moved no camera. `locatorTex` already names that
+             * failure mode exactly — it drops `file`, `stage` and `event` from `CITABLE_KINDS` on the
+             * grounds that a `nodeId: null` viewpoint "would reset every filter, move nothing, and
+             * look broken" — and `phase` sat in that set carrying the same `null`. So every `\vitralref{P1}`
+             * in a paper was a link that visibly did nothing, which is the failure a definitions file
+             * exists to prevent.
+             *
+             * The focus had to go with it, and not merely because opening a phase is not what citing
+             * one means. `buildAbstractedGraph` keeps a phase glyph only while *every* activity in the
+             * cluster is still abstract — focusing the cluster is precisely what raises those
+             * activities to level 2 — so a focused phase has no glyph, and `cluster.id` would name a
+             * node the canvas never drew. The camera would then wait out its deadline and report the
+             * target as unshowable. Uncut focus is what makes the glyph exist to be centred.
+             *
+             * The opened-out reading is not lost, it is spelled: that viewpoint is exactly what the
+             * `thread` lens builds, so what `P1` used to do is now what `P1T` does — under the letter
+             * that means "the threads in it".
+             */
+            viewpoint: { level: 1, focus: NO_CANVAS_FOCUS, nodeId: cluster.id },
             parentCode: null,
             status: "live",
             supersededBy: null,

@@ -408,6 +408,54 @@ function entriesOf(tex: string): Array<{ reference: string; url: string; node: s
     }
 }
 
+// --- 13b. Every entry gives the camera somewhere to go -----------------------------------------
+//
+// `CITABLE_KINDS` exists to keep out kinds whose viewpoint carries `nodeId: null`, because the
+// reveal's camera step is `if (viewpoint.nodeId) requestNodeFocus(...)` — so such a link resets the
+// reader's filters, moves nothing, and looks broken. That rule was enforced by hand, as membership
+// of a set, and `phase` sat in the set carrying exactly the `null` the comment beside it indicted:
+// every `\vitralref{P1}` ever published was a dead link that looked alive.
+//
+// Asserted over the emitted entries instead of over the set, because the set is what was wrong. The
+// node also has to be one the canvas actually draws — a synthetic glyph id is legitimate here (a
+// phase has no stored node) as long as something answers to it.
+{
+    const { index, file } = texFor();
+    const entries = entriesOf(file.tex);
+
+    let allNavigate = true;
+    const stranded: string[] = [];
+    for (const entry of entries) {
+        const resolution = resolveLocatorReference(index, entry.reference);
+        if (!resolution.ok || resolution.viewpoint.nodeId === null) {
+            allNavigate = false;
+            stranded.push(entry.reference);
+        }
+    }
+    check(`every emitted reference moves the camera${stranded.length > 0 ? ` (stranded: ${stranded.join(", ")})` : ""}`,
+        allNavigate);
+
+    // The phase specifically, since it is the one this guard was written for.
+    const phase = entries.find((entry) => entry.reference === "P1");
+    check("the bare phase reference is emitted", phase !== undefined);
+    if (phase) {
+        const resolution = resolveLocatorReference(index, "P1");
+        check("and lands on the phase's own summary glyph",
+            resolution.ok && String(resolution.viewpoint.nodeId ?? "").startsWith("vz:c:"));
+        check("without opening the phase into its threads",
+            resolution.ok && resolution.viewpoint.focus.clusterId === null);
+    }
+
+    // `P1P` is "the phase P1 belongs to", which is P1. The destination dedup has to collapse it, or
+    // the file would offer an author two spellings for one place and imply they differ.
+    check("the phase's own overview lens is not offered as a second destination",
+        entries.every((entry) => entry.reference !== "P1P"));
+
+    // A glyph holds no attachment, so neither file lens may be advertised for a phase.
+    check("and no file lens is advertised for a phase",
+        entries.every((entry) => entry.reference !== "P1F"));
+}
+
 // --- 14. The canvas line names the deployment, not the exporter's host --------------------------
 {
     const { file } = texFor();

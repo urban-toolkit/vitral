@@ -390,9 +390,42 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   nothing about membership — that omission **is** the contract. Phase codes are also only meaningful
   over the **unfiltered live graph at the latest playhead**, because `canvasClusters` is otherwise
   computed only at level 1 and only over `filteredNodes`.
-- **Never reference a `vz:` id.** Cluster ids are `vz:c:<earliest member>` and are re-decided on every
-  segmentation; a synthetic id in a URL is a bug that only reproduces on the author's machine. Files
-  key on `document_files.sha256`, not `file.id`, which import and duplication rewrite.
+- **A phase reference centres the phase's summary glyph; it does not open the phase.** `P1` is a
+  citation *of* the phase, so the reader has to end up looking at it, and the viewpoint is
+  `{ level: 1, focus: NO_CANVAS_FOCUS, nodeId: cluster.id }`. Both halves are one statement and
+  neither survives alone:
+  - `nodeId` was `null`, and `null` is the one value the reveal cannot act on — step 6 is
+    `if (viewpoint.nodeId) requestNodeFocus(...)`. So a phase link reset the reader's playhead, every
+    label chip and both provenance chips, then aimed no camera; the two whole-graph refits that
+    `nodeFocusPendingRef` exists to stand down ran instead, which on arrival is indistinguishable from
+    nothing happening. `locatorTex.ts` had already written this rule down — it keeps `file`, `stage`
+    and `event` out of `CITABLE_KINDS` because a `nodeId: null` viewpoint "would reset every filter,
+    move nothing, and look broken" — while leaving `phase` in the set carrying that same `null`, so
+    every `\vitralref{P1}` ever exported was a dead link that looked alive.
+  - The focus has to stay uncut for a reason that is not merely semantic: `buildAbstractedGraph` keeps
+    a phase glyph only while **every** activity in the cluster is still abstract, and focusing the
+    cluster is exactly what raises them to level 2. So the obvious spelling — focus the cluster *and*
+    centre its glyph — deletes the node it aims at, and the camera waits out its deadline and reports
+    the phase as unshowable.
+  - The opened-out reading is not lost, it is spelled: that viewpoint is what the `thread` lens
+    builds, so what `P1` used to do is what `P1T` does. Two consequences fall out and are pinned:
+    `P1P` is now an alias of `P1` (the phase of P1 is P1), which `locatorTex`'s destination dedupe
+    drops — the `.tex` header says so rather than leaving an author to guess — and `P1F` must refuse,
+    which is why the `file` lens guards with `isLocatableId` rather than `!== null`.
+  - `locators.test.ts` §17 is the guard the whole class was missing: it feeds each resolved viewpoint
+    into the real `buildAbstractedGraph` and asserts the canvas draws the node it names. Every check
+    before it read the index and stopped there, so a viewpoint could be internally consistent, resolve
+    cleanly, and centre nothing. `locatorTex.test.ts` §13b asserts the same over every emitted entry,
+    because `CITABLE_KINDS` — a hand-maintained set — is what was wrong.
+- **Never *persist or print* a `vz:` id.** Cluster ids are `vz:c:<earliest member>` and are re-decided
+  on every segmentation; a synthetic id in a URL is a bug that only reproduces on the author's
+  machine. Files key on `document_files.sha256`, not `file.id`, which import and duplication rewrite.
+  The rule is about `LocatorTarget.targetId` — what a citation is *made of*, and what `codeToUrl`
+  writes as `n` — where it holds absolutely; `isLocatableId` is the guard. It is deliberately not a
+  rule about `LocatorViewpoint.nodeId`, which names what the canvas should *draw the camera to* in a
+  frame it also specifies, and which for a phase is necessarily the glyph the lens invents, since a
+  phase has no stored node. A phase citation is therefore made of its anchor activity and aimed at its
+  glyph, and only the first half ever leaves the machine.
 - **The report does not call `buildAbstractedGraph`.** It returns React Flow nodes with positions and
   synthetic ids, and its `cardCount`/`labelCounts` describe the *folded remainder* — they exclude the
   promoted cards by design, so a report using them would undercount every phase by four cards.

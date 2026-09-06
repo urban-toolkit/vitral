@@ -54,6 +54,13 @@ import {
  * step never runs for them and nothing opens the timeline dock either. A `\vitralref{S1}` would
  * reset every filter, move nothing, and look broken. The useful spelling for a card's source
  * document is `R7F`, which this file does emit — it is a lens on a card, and the card has a node.
+ *
+ * `phase` was in this set carrying that same `null` — the rule was written down here and the kind it
+ * indicted was left in the list, so every `\vitralref{P1}` ever published was a link that reset the
+ * reader's filters and then sat still. A phase now centres its own summary glyph (`locators.ts`), so
+ * it belongs here on the same terms as the rest. `locatorTex.test.ts` asserts the rule over every
+ * entry this file emits rather than over the membership of this set, because the set is the thing
+ * that was wrong.
  */
 const CITABLE_KINDS: ReadonlySet<LocatorKind> = new Set<LocatorKind>([
     "phase",
@@ -266,6 +273,10 @@ export function buildLocatorTex(index: LocatorIndex, options: LocatorTexOptions)
         "A suffix is defined only where the canvas accepts it, so \\vitralref{R7T} on a card",
         "belonging to no thread warns at compile time instead of printing a dead link. So",
         "does a code that no longer resolves; those print inert, with the reason.",
+        "",
+        "A suffix is also left undefined where it would name a place another spelling already",
+        "names: P1P is the phase P1 belongs to, which is P1, and A1A is A1's own root activity.",
+        "Those warn too, and the shorter spelling is the one to write.",
         ...(setAside.length > 0
             ? ["", `Set aside — still citable, but marked not relevant: ${setAside.join(", ")}`]
             : []),

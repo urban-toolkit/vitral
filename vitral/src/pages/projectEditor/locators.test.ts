@@ -40,7 +40,12 @@ import {
 import { buildActivityClusters } from "@/pages/projectEditor/canvasClusters";
 import { buildActivityTreeMembership } from "@/pages/projectEditor/activityOrbitLayout";
 import { buildSalienceIndex } from "@/pages/projectEditor/canvasSalience";
-import { SYNTHETIC_ID_PREFIX } from "@/pages/projectEditor/canvasAbstraction";
+import {
+    SYNTHETIC_ID_PREFIX,
+    buildAbstractedGraph,
+    type CanvasFocusPath,
+    type CanvasLevel,
+} from "@/pages/projectEditor/canvasAbstraction";
 
 let failures = 0;
 let checks = 0;
@@ -333,7 +338,10 @@ function indexOf(fixture: Fixture, files: Array<{ sha256: string; name: string; 
     let noSynthetic = true;
     for (const entry of index.entries) {
         if (entry.targetId.startsWith(SYNTHETIC_ID_PREFIX)) noSynthetic = false;
-        if (String(entry.viewpoint.focus.clusterId ?? "").startsWith("vz:c:") === false
+        // The one place a lens-invented id is *correct*: a phase is not a stored node, so the thing
+        // to centre for it is the glyph the lens draws. `targetId` above still has to be the real
+        // anchor activity, which is what keeps the citation renumber-proof.
+        if (String(entry.viewpoint.nodeId ?? "").startsWith("vz:c:") === false
             && entry.locator.kind === "phase") noSynthetic = false;
     }
     check("no locator points at a lens-invented id", noSynthetic);
@@ -349,9 +357,16 @@ function indexOf(fixture: Fixture, files: Array<{ sha256: string; name: string; 
 {
     const index = indexOf(studyFixture());
 
+    // A phase code is a citation *of the phase*, so it lands on the phase's summary glyph rather
+    // than opening the phase up. The focus stays uncut in both components — not a detail: a focused
+    // cluster raises its activities to level 2, and `buildAbstractedGraph` only keeps a phase glyph
+    // while every activity in it is still abstract, so cutting the focus would delete the very node
+    // `nodeId` names.
     const phase = index.byCode.get("P1");
     equal("a phase opens itself and nothing deeper", phase?.viewpoint.focus.activityId, null);
-    check("a phase focuses a cluster", (phase?.viewpoint.focus.clusterId ?? "").startsWith("vz:c:"));
+    equal("a phase opens no cluster either", phase?.viewpoint.focus.clusterId, null);
+    check("a phase centres its own summary glyph",
+        String(phase?.viewpoint.nodeId ?? "").startsWith("vz:c:"));
     equal("a phase resolves at Overview", phase?.viewpoint.level, 1);
     check("a phase points at a persisted anchor node", isLocatableId(phase?.targetId));
 
@@ -758,6 +773,64 @@ function indexOf(fixture: Fixture, files: Array<{ sha256: string; name: string; 
     check("an activity has a thread lens", ownThread.ok);
     if (ownThread.ok) equal("which is itself", ownThread.viewpoint.nodeId, "a2");
 
+    /*
+     * A phase code, and the lenses on one.
+     *
+     * The bare code is the interesting case and the one that used to be broken: `P1` centres the
+     * phase's own glyph with the focus uncut, so a reader following a citation to a phase arrives
+     * looking *at* the phase. Opening it into its threads is still reachable — it is what `P1T`
+     * means — but it is no longer what citing a phase does.
+     *
+     * The rest are here because a phase's focus carries neither cluster nor activity any more, so
+     * every lens that needs one now reaches for a fallback, and a fallback that quietly stops working
+     * would show up as a refusal a reader cannot act on.
+     */
+    const bare = resolveLocatorReference(index, "P1");
+    check("a phase reference resolves", bare.ok);
+    if (bare.ok) {
+        check("centring the phase's own glyph",
+            String(bare.viewpoint.nodeId ?? "").startsWith("vz:c:"));
+        equal("with nothing opened", bare.viewpoint.focus.clusterId, null);
+        equal("and nothing opened deeper", bare.viewpoint.focus.activityId, null);
+        equal("at Overview", bare.viewpoint.level, 1);
+        equal("asking for no file", bare.openAttachmentOf, null);
+    }
+
+    // `P1P` is "the phase P1 belongs to", which is P1 — an alias, not a second destination. It has to
+    // agree with the bare code exactly, or `locatorTex` would emit two spellings for one place.
+    const phaseOfPhase = resolveLocatorReference(index, "P1P");
+    check("the overview lens still answers for a phase", phaseOfPhase.ok);
+    if (phaseOfPhase.ok && bare.ok) {
+        equal("landing where the bare code does", phaseOfPhase.viewpoint.nodeId, bare.viewpoint.nodeId);
+    }
+
+    // What `P1` used to do, now spelled as what it is.
+    const phaseThreads = resolveLocatorReference(index, "P1T");
+    check("the thread lens opens the phase", phaseThreads.ok);
+    if (phaseThreads.ok && bare.ok) {
+        equal("cutting the focus to the cluster", phaseThreads.viewpoint.focus.clusterId,
+            bare.viewpoint.nodeId);
+        equal("but no deeper", phaseThreads.viewpoint.focus.activityId, null);
+        equal("and centring the anchor activity", phaseThreads.viewpoint.nodeId,
+            index.byCode.get("P1")?.targetId);
+    }
+
+    // The activity lens still reaches the anchor, and still carries the phase around it.
+    const phaseActivity = resolveLocatorReference(index, "P1A");
+    check("the activity lens answers for a phase", phaseActivity.ok);
+    if (phaseActivity.ok && bare.ok) {
+        equal("naming the phase it sits in", phaseActivity.viewpoint.focus.clusterId,
+            bare.viewpoint.nodeId);
+        equal("and opening the anchor activity", phaseActivity.viewpoint.focus.activityId,
+            index.byCode.get("P1")?.targetId);
+    }
+
+    // A glyph is not a stored node, so it holds no attachment. The refusal has to be about the phase
+    // not being a card — not about a card that happens to have no file.
+    const phaseFile = resolveLocatorReference(index, "P1F");
+    check("a phase has no file of its own", !phaseFile.ok);
+    if (!phaseFile.ok) check("and says it is not a card", phaseFile.reason.includes("not a card"));
+
     // A blueprint component belongs to no thread by design (`LOCATOR_KIND_LEVEL`), so the lenses that
     // need one refuse rather than inventing an owner.
     const componentThread = resolveLocatorReference(index, "B1T");
@@ -906,6 +979,72 @@ function indexOf(fixture: Fixture, files: Array<{ sha256: string; name: string; 
     const drifted = resolveLocatorReference(index, "R1", concept.targetId);
     check("a card reference still follows its id", drifted.ok);
     if (drifted.ok) equal("and still reports the renumbering", drifted.renumberedFrom, "R1");
+}
+
+// --- 17. A viewpoint names a node the canvas actually draws ------------------------------------
+//
+// The one property the rest of this file cannot see. Every check above reads the index and stops
+// there, so a viewpoint can be internally consistent, resolve cleanly, and still name nothing: the
+// reveal hands `nodeId` to `requestNodeFocus`, which searches the *drawn* nodes, waits out its
+// deadline, and reports the target as unshowable. Two modules have to agree and neither test
+// crossed the seam.
+//
+// It is a real failure and not a hypothetical one. A phase glyph exists only while every activity in
+// its cluster is still abstract — focusing the cluster is exactly what raises them — so the obvious
+// spelling of "go to phase P1", focus the cluster *and* centre its glyph, deletes the node it aims
+// at. That is why a phase's viewpoint leaves the focus uncut.
+{
+    const fixture = studyFixture();
+    const live = fixture.nodes.filter((node) => {
+        const deletedAt = (node.data as Record<string, unknown>).deletedAt;
+        return typeof deletedAt !== "string" || deletedAt.trim() === "";
+    });
+    const membership = buildActivityTreeMembership(live, fixture.edges);
+    const salience = buildSalienceIndex(live, fixture.edges, membership);
+    const clusters = buildActivityClusters({
+        activities: live.filter((node) => (node.data as Record<string, unknown>).label === "activity"),
+        edges: fixture.edges,
+        membership,
+        score: salience.score,
+    });
+    const index = indexOf(fixture);
+
+    const drawnAt = (level: CanvasLevel, focus: CanvasFocusPath) => new Set(
+        buildAbstractedGraph({
+            nodes: live,
+            edges: fixture.edges,
+            level,
+            focus,
+            membership,
+            clusters,
+            score: salience.score,
+        }).nodes.map((node) => node.id),
+    );
+
+    // Every navigating reference the file emits, checked against the canvas it would produce.
+    let allDrawn = true;
+    const missing: string[] = [];
+    for (const entry of index.entries) {
+        for (const suffix of ["", "P", "A", "T"]) {
+            const resolution = resolveLocatorReference(index, `${entry.code}${suffix}`);
+            if (!resolution.ok || resolution.viewpoint.nodeId === null) continue;
+            if (drawnAt(resolution.viewpoint.level, resolution.viewpoint.focus)
+                .has(resolution.viewpoint.nodeId)) continue;
+            allDrawn = false;
+            missing.push(`${entry.code}${suffix}`);
+        }
+    }
+    check(`every viewpoint centres a node the canvas draws${missing.length > 0 ? ` (missing: ${missing.join(", ")})` : ""}`,
+        allDrawn);
+
+    // Stated on its own, because it is the specific thing that was broken and the specific reason
+    // the focus has to stay uncut.
+    const phase = index.byCode.get("P1")!;
+    const glyphId = phase.viewpoint.nodeId!;
+    check("a phase's glyph is drawn where its viewpoint puts the canvas",
+        drawnAt(phase.viewpoint.level, phase.viewpoint.focus).has(glyphId));
+    check("and is gone the moment that phase is opened",
+        !drawnAt(1, { clusterId: glyphId, activityId: null }).has(glyphId));
 }
 
 console.log(`ok    ${checks - failures}/${checks} checks pass`);
