@@ -98,7 +98,7 @@ Frontend: [http://localhost:9898](http://localhost:9898)
 
 ## Public deploy
 
-A hosted instance is available at **[arcade.evl.uic.edu/vitral](https://arcade.evl.uic.edu/vitral)** — no installation required.
+Vitral is available at **[arcade.evl.uic.edu/vitral](https://arcade.evl.uic.edu/vitral)**
 
 ---
 
