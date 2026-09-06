@@ -187,6 +187,7 @@ import { SystemScreenshotPanel } from "@/pages/projectEditor/SystemScreenshotPan
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faDiagramProject } from "@fortawesome/free-solid-svg-icons";
 import { BlueprintTray } from "@/pages/projectEditor/BlueprintTray";
+import { resolveLatestReportScreenshot } from "@/pages/projectEditor/reportScreenshot";
 import trayStyles from "@/pages/projectEditor/BlueprintTray.module.css";
 
 const SYSTEM_PAPER_CARD_LABELS = new Set<cardLabel>(["requirement"]);
@@ -1543,6 +1544,50 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
     }, [dispatch, rememberDeletedKnowledgeEventFromNode, resolveActionTimestamp]);
 
+    /**
+     * Soft delete, for edges, in the one place both surfaces can reach.
+     *
+     * Removing a relation is `deletedAt` on it rather than a removal from the list (contract 4): it
+     * stops being drawn, the timeline still knows it was once asserted, and reconnecting the same
+     * pair afterwards works because every duplicate check reads `isEdgeActive`.
+     *
+     * The canvas has always done this from `handleEdgesChange`. The **tray** needs the same call,
+     * and that is not a nicety: a `feeds into` relation between two blueprint components is drawn
+     * only there — `canvasBlueprintEdges` deliberately keeps component-to-component wiring off the
+     * canvas, because it describes the system rather than the study — so with no edge handler in the
+     * tray the wiring could be created and then never removed on any surface at all.
+     *
+     * `edgesRef` rather than the closure, for the reason written above it: a handler held by a
+     * memoised child can be older than the edge it is being asked to delete.
+     */
+    const softDeleteEdges = useCallback((edgeIds: readonly string[]) => {
+        if (interactionLocked) return;
+
+        // Resolved once, so a batch is stamped as one research act rather than scattered across the
+        // timeline by however long the loop took. Lazily only because there is nothing to stamp until
+        // a live edge is found -- `resolveActionTimestamp` is pure, so calling it early would be
+        // wasted rather than wrong.
+        let deletedAt: string | null = null;
+
+        for (const edgeId of edgeIds) {
+            if (!edgeId) continue;
+            const edge = edgesRef.current.find((candidate) => candidate.id === edgeId);
+            if (!edge) continue;
+
+            const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
+            if (toTimestampMs(edgeData.deletedAt) !== null) continue;
+
+            if (deletedAt === null) deletedAt = resolveActionTimestamp();
+            dispatch(updateEdge({
+                ...edge,
+                data: {
+                    ...edgeData,
+                    deletedAt,
+                },
+            }));
+        }
+    }, [dispatch, interactionLocked, resolveActionTimestamp]);
+
     useEffect(() => {
         if (status !== "ready") {
             previousNodesRef.current = nodes;
@@ -1639,26 +1684,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         }
 
         if (removeChanges.length === 0) return;
-        const deletedAt = resolveActionTimestamp();
-        for (const change of removeChanges) {
-            const edgeId = typeof change.id === "string" ? change.id : "";
-            if (!edgeId) continue;
-            const edge = edges.find((candidate) => candidate.id === edgeId);
-            if (!edge) continue;
-
-            const edgeData = (edge.data as Record<string, unknown> | undefined) ?? {};
-            const existingDeletedAt = toTimestampMs(edgeData.deletedAt);
-            if (existingDeletedAt !== null) continue;
-
-            dispatch(updateEdge({
-                ...edge,
-                data: {
-                    ...edgeData,
-                    deletedAt,
-                },
-            }));
-        }
-    }, [dispatch, edges, interactionLocked, resolveActionTimestamp]);
+        softDeleteEdges(removeChanges.map((change) => (typeof change.id === "string" ? change.id : "")));
+    }, [dispatch, interactionLocked, softDeleteEdges]);
 
     /**
      * React Flow's veto on a delete gesture, and the single place the connection rule is enforced.
@@ -3676,7 +3703,13 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                     conversation: conversationPayload,
                     scopeNodeIds,
                     limit: Math.max(1, Math.min(CANVAS_CHAT_MAX_RETRIEVAL_LIMIT, scopeNodeIds.length || 60)),
-                    minScore: 0.3,
+                    // A cosine floor, and 0.3 was set far too high for it. `text-embedding-3` puts a
+                    // genuinely on-topic card against a short question in the 0.2-0.4 band routinely,
+                    // so the old value silently discarded most of what retrieval had found and the
+                    // assistant answered from whatever survived. Recall is what this needs: the
+                    // reply model is shown the ranking and can say which of it is actually relevant,
+                    // which a similarity threshold cannot.
+                    minScore: 0.15,
                     at: playbackAt ?? undefined,
                 });
                 if (requestId !== chatRequestIdRef.current) return;
@@ -3815,6 +3848,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 };
             });
 
+            // The one screenshot the document carries, chosen and shrunk before the pure generator
+            // ever sees it. `resolveLatestReportScreenshot` is where the "latest that actually has an
+            // image" rule and the size ceiling both live; it never throws, so a screenshot that
+            // cannot be re-encoded costs the figure and nothing else.
+            const latestScreenshot = await resolveLatestReportScreenshot(systemScreenshotMarkers);
+
             const snapshot: ReportSnapshot = {
                 generatedAtIso,
                 projectId,
@@ -3864,13 +3903,15 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                         // Carried, because a finished subtrack narrated as live is a small lie.
                         inactive: subtrack.inactive === true,
                     })),
-                    // Instants only. A marker's image is a multi-megabyte data URL, and inlining one is
-                    // what made the old export unreadable by every other markdown tool.
+                    // Instants only. Inlining *every* marker's image at full size is what made the
+                    // old export unreadable by every other markdown tool; exactly one, re-encoded
+                    // down, rides in `latestScreenshot` below.
                     screenshotMarkers: systemScreenshotMarkers.map((marker) => ({
                         id: marker.id,
                         occurredAtIso: toIsoDateString(marker.occurredAt),
                         zoneCount: Array.isArray(marker.zones) ? marker.zones.length : 0,
                     })),
+                    latestScreenshot,
                     llmModel: llmModel ?? null,
                 },
                 files: reportFiles,
@@ -4912,6 +4953,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 selectedRequirementCards={selectedRequirementCards}
                 resolveActionTimestamp={resolveActionTimestamp}
                 onDeleteNodes={onDeleteNodes}
+                onDeleteEdges={softDeleteEdges}
             />
 
             {!trayOpen ? (

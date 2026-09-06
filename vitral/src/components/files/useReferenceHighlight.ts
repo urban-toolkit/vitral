@@ -23,18 +23,73 @@ const HIGHLIGHT_NAME = "vitral-reference";
 /** react-pdf renders each page's text layer asynchronously, so the text may not be there yet. */
 const RETRY_DELAYS_MS = [0, 120, 400, 900, 1800];
 
+/**
+ * ...and then keep watching, because that schedule is not long enough for a PDF.
+ *
+ * Every page of a PDF is mounted at once and each builds its text layer on its own timer, so in a
+ * document of any size the page holding the passage can still be empty when the last retry fires.
+ * Rather than make everyone wait longer, watch the subtree and try again when text actually
+ * arrives. Bounded, so a document that simply does not contain the quote stops costing anything.
+ */
+const OBSERVE_TIMEOUT_MS = 20_000;
+/**
+ * A text layer lands as a burst of hundreds of spans, and every retry walks the whole subtree, so
+ * the coalesce window is what keeps this from turning one page render into a hundred full traversals.
+ */
+const OBSERVE_COALESCE_MS = 250;
+
+/**
+ * Elements that end a line of rendered text.
+ *
+ * Tag names rather than `getComputedStyle`, which would be a layout read per element on a subtree
+ * that can hold thousands of them. The list only has to be right about the elements these four
+ * renderers actually emit.
+ */
+const LINE_BREAKING_TAGS: ReadonlySet<string> = new Set([
+    "BR", "P", "DIV", "SECTION", "ARTICLE", "MAIN", "ASIDE", "HEADER", "FOOTER", "NAV",
+    "H1", "H2", "H3", "H4", "H5", "H6",
+    "UL", "OL", "LI", "DL", "DT", "DD",
+    "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH", "CAPTION",
+    "PRE", "BLOCKQUOTE", "HR", "FIGURE", "FIGCAPTION",
+]);
+
 type TextIndexEntry = { node: Text; start: number };
 
+/**
+ * The rendered text under `root`, and an index from offsets in it back to the text nodes.
+ *
+ * **A block boundary counts as whitespace.** Walking text nodes alone concatenates straight across
+ * every element that ends a line: `<p>one</p><p>two</p>` reads as `onetwo`, and a PDF is the worst
+ * case of it, because pdf.js ends each line with a bare `<br>` that contributes no text node at all.
+ * Every quote longer than one line would then match nothing -- which is most of them, and it would
+ * have made turning the text layer on (`preview/PdfView.tsx`) look like it had not worked.
+ *
+ * The separator goes into `text` **without an entry of its own**, so the offsets still map to real
+ * nodes. `normalizeForMatch` folds it into the surrounding whitespace, and a match can never begin
+ * or end on whitespace -- the needle is trimmed and normalized before it is searched for -- so no
+ * offset this hook resolves ever lands in the gap.
+ */
 function collectText(root: HTMLElement): { text: string; entries: TextIndexEntry[] } {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
     const entries: TextIndexEntry[] = [];
     let text = "";
+    let pendingBreak = false;
 
     let current = walker.nextNode();
     while (current) {
+        if (current.nodeType === Node.ELEMENT_NODE) {
+            if (LINE_BREAKING_TAGS.has((current as Element).tagName)) pendingBreak = true;
+            current = walker.nextNode();
+            continue;
+        }
+
         const node = current as Text;
         const value = node.nodeValue ?? "";
         if (value.length > 0) {
+            // Never leading: a separator before the first character would only be trimmed away, and
+            // it would push every offset one past where the caller expects it.
+            if (pendingBreak && text.length > 0) text += "\n";
+            pendingBreak = false;
             entries.push({ node, start: text.length });
             text += value;
         }
@@ -96,6 +151,15 @@ export function useReferenceHighlight(
 
         let cancelled = false;
         const timers: number[] = [];
+        let observer: MutationObserver | null = null;
+
+        /** Stop looking, whether because the passage was found or because the effect is tearing down. */
+        const stop = () => {
+            cancelled = true;
+            observer?.disconnect();
+            observer = null;
+            for (const timer of timers) window.clearTimeout(timer);
+        };
 
         const attempt = () => {
             if (cancelled) return false;
@@ -133,15 +197,33 @@ export function useReferenceHighlight(
         for (const delay of RETRY_DELAYS_MS) {
             timers.push(window.setTimeout(() => {
                 if (cancelled) return;
-                if (attempt()) {
-                    cancelled = true;
-                }
+                if (attempt()) stop();
             }, delay));
         }
 
+        // And past the end of that schedule, react to the text arriving rather than guessing when.
+        if (typeof MutationObserver !== "undefined") {
+            let scheduled = false;
+            observer = new MutationObserver(() => {
+                if (cancelled || scheduled) return;
+                scheduled = true;
+                timers.push(window.setTimeout(() => {
+                    scheduled = false;
+                    if (cancelled) return;
+                    if (attempt()) stop();
+                }, OBSERVE_COALESCE_MS));
+            });
+            // `childList` only: a text layer arrives as new nodes, never as edits to existing ones,
+            // so watching `characterData` would only multiply callbacks during the same burst.
+            observer.observe(root, { childList: true, subtree: true });
+            timers.push(window.setTimeout(() => {
+                observer?.disconnect();
+                observer = null;
+            }, OBSERVE_TIMEOUT_MS));
+        }
+
         return () => {
-            cancelled = true;
-            for (const timer of timers) window.clearTimeout(timer);
+            stop();
             clearHighlight();
         };
     }, [containerRef, reference, contentKey]);

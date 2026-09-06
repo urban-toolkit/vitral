@@ -388,6 +388,35 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
     ]));
     blank(out);
 
+    // --- The system, as it last stood -------------------------------------------------------------
+    //
+    // Above the abstract, and with no heading of its own.
+    //
+    // A design study report is about a thing that was built, and the abstract is the first place
+    // that thing is described in words. A reader who has seen it first reads those words about
+    // something; a reader who has not is being asked to hold a description of an interface they have
+    // never laid eyes on. So the picture comes first, in the one position where it is unavoidable
+    // and still not in the way.
+    //
+    // No heading, because a heading here would claim an outline slot and a slug between the metadata
+    // table and `## Abstract`, and this is a figure rather than a section. The caption carries the
+    // date instead, which is the only thing about it a reader has to be told.
+    const latestScreenshot = snapshot.timeline.latestScreenshot;
+    if (latestScreenshot) {
+        // `formatIsoDay` answers an em dash for an instant it cannot parse, and "The system as it
+        // stood on —" is worse than not naming a day at all. A marker whose timestamp is unreadable
+        // is still a picture of the system.
+        const day = formatIsoDay(latestScreenshot.occurredAtIso);
+        const caption = day === "—" ? "The system as it last stood" : `The system as it stood on ${day}`;
+        blank(out);
+        // The alt text is the caption's sentence rather than "screenshot": it is what a reader
+        // without the image gets, and "screenshot" tells them nothing they could not infer.
+        push(out, `![${caption}](${latestScreenshot.imageDataUrl})`);
+        blank(out);
+        push(out, `_${caption}._`);
+        blank(out);
+    }
+
     // --- Abstract ---------------------------------------------------------------------------------
     heading(out, 2, "Abstract", null);
     if (options.abstract) {
@@ -635,9 +664,14 @@ export function renderReportMarkdown(model: ReportModel, options: ReportOptions)
         blank(out);
     }
     if (snapshot.timeline.screenshotMarkers.length > 0) {
+        // The sentence has to know about the figure at the top, or it contradicts it. One image is
+        // carried now; the rest of the set still is not, and a reader counting seven dates against
+        // one picture deserves to be told which of the two the document holds.
         push(out, `${plural(snapshot.timeline.screenshotMarkers.length, "system screenshot")} recorded, on `
             + `${snapshot.timeline.screenshotMarkers.map((marker) => formatIsoDay(marker.occurredAtIso)).join(", ")}. `
-            + "The images themselves are not embedded here.");
+            + (snapshot.timeline.latestScreenshot
+                ? "The most recent image is reproduced above the abstract; the earlier ones are not embedded here."
+                : "The images themselves are not embedded here."));
         blank(out);
     }
 

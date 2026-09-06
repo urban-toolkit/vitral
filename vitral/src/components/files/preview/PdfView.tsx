@@ -13,6 +13,24 @@ import classes from "../FilePreview.module.css";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
+/**
+ * The text layer is on, and it is not decoration.
+ *
+ * A page is drawn to a canvas, so with `renderTextLayer={false}` a PDF contributes **no text to the
+ * DOM at all** — and finding the passage a card was extracted from (`useReferenceHighlight`) works
+ * by walking the rendered text. Opening a card's source document therefore did nothing visible for
+ * every PDF, silently, while the same click worked on markdown, code and notebooks.
+ *
+ * It costs nothing visually: pdf.js paints the layer over the canvas with `color: transparent`
+ * (`TextLayer.css`, imported above), so the glyphs the reader sees are still the canvas's. What it
+ * buys besides the reference jump is text selection and browser find, which a PDF viewer should
+ * have had anyway.
+ *
+ * The annotation layer stays off: links and form widgets are not what any of this needs, and it is
+ * the more expensive of the two.
+ */
+const RENDER_TEXT_LAYER = true;
+
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 
 export const PDF_ZOOM_MIN = 0.6;
@@ -50,7 +68,7 @@ export default function PdfView({
                             <Page
                                 pageNumber={i + 1}
                                 width={pageWidth}
-                                renderTextLayer={false}
+                                renderTextLayer={RENDER_TEXT_LAYER}
                                 renderAnnotationLayer={false}
                             />
                         </div>

@@ -25,6 +25,25 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 - Deleting an edge is soft-delete (`deletedAt`), preserving history.
 - Reconnecting same blueprint component relation must work after deletion.
 - Duplicate-edge checks must ignore soft-deleted edges.
+- **The tray is the only surface that can delete a `feeds into` relation, so it has to be able to.**
+  `canvasBlueprintEdges` keeps component-to-component wiring off the canvas on purpose — it describes
+  the system, not the study — and the tray's `<ReactFlow>` had `edges` as a controlled prop with no
+  `onEdgesChange`. React Flow computes changes and drops them when that handler is absent, including
+  the `select` that has to land before a delete key means anything, so the relation could not even be
+  selected. A relation was creatable on one surface and removable on none.
+  - The tray now keeps `localEdges`/`edgesSyncedFrom` beside `localNodes`, for the same reason the
+    node twin exists: `useDocumentSync` hashes `flow.edges` wholesale, so dispatching a `select`
+    change would write a document revision on every edge click.
+  - A `remove` change routes to the page's `softDeleteEdges`, which is the same call
+    `handleEdgesChange` makes on the canvas — one implementation, so the two surfaces cannot come to
+    disagree about what a deleted relation is. It reads `edgesRef`, never the closure.
+  - No `onBeforeDelete` on the tray: `requiresConnection` answers `false` for anything whose
+    `node.type` is not `"card"`, which is every node in the tray, so the canvas's veto would evaluate
+    a rule that cannot fire. Widening the connection rule past cards makes the tray the one surface
+    that stops honouring it.
+  - `RelationEdge` draws an invisible 20px `react-flow__edge-interaction` path under its stroke, the
+    way React Flow's own `BaseEdge` does. `.react-flow__edge` is `pointer-events: visibleStroke`, so
+    before this the hit target for selecting *any* relation, on either surface, was the 2px line.
 
 5. Blueprint parent box resizing
 - Blueprint parent/group boxes must resize both horizontally and vertically as child content is deleted or changed.
@@ -125,7 +144,10 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
 - It matches against the **rendered** text, not the stored source, because that is the only representation the four renderers share -- markdown has been through `react-markdown`, a PDF's text layer breaks lines wherever the page did, a notebook is reflowed. The rendered subtree is flattened into one string with an index back to its text nodes, so a quote spanning six PDF line spans is found exactly like one inside a paragraph.
 - Matching is forgiving about **whitespace and case only**, and then degrades by *shortening the needle* rather than loosening it: a prefix of the quote is still the quote, whereas a fuzzy match of the whole quote could land anywhere. `MIN_PREFIX_WORDS` / `MIN_PREFIX_CHARS` stop a prefix getting short enough to hit a coincidence -- scrolling the reader to the wrong place is worse than not scrolling them.
 - The mark is painted with the **CSS Custom Highlight API** over a `Range` (`::highlight(vitral-reference)` in `styles/global.css`). The alternative -- wrapping the match in an element -- has to split text nodes inside a subtree React owns and will re-render away. Where the API is missing the passage is still scrolled to, untinted; losing the tint is much smaller than losing the position.
-- The retry schedule is load-bearing: a lazily imported renderer and each PDF page's text layer arrive after mount, so the search runs on a short decaying schedule and stops at the first hit.
+- The retry schedule is load-bearing: a lazily imported renderer and each PDF page's text layer arrive after mount, so the search runs on a short decaying schedule and stops at the first hit. Past the end of that schedule a `MutationObserver` (`childList`+`subtree`, coalesced, with a hard timeout) retries when text actually arrives — every page of a PDF is mounted at once and each builds its text layer on its own timer, so a document of any size can still be filling in after the last retry.
+- **A PDF only has rendered text because `renderTextLayer` is on** (`preview/PdfView.tsx`). A page is drawn to a canvas, so with the text layer off a PDF contributes no text nodes at all and the search above could never match anything — opening a card's source did nothing visible for every PDF, silently, while markdown, code and notebooks worked. It costs nothing visually (pdf.js paints the layer with `color: transparent`) and it is also what gives a PDF text selection and browser find. A future performance pass must not switch it back off without moving the reference search to another source of text.
+- **A block boundary counts as whitespace when the rendered text is flattened.** pdf.js ends each line with a bare `<br>` that contributes no text node, and `<p>one</p><p>two</p>` is the same problem in markdown — walking text nodes alone glues the lines together and a quote longer than one line matches nothing. The separator is emitted without an index entry of its own, which is safe because a match can never begin or end on whitespace: the needle is trimmed and normalized before it is searched for. Inline elements (`STRONG`, `EM`, `A`, `CODE`, `SPAN`) must stay out of the block set or a word split across two of them would be broken in half. `npm run test:reference-location` pins both directions.
+- **The ceiling on how well a PDF can match.** For PDF and DOCX the stored `reference` is quoted from **docling markdown** (`LLMRequest.ts` routes both through `docLingFileParse`), while the haystack is pdf.js's text layer. Docling de-hyphenates across lines, reorders columns into reading order and drops running heads; pdf.js does none of it. So a PDF hit is often `exact: false` and covers a run rather than the whole quote. That is the expected outcome on a two-column paper, not a matcher bug.
 - `npm run test:reference-location` covers the ways a stored excerpt legitimately differs from what is on screen, and the floor that refuses a coincidence.
 - The docked panel's node sits at `z-index: 2000`, which has to stay **above React Flow's own selection band** (`SELECTED_NODE_Z` is 1000 in `@xyflow/system`, with `elevateNodesOnSelect` on by default) **and above any legacy `node.zIndex`** -- see contract 16, which is why the layout now strips those. At the previous 60 the panel cleared idle cards and then vanished behind the next card the user clicked; raising it alone was still not enough while stale 2000/3000 values sat on the activity cards.
 - `datetime-local` carries no timezone, and a date-TIME string without one parses as local time — the same convention `toLocalDateTimeInputValue` writes, so the value round-trips. Minute precision means sub-minute components of an existing timestamp are dropped on edit.
@@ -659,6 +681,97 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   is the same rule the `*.test.ts` files state for staying inside `src`.
 
 
+32. The report opens on a picture of the system
+- **One screenshot, above the abstract, and no heading of its own.** The abstract is the first place
+  the built thing is described in words, and a reader who has not seen it is being asked to hold a
+  description of an interface they have never laid eyes on. A heading here would claim an outline slot
+  and a slug between the metadata table and `## Abstract`; this is a figure, so the date rides in an
+  italic caption and in the alt text instead.
+- **"The last one" means the latest `occurredAt` among markers that actually hold an image**, not the
+  latest marker. The panel creates a marker and *then* opens the file picker, so an image-less marker
+  is an ordinary state. Ties go to the later marker, the same rule `mostRecentSystemScreenshotMarker`
+  uses. That is a tie-break, not a promise that the export shows what the panel shows: the panel
+  renders `playbackAwareSystemScreenshotMarker`, scoped to the playhead, while an export describes the
+  whole project and deliberately is not.
+  - This is **not** the same as "most recently uploaded". `occurredAt` is stamped from the playhead
+    and an upload targets the playhead-scoped marker, so uploading while scrubbed back attaches the
+    newest image to an older instant. `SystemScreenshotMarker` carries no upload timestamp; giving it
+    one is the only way to read the request literally.
+- **The size ceiling is what makes this safe to do at all.** Inlining full-size markers is what made
+  an earlier export unreadable by every markdown tool but this one, and that embargo is still right
+  about the *bytes* even though it is now wrong about the count. `pages/projectEditor/reportScreenshot.ts`
+  caps the long edge at 1600px and the data URL at 2M characters, passes an image already inside both
+  through untouched, falls back from PNG to JPEG only against the byte ceiling, and never throws — a
+  screenshot that will not decode costs the figure and nothing else.
+  - It lives **outside** `report/` because everything in that folder is a pure function of a
+    `ReportSnapshot`. Picking a marker needs the store and re-encoding needs a canvas.
+  - One asterisk on determinism: `canvas.toDataURL` is encoder-dependent, so two exports from
+    *different machines* can differ inside the figure. Two exports from the same machine cannot, which
+    is what the byte-identical check actually tests, and the pass-through keeps even that rare.
+- **The Timeline section has to agree with the figure.** It counts markers and lists their dates, and
+  it said "The images themselves are not embedded here." — false the moment one is. It now says the
+  most recent is reproduced above the abstract and the earlier ones are not. `REPORT_FORMAT_VERSION`
+  is 3 for the same reason.
+- Pinned in `npm run test:report`: the figure is the document's **only** `![`, it sits below the
+  header table and above `## Abstract`, `## The material` still sits between the abstract and the
+  overview, and with no screenshot there is no figure, no caption and no placeholder.
+
+33. The canvas assistant reads questions, not incantations
+- The complaint was that it needed the exact keywords and an explicit card type. Four causes, all in
+  the retrieval half — the reply model was never the problem.
+- **Every non-vector path is lexically ranked.** `/query` calls `rankNodesBySemanticQuery` on all four
+  of its non-vector exits; chat called it only when reading history, so on every other one it handed
+  the reply model `structuredFilteredNodes` in **document order**, truncated — an arbitrary forty
+  cards. Naming a card type "worked" because the structured filter was then the only thing steering
+  retrieval at all. `docs/functional-contract.md` already required that chat "still return ranked
+  results" without vectors; half of it was true.
+- **The vector ranking and the keyword ranking are unioned, never swapped.** The vector query can only
+  return a card that has an embedding row and clears `minScore`, so it silently omits a card younger
+  than the embedding debounce, every card in an imported project, and everything at all when a
+  question is phrased unlike anything on the canvas. `unionRankedNodeIds` keeps the vector answer in
+  front and lets the keyword one fill in behind it.
+- **A ranking is not a match, and the difference is load-bearing.** `matchedNodeIds` is two things at
+  once: the order the reply model reads, and the set the canvas is filtered to. `rankNodesBySemanticQuery`
+  scores *every* card and returns them all in order — right for the exits with no embeddings, where the
+  alternative is answering "nothing" — so unioning it into the filter pads the filter out to the whole
+  canvas and `minScore` stops bounding anything. The two are therefore separated: `contextRankedIds`
+  takes the full ranking (a card missing from the prompt cannot be discussed at all), and
+  `matchedNodeIds` takes `lexicalFilterIds`, which keeps only cards clearing `MIN_LEXICAL_FILTER_SCORE`
+  — one title token, one label match or one synonym match. The tokenizer has no stopword list, and that
+  floor is what stands in for one.
+- **Structured filters relax rather than veto.** `titleContains`/`descriptionContains` are literal
+  substring gates applied *before* retrieval, so one content word the parser lifted out of a question
+  deleted every semantically relevant card that did not spell it. `applyStructuredFiltersWithFallback`
+  walks a ladder — full filters, then without the text guesses, then labels only, then nothing — and
+  keeps the narrowest rung that still matches something. Text guesses go first because a kind and a
+  date are things a user says out loud; "the title contains this word" is the parser's own idea. The
+  two text keys are also matched against title **or** description now, rather than each against its
+  own field. **A stated label is never relaxed away**: "show me the person cards" on a project with no
+  person cards is answered "there are none", not by widening to the whole canvas and letting the reply
+  model describe activities under a question about people. Guesses relax; statements do not, so the
+  terminal empty rung only exists when nothing user-stated is left to surrender. The relaxation is safe to widen back to `candidateNodes` because
+  `extractCardNodesForSearch` now drops soft-deleted cards itself, rather than relying on the caller's
+  `scopeNodeIds` to have done it.
+- **The seven labels have a synonym table** (`canonicalCardLabel`), consulted in three places: the
+  parse prompt lists the mapping so the model gets it right unaided, the sanitizer repairs what it
+  returns, and `rankNodesBySemanticQuery` scores a card whose label the query named in the user's own
+  words. Before it, the only synonym anywhere was `task -> requirement`.
+- **Both models are told what the cards mean** (`CARD_LABEL_GLOSSARY`), and the responder is also given
+  the project's title and goal, a tally of the whole canvas by kind, and the **relations** among the
+  cards it was shown. The context block was previously a flat list of id/label/title/description with
+  no edges at all, which is why structural questions — what came out of the interviews, what a finding
+  rests on — had no material to be answered from.
+- `applyFilter` takes the model's answer when it gave one. It used to be OR'd with a keyword regex, so
+  the regex could only ever turn filtering *on*: "summarise the insights you found" contains "found",
+  and the canvas was filtered behind a question that asked for prose.
+- The chat panel's blank state offers four ordinary questions rather than one schema-shaped example.
+  A single "List out all requirements including their titles and descriptions." taught exactly the
+  lesson this contract is about undoing.
+- `npm run test:node-search` (in `backend/`, plain `tsx` — the backend's first test script) pins the
+  label vocabulary and the relaxation ladder. The de-pluralisation is the part that needed it: a
+  single `-es` rule reads correct and turns "notes" into "not" and "images" into "imag", so the words
+  most likely to be typed were the ones that silently failed.
+
 ## Key Areas and Files
 
 - Timeline defaults / playhead / context menu cutoff:
@@ -832,6 +945,13 @@ These are concrete spots where the contracts are currently enforced. If behavior
 - `backend/src/routes/state.ts`: optional `VI_EXPORT_MAX_TOTAL_FILE_BYTES` can return `413` early for oversize exports.
 - `backend/src/routes/state.ts`: export file hydration uses bounded parallelism (`VI_EXPORT_FILE_FETCH_CONCURRENCY`, default `4`, capped at `16`) while preserving file order.
 - `backend/src/routes/state.ts`: duplication uses chunked multi-row inserts for files/revisions to reduce DB round-trips.
+- **Duplication reads the revision log the way the export does, and for the same reasons.** It used to `SELECT ... state` as `jsonb`, which makes `pg` parse every historical snapshot into a live JS object graph, `remapStateFileReferences` rebuild every one of them and `JSON.stringify` reprint it — three passes over every byte of a project's history, in Node. It now selects `state::text` and does the file-id remap as one regular-expression pass over the string, exactly as the export was changed to do (contract 7's `jsonb::text` lesson below). Paging is **keyset**, not `OFFSET`, so Postgres does not re-sort the whole log once per batch, and the cursor is carried as `captured_at::text` — `pg` hands a `timestamptz` back as a millisecond `Date`, and feeding that in rounds the cursor *down*, so rows sharing that millisecond would repeat forever. `assertCursorAdvanced` makes that a failed duplication rather than an endless one, and it is handed the **whole** cursor (`captured_at|version|id`), because revisions written inside one transaction share `now()` to the microsecond and a page that is entirely one timestamp is still advancing.
+  - The text copy is aliased `cursor_captured_at`, never back onto `captured_at`, for the reason the export names it that way: a bare name in `ORDER BY` resolves against the **output** columns first, so the alias would silently turn the sort lexicographic while the keyset predicate kept comparing the real `timestamptz` — an ordering that disagrees with the cursor skips rows between pages. `document_files` has the same shape and the same `created_at_text` split.
+  - The text remap rewrites a source file id **wherever it appears**, where the object walk only visited `attachmentIds`/`origin`/`fileId` under `flow.nodes`. That is deliberate: a file id is a `crypto.randomUUID()` that exists for no other purpose, so an occurrence anywhere in the state is a reference to that file, and one left unrewritten dangles at the source document's row. Only ids present in the map are touched.
+  - The same `::text` treatment applies to `document_files.created_at`, which is that table's ordering key: binding a millisecond `Date` back into `timestamptz` was rounding away the microseconds `now()` rows carry, so a copy could order two same-millisecond uploads differently from the original.
+  - **What this does not make faster.** The write half is untouched: the copy still inserts the same jsonb, which Postgres must TOAST and WAL-log, inside one transaction on one pooled connection. `stageMs` in the completion log now breaks the time down per stage (`files`, `revisions`, `githubEvents`, `embeddings`, `commit`) so the next round is measured rather than guessed. If the write half dominates, only storing fewer full revisions moves it — note that the browser-local duplicate already drops history entirely (`localProjectStore.ts`), so the two paths do not agree today.
+- `backend/src/routes/state.ts`: `POST /state/:id/duplicate` coalesces an in-flight job **per duplicator**, not per source document. Matching on `sourceDocId` alone handed a second account the first account's job; that job then succeeded under the *first* account's `ownerId`, so the second user polled to success and found no copy. Duplicating somebody else's published project is the intended flow (contract 9's neighbourhood), so two people doing it at once is a real path.
+- `vitral/src/pages/ProjectsPage.tsx`: the duplicate poll looks once at ~150ms and ramps to 1500ms. It used to sleep a flat second *before* every poll including the first, and `POST` always returns `queued`, so a full second was the floor on every duplication no matter how small the project.
 - `vitral/nginx.conf`: `/vitral/api/` uses extended proxy timeouts and disables buffering for long-running responses.
 - `backend/Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`: `NODE_OPTIONS=--max-old-space-size=2048` increases backend heap budget.
 - `backend/src/utils/projectVi.ts`: the `.vi` container is **brotli**, and the byte after the `VITRALVI` magic says which codec (`1` = gzip, `2` = brotli). Version-1 files still import; only writing changed. Tunable via `VI_BROTLI_QUALITY` (default `4`) and `VI_BROTLI_WINDOW_LOG` (default `24`).

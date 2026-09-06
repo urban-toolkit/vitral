@@ -2,6 +2,7 @@
   <img src="logo.png" alt="Vitral" height="180"/>
   <br/><br/>
   <p>
+    <a href="https://arcade.evl.uic.edu/vitral"><strong>Live demo</strong></a> ·
     <a href="https://urbantk.org/vitral/"><strong>Website</strong></a> ·
     <a href="https://github.com/urban-toolkit/vitral/issues"><strong>Issues</strong></a>
   </p>
@@ -97,7 +98,7 @@ Frontend: [http://localhost:9898](http://localhost:9898)
 
 ## Public deploy
 
-> 🕒 Coming soon, stay tuned!
+A hosted instance is available at **[arcade.evl.uic.edu/vitral](https://arcade.evl.uic.edu/vitral)** — no installation required.
 
 ---
 

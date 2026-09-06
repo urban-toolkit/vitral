@@ -134,6 +134,33 @@ check("empty inputs are safe", [
     check("map points back at the original characters", "  Hello   World  "[map[6]], "W");
 }
 
+// --- why the DOM walk has to insert a separator at a line break -----------------------------------
+//
+// `useReferenceHighlight.collectText` cannot be tested here: it walks a real DOM. What CAN be pinned
+// is the reason it inserts whitespace at every block boundary, and this is that reason, as a pure
+// pair of strings.
+//
+// A PDF's text layer is one span per line with a bare `<br>` between them, contributing no text node
+// at all. Flatten it by concatenating text nodes and the lines glue together; flatten it with a
+// separator and the quote is exactly there. It is the whole difference between a PDF reference that
+// navigates and one that silently does not.
+
+{
+    const columnLines = [
+        "the first and last two seconds of each",
+        "recording contain erroneous values and",
+        "were discarded before any aggregation",
+    ];
+    const quote = columnLines.join(" ");
+
+    check("lines glued together match nothing",
+        locateReference(columnLines.join(""), quote), null);
+
+    const separated = locateReference(columnLines.join("\n"), quote);
+    check("and with a separator the whole quote is found exactly",
+        [separated !== null, separated?.exact ?? false], [true, true]);
+}
+
 check("the prefix floor is stated in the module", [
     REFERENCE_MATCH_TUNING.MIN_PREFIX_WORDS >= 4,
     REFERENCE_MATCH_TUNING.MIN_PREFIX_CHARS >= 16,

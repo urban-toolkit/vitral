@@ -8,7 +8,9 @@ import type { ReportCardTypeNotes } from "./reportAbstract";
  * What the report generator is given, and what it hands back.
  *
  * The shapes are deliberately narrow and already normalised: ISO strings rather than `Date`, plain
- * arrays rather than the timeline's `{byId, allIds}`, and no base64. Everything that needs a clock, a
+ * arrays rather than the timeline's `{byId, allIds}`, and exactly one piece of base64 — the single
+ * screenshot printed above the abstract, which a one-file export can carry no other way, and which
+ * the caller has already bounded in size. Everything that needs a clock, a
  * store, a network or `Date` parsing of a locale string happens at the call site in
  * `ProjectEditorPage`; the generator below it is a pure function of this object, which is what lets
  * the whole document be tested with no React and no server.
@@ -43,8 +45,29 @@ export type ReportTimelineInput = {
         filePaths: string[];
         inactive: boolean;
     }>;
-    /** Screenshot markers, by instant only — the image itself never enters the document. */
+    /**
+     * Screenshot markers, by instant only.
+     *
+     * Still instants: this is the list the "system screenshots recorded" sentence counts, and every
+     * marker's image inlined at full size is what once made the export unreadable by every markdown
+     * tool other than this app. Exactly one image is carried, separately, below.
+     */
     screenshotMarkers: Array<{ id: string; occurredAtIso: string; zoneCount: number }>;
+    /**
+     * The most recent screenshot that actually has an image, printed above the abstract.
+     *
+     * One image, not the set, and that is the whole design: a report opens on what the system looked
+     * like when the study stopped, which is the one picture a reader needs before any prose, while
+     * the cost stays bounded by a single figure rather than growing with the study.
+     *
+     * `imageDataUrl` is a `data:` URL because a `.md` export is one file with nothing beside it —
+     * there is no asset directory to point at. The caller is responsible for handing over something
+     * of a sane size (`ProjectEditorPage` re-encodes it down); this module inlines whatever it gets.
+     *
+     * `null` when the project has no screenshot, or has markers that were never given an image — and
+     * then nothing at all is emitted, not a placeholder.
+     */
+    latestScreenshot: { occurredAtIso: string; imageDataUrl: string } | null;
     /** Which model the project is configured to use, for the machine-involvement statement. */
     llmModel: string | null;
 };
@@ -136,5 +159,6 @@ export type ProjectReport = {
  *
  * 2: the card-type notes at the top, and the two registers in Appendix A — full entries for the
  * emphasised cards, `Also indexed` for the rest.
+ * 3: the latest system screenshot, inline above the abstract.
  */
-export const REPORT_FORMAT_VERSION = 2;
+export const REPORT_FORMAT_VERSION = 3;

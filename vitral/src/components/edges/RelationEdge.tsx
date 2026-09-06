@@ -24,6 +24,9 @@ const ITERATION_OF_LABEL = "iteration of";
 const RELATION_EDGE_STROKES = ["#90b1e9", "#dda788", "#cccccc"] as const;
 
 /** The "AI" pill drawn beside a model-derived relation's label. */
+/** React Flow's own default, and the width of the invisible hit path drawn under every relation. */
+const EDGE_INTERACTION_WIDTH = 20;
+
 const AI_BADGE_WIDTH = 24;
 const AI_BADGE_GAP = 4;
 const AI_BADGE_HEIGHT = 16;
@@ -193,6 +196,29 @@ function RelationEdgeImpl(props: EdgeProps) {
         style={{ stroke: visual.stroke, strokeWidth }}
         markerStart={showSourceArrow ? `url(#${relationMarkerId(visual.stroke)})` : undefined}
         markerEnd={markerEnd}
+      />
+      {/*
+        * An invisible path, twenty pixels wide, purely so the edge can be clicked.
+        *
+        * React Flow's own `BaseEdge` draws one of these and this edge, drawing its `<path>` by hand,
+        * never had one. `.react-flow__edge` is `pointer-events: visibleStroke`, which hit-tests the
+        * stroke *area* and ignores what colour it is painted — so a zero-opacity 20px stroke is a
+        * 20px target. Without it the target was literally the two-pixel line, and selecting a
+        * relation is how a relation gets deleted. That was half of "I was not able to delete edges":
+        * the wiring was missing on one surface (see `BlueprintTray`) and on both surfaces there was
+        * nothing bigger than a hairline to aim at.
+        *
+        * Safe to widen: the edge layer is painted below `.react-flow__nodes`, so a fatter edge can
+        * never take a click from a card. Attributes copied from `BaseEdge` rather than approximated
+        * — `strokeOpacity: 0` and `fill: none`, after the visible path, at React Flow's own default
+        * `interactionWidth`.
+        */}
+      <path
+        className="react-flow__edge-interaction"
+        d={edgePath}
+        fill="none"
+        strokeOpacity={0}
+        strokeWidth={EDGE_INTERACTION_WIDTH}
       />
       {displayLabel ? (
         <>

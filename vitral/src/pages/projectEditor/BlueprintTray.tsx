@@ -2,9 +2,11 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ReactFlow,
     ReactFlowProvider,
+    applyEdgeChanges,
     applyNodeChanges,
     useReactFlow,
     type Connection,
+    type EdgeChange,
     type EdgeTypes,
     type NodeChange,
     type NodeProps,
@@ -112,16 +114,27 @@ type BlueprintTrayProps = {
      * surfaces to disagree about what a deleted component is.
      */
     onDeleteNodes: (nodeIds: readonly string[]) => void;
+    /**
+     * The same soft delete, for relations.
+     *
+     * The tray is the **only** surface that draws component-to-component wiring: `feeds into` says
+     * how the system is put together rather than what the study found, so `canvasBlueprintEdges`
+     * keeps it off the canvas. Without this the tray could create a relation it had no way to
+     * remove, and no other surface could remove it either.
+     */
+    onDeleteEdges: (edgeIds: readonly string[]) => void;
 };
 
 function TrayCanvas({
     interactionLocked,
     resolveActionTimestamp,
     onDeleteNodes,
+    onDeleteEdges,
 }: {
     interactionLocked: boolean;
     resolveActionTimestamp: () => string;
     onDeleteNodes: (nodeIds: readonly string[]) => void;
+    onDeleteEdges: (edgeIds: readonly string[]) => void;
 }) {
     const dispatch = useDispatch<AppDispatch>();
     const { screenToFlowPosition, getViewport } = useReactFlow();
@@ -164,6 +177,16 @@ function TrayCanvas({
         setLocalNodes(trayNodes);
     }
 
+    // Edges get the same treatment, for selection rather than for dragging: React Flow writes
+    // `selected` onto the edge object, and a controlled list that never takes it back cannot be
+    // selected at all.
+    const [localEdges, setLocalEdges] = useState<edgeType[]>(trayEdges);
+    const [edgesSyncedFrom, setEdgesSyncedFrom] = useState<edgeType[]>(trayEdges);
+    if (edgesSyncedFrom !== trayEdges) {
+        setEdgesSyncedFrom(trayEdges);
+        setLocalEdges(trayEdges);
+    }
+
     /**
      * Local for everything except a removal, which has to reach the document.
      *
@@ -187,6 +210,32 @@ function TrayCanvas({
         if (removedIds.length > 0 && !interactionLocked) onDeleteNodes(removedIds);
         if (rest.length > 0) setLocalNodes((previous) => applyNodeChanges(rest, previous));
     }, [interactionLocked, onDeleteNodes]);
+
+    /**
+     * The same arrangement for edges, and the reason the tray has one at all.
+     *
+     * React Flow is *controlled* here: with `edges` passed as a prop and no `onEdgesChange`, every
+     * change it computes is dropped on the floor — including the `select` that has to land before
+     * the delete key means anything. So an edge in the tray could not even be selected, let alone
+     * removed, and `feeds into` is drawn on no other surface. Clicking a relation and pressing
+     * Backspace/Delete did nothing at all, silently, which is what was reported.
+     *
+     * Selection is applied locally and a removal is routed to the page's soft delete, exactly as
+     * `handleNodesChange` does and for the same reason: `localEdges` is reset from the store
+     * whenever `trayEdges` changes identity, so a delete applied only here would come back on the
+     * next store write.
+     */
+    const handleEdgesChange = useCallback((changes: EdgeChange<edgeType>[]) => {
+        const removedIds: string[] = [];
+        const rest: EdgeChange<edgeType>[] = [];
+        for (const change of changes) {
+            if (change.type === "remove") removedIds.push(change.id);
+            else rest.push(change);
+        }
+
+        if (removedIds.length > 0 && !interactionLocked) onDeleteEdges(removedIds);
+        if (rest.length > 0) setLocalEdges((previous) => applyEdgeChanges(rest, previous));
+    }, [interactionLocked, onDeleteEdges]);
 
     const handleDeleteComponent = useCallback((nodeId: string) => {
         if (interactionLocked) return;
@@ -410,12 +459,21 @@ function TrayCanvas({
         <div className={styles.canvasWrap} onDragOver={handleDragOver} onDrop={handleDrop}>
             <ReactFlow<nodeType, edgeType>
                 nodes={localNodes}
-                edges={trayEdges}
+                edges={localEdges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 nodesDraggable={!interactionLocked}
                 nodesConnectable={!interactionLocked}
                 onNodesChange={handleNodesChange}
+                onEdgesChange={handleEdgesChange}
+                /*
+                 * No `onBeforeDelete` here, unlike the canvas, and that is a decision rather than an
+                 * omission. The canvas's veto exists to stop a card being cut loose from the graph
+                 * (`graphInvariants.planEdgeRemovals`), and `requiresConnection` answers `false` for
+                 * anything whose `node.type` is not `"card"` — every node in this tray. Adding the
+                 * guard here would evaluate a rule that cannot fire. If the connection rule is ever
+                 * widened past cards, this is the surface that will quietly stop honouring it.
+                 */
                 onNodeDragStop={handleNodeDragStop}
                 onConnect={handleConnect}
                 minZoom={0.05}
@@ -492,6 +550,7 @@ export const BlueprintTray = memo(function BlueprintTray({
     selectedRequirementCards,
     resolveActionTimestamp,
     onDeleteNodes,
+    onDeleteEdges,
 }: BlueprintTrayProps) {
     const [size, setSize] = useState({ width: DEFAULT_WIDTH_PX, height: DEFAULT_HEIGHT_PX });
     const resizeRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -580,6 +639,7 @@ export const BlueprintTray = memo(function BlueprintTray({
                             interactionLocked={interactionLocked}
                             resolveActionTimestamp={resolveActionTimestamp}
                             onDeleteNodes={onDeleteNodes}
+                            onDeleteEdges={onDeleteEdges}
                         />
                     </ReactFlowProvider>
                 </div>

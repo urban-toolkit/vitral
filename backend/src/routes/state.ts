@@ -18,7 +18,17 @@ import {
     extractEmbeddableCards,
     normalizeEmbeddingLabel,
 } from "../services/nodeEmbeddings.js";
-import { applyStructuredFilters, extractCardNodesForSearch, parseNaturalLanguageNodeQuery, type CardNodeForSearch } from "../services/nodeSearch.js";
+import {
+    applyStructuredFilters,
+    applyStructuredFiltersWithFallback,
+    canonicalCardLabel,
+    CARD_LABEL_GLOSSARY,
+    isCardLabel,
+    extractCardNodesForSearch,
+    extractCardRelationsForSearch,
+    parseNaturalLanguageNodeQuery,
+    type CardNodeForSearch,
+} from "../services/nodeSearch.js";
 import {
     diffProvenanceSnapshots,
     extractProvenanceSnapshot,
@@ -101,6 +111,15 @@ const SIMILARITY_HEAL_LIMIT = 512;
 const TEXT_EXTENSIONS = new Set([
     "txt", "json", "ipynb", "csv", "py", "js", "ts", "tsx", "jsx", "html", "css", "md",
 ]);
+/**
+ * How many relations between the retrieved cards the responder is shown.
+ *
+ * A bound rather than a budget: the context set is already capped, so this only bites on a densely
+ * connected neighbourhood, where the first few dozen relations say as much about the shape as all of
+ * them would.
+ */
+const CANVAS_CHAT_CONTEXT_RELATION_LIMIT = 60;
+
 const DUPLICATE_FILES_INSERT_CHUNK_SIZE = 250;
 const DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE = 50;
 const DEFAULT_VI_EXPORT_FILE_FETCH_CONCURRENCY = 4;
@@ -258,16 +277,46 @@ function truncateText(value: string, maxLength: number): string {
     return `${value.slice(0, maxLength)}...`;
 }
 
-function rankNodesBySemanticQuery(
+type ScoredNode = { id: string; score: number };
+
+/**
+ * Keyword scoring, with the scores kept.
+ *
+ * Two callers want two different things out of this and they cannot share one return type: a
+ * *ranking* that is never empty (the exits with no embeddings) and a *match* that can be
+ * (`lexicalFilterIds`, feeding the canvas filter). Scoring once and letting each take what it needs
+ * is the only way those two stay consistent with each other.
+ */
+function rankNodesBySemanticQueryScored(
     nodes: CardNodeForSearch[],
     semanticQuery: string,
     limit: number,
-): string[] {
+): ScoredNode[] {
     const normalized = semanticQuery.trim().toLowerCase();
-    if (!normalized) return nodes.slice(0, limit).map((node) => node.id);
+    // No query is no evidence: every card ranks equally, and none of them *matched*.
+    if (!normalized) return nodes.slice(0, limit).map((node) => ({ id: node.id, score: 0 }));
     const tokens = (normalized.match(/[a-z0-9]{2,}/g) ?? [])
         .filter((token, index, array) => array.indexOf(token) === index);
-    if (tokens.length === 0) return nodes.slice(0, limit).map((node) => node.id);
+    if (tokens.length === 0) return nodes.slice(0, limit).map((node) => ({ id: node.id, score: 0 }));
+
+    /*
+     * The card kinds the query names, in the ontology's own words.
+     *
+     * This ranker only ever compares literal substrings, so "what did we learn" scored nothing at all
+     * against a card labelled `insight` — the user had to type the internal word. `canonicalCardLabel`
+     * is the same table the structured parser uses, so the two agree about what "findings" means, and
+     * a query that names a kind now lifts that kind on every path that has no embeddings to consult:
+     * historical playback, no client, no index, a failed embed.
+     */
+    const requestedLabels = new Set<string>();
+    for (const token of tokens) {
+        const canonical = canonicalCardLabel(token);
+        // `isCardLabel`, not `canonical !== token`: the latter is only true when a *synonym* fired, so
+        // a user who typed the ontology's own word ("insight", "requirement") got no bonus at all
+        // while one who typed "findings" did. `canonicalCardLabel` returns its input unchanged when
+        // nothing matched, so this admits exactly the seven labels and nothing else.
+        if (isCardLabel(canonical)) requestedLabels.add(canonical);
+    }
 
     const scored = nodes.map((node) => {
         const title = node.title.toLowerCase();
@@ -277,6 +326,8 @@ function rankNodesBySemanticQuery(
         if (title.includes(normalized)) score += 14;
         if (description.includes(normalized)) score += 8;
         if (label.includes(normalized)) score += 6;
+        // Worth the same as naming the label outright: the user did name it, in their own words.
+        if (requestedLabels.has(label)) score += 6;
         for (const token of tokens) {
             if (title.includes(token)) score += 5;
             if (description.includes(token)) score += 2;
@@ -290,8 +341,71 @@ function rankNodesBySemanticQuery(
             if (a.score !== b.score) return b.score - a.score;
             return a.id.localeCompare(b.id);
         })
-        .slice(0, limit)
+        .slice(0, limit);
+}
+
+/** The same ranking as ids. Never empty for a non-empty input: a ranking, not a match. */
+function rankNodesBySemanticQuery(
+    nodes: CardNodeForSearch[],
+    semanticQuery: string,
+    limit: number,
+): string[] {
+    return rankNodesBySemanticQueryScored(nodes, semanticQuery, limit).map((entry) => entry.id);
+}
+
+/**
+ * The score below which a keyword hit is not evidence that a card is *about* something.
+ *
+ * The ranker above is a **ranking**: it scores every card and returns them all in order, which is
+ * what the paths with no embeddings need — the alternative there is answering "nothing" whenever a
+ * question is not phrased in the cards' own words. But `matchedNodeIds` is also the set the canvas is
+ * filtered to, and a ranking used as a filter narrows nothing: every card scores, most of them zero,
+ * and the "filter" comes back holding the whole canvas.
+ *
+ * So the filter takes only cards that cleared a bar a coincidence cannot. Five is the value of one
+ * title token, one label match or one synonym match; a card reached only by stopwords in its
+ * description scores two apiece and needs three of them, which is a fair bar for "this card is about
+ * that". The tokenizer has no stopword list, so this is what stands in for one.
+ */
+const MIN_LEXICAL_FILTER_SCORE = 5;
+
+/** The keyword ranking as a **match**: only cards that actually earned it. May be empty. */
+function lexicalFilterIds(
+    nodes: CardNodeForSearch[],
+    semanticQuery: string,
+    limit: number,
+): string[] {
+    return rankNodesBySemanticQueryScored(nodes, semanticQuery, limit)
+        .filter((entry) => entry.score >= MIN_LEXICAL_FILTER_SCORE)
         .map((entry) => entry.id);
+}
+
+/**
+ * The vector ranking first, then anything the keyword ranking found that it did not.
+ *
+ * Not a replacement, because the two rankings fail in different ways and neither is a superset. The
+ * vector query can only ever return a card that *has an embedding row* and clears `minScore`, so it
+ * silently omits a card written in the last second (the embedding queue is debounced), a card whose
+ * enqueue threw, every card in a freshly imported project, and every card at all when the text
+ * version has moved on. It also returns nothing whatsoever when a question is phrased unlike anything
+ * on the canvas, which is a statement about the threshold rather than about the project.
+ *
+ * Appending rather than choosing costs nothing when the vector pass did well -- its results stay in
+ * front, in its order -- and is the difference between an answer and a shrug when it did not.
+ */
+function unionRankedNodeIds(
+    vectorIds: readonly string[],
+    lexicalIds: readonly string[],
+    limit: number,
+): string[] {
+    const seen = new Set<string>(vectorIds);
+    const merged = [...vectorIds];
+    for (const id of lexicalIds) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        merged.push(id);
+    }
+    return merged.slice(0, limit);
 }
 
 function isUuid(value: string): boolean {
@@ -525,6 +639,60 @@ function remapFileReferencesInValue(value: unknown, fileIdMap: Map<string, strin
     return changed ? nextValue : value;
 }
 
+/**
+ * A revision as duplication reads it: every column already a string.
+ *
+ * Named rather than inlined for the reason the export's own row types give — the keyset cursor is
+ * assigned out of the rows and fed back into the next query's parameters, and without an annotation
+ * the compiler tries to narrow the cursor through that assignment and hits a cycle.
+ */
+type DuplicatedRevisionRow = {
+    id: string;
+    version: number;
+    /**
+     * Selected but unused, and it has to be.
+     *
+     * A bare name in `ORDER BY` resolves against the **output** column list before the input one, so
+     * aliasing the text form back onto `captured_at` would silently make the sort lexicographic over
+     * rendered timestamps rather than chronological over the column. That is the same trap the export
+     * sidesteps by naming its text copy `cursor_captured_at`, and here it would be worse than a
+     * cosmetic reordering: the keyset predicate compares the real `timestamptz`, so an order that
+     * disagreed with it would skip rows between pages.
+     */
+    captured_at: string;
+    /** `::text`, so the microseconds survive: `pg` hands a `timestamptz` back as a millisecond `Date`. */
+    cursor_captured_at: string;
+    state: string;
+    timeline: string;
+};
+
+/**
+ * Every `uuid`-shaped run in a state document. Anchored to nothing: the map lookup below is what
+ * decides whether a match means anything, so this only has to be a cheap over-approximation.
+ */
+const UUID_IN_TEXT = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
+
+/**
+ * `remapStateFileReferences`, over the serialized form.
+ *
+ * The object walk above it exists because a copy needs new `document_files` rows, so every reference
+ * to a source file id has to be repointed. Doing that by rebuilding the graph costs a parse, a full
+ * structural rebuild and a re-print of every byte of a project's history; doing it on the text costs
+ * one scan. **Only ids that are actually in the map are rewritten** — the pattern is a filter for the
+ * lookup, not the decision — so nothing else in the document can be touched by accident.
+ *
+ * It rewrites a matching id wherever it appears, where the object walk only visited
+ * `attachmentIds`/`origin`/`fileId` under `flow.nodes`. That is a harmless superset rather than a
+ * repair: today those three keys are the only place a file id is stored — no edge carries one — so
+ * the two agree on every state this codebase writes. The wider scope is simply what a text pass can
+ * cheaply guarantee, and it stays correct if a fourth key is ever added, because a file id is a
+ * `crypto.randomUUID()` that exists for no other purpose. Only ids present in the map are touched.
+ */
+function remapFileReferencesInStateText(stateText: string, fileIdMap: Map<string, string>): string {
+    if (fileIdMap.size === 0 || !stateText) return stateText;
+    return stateText.replace(UUID_IN_TEXT, (match) => fileIdMap.get(match) ?? match);
+}
+
 function remapStateFileReferences(state: unknown, fileIdMap: Map<string, string>): unknown {
     if (!isRecord(state)) return state;
     const flow = state.flow;
@@ -554,6 +722,8 @@ type DocumentSnapshotRow = {
     timeline: unknown;
     updated_at: string;
     version: number;
+    title: string | null;
+    description: string | null;
 };
 
 type LoadedSnapshot = {
@@ -561,6 +731,16 @@ type LoadedSnapshot = {
     timeline: unknown;
     capturedAt: string;
     version: number;
+    /**
+     * What the project is called and what its author says it is for.
+     *
+     * Read off the `documents` row this function already selects, so it costs nothing, and carried
+     * on every snapshot rather than only the current one: a revision is a state of *this* project,
+     * and the project's name does not change with the playhead. The canvas assistant needs both to
+     * answer "what is this study about" at all.
+     */
+    title: string | null;
+    description: string | null;
 };
 
 type QueryablePg = {
@@ -596,7 +776,7 @@ async function loadSnapshotAt(
 
     const current = await pg.query<DocumentSnapshotRow>(
         `
-        SELECT state, timeline, updated_at, version
+        SELECT state, timeline, updated_at, version, title, description
         FROM documents
         WHERE id = $1
         `,
@@ -609,6 +789,8 @@ async function loadSnapshotAt(
         timeline: currentRow.timeline,
         capturedAt: currentRow.updated_at,
         version: currentRow.version,
+        title: currentRow.title,
+        description: currentRow.description,
     };
 
     if (!parsedAt) {
@@ -635,6 +817,9 @@ async function loadSnapshotAt(
             timeline: revisionRow.timeline,
             capturedAt: revisionRow.captured_at,
             version: revisionRow.version,
+            // A revision is a state of this project, so it keeps the project's own name and goal.
+            title: currentRow.title,
+            description: currentRow.description,
         };
         const currentMs = toTimeMs(currentSnapshot.capturedAt);
         const revisionMs = toTimeMs(revisionSnapshot.capturedAt);
@@ -671,6 +856,9 @@ async function loadSnapshotAt(
             timeline: revisionRow.timeline,
             capturedAt: revisionRow.captured_at,
             version: revisionRow.version,
+            // A revision is a state of this project, so it keeps the project's own name and goal.
+            title: currentRow.title,
+            description: currentRow.description,
         };
         if (!currentValidForAt) return revisionSnapshot;
         const revisionMs = toTimeMs(revisionSnapshot.capturedAt);
@@ -704,6 +892,8 @@ async function loadSnapshotAt(
             timeline: row.timeline,
             capturedAt: row.captured_at,
             version: row.version,
+            title: currentRow.title,
+            description: currentRow.description,
         };
     }
 
@@ -2099,7 +2289,14 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         }
 
         const parsed = await parseNaturalLanguageNodeQuery(openAiClient, rawQuery, app.log);
-        const structuredFilteredNodes = applyStructuredFilters(candidateNodes, parsed.structuredFilters);
+        // The same relaxation the chat handler uses, and needed here for the same reason plus one
+        // more: `handleToggleLabelWithQueryRefresh` re-runs the *chat message* through this route
+        // every time a sidebar chip is toggled while a chat filter is up. Left as it was, a filter
+        // the chat had just found would blank the canvas on the next chip click.
+        const structuredFilteredNodes = applyStructuredFiltersWithFallback(
+            candidateNodes,
+            parsed.structuredFilters,
+        ).nodes;
         const structuredNodeIds = structuredFilteredNodes.map((node) => node.id);
 
         if (structuredNodeIds.length === 0) {
@@ -2188,12 +2385,24 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
 
         const vectorResultRows = vectorRows.rows as Array<{ node_id: string; score: number }>;
         const vectorMatchedIds = vectorResultRows.map((row) => row.node_id);
-        const matchedNodeIds = vectorMatchedIds;
+        // Every other exit above falls back to `rankNodesBySemanticQuery`; this one used to take the
+        // vector answer or nothing, so the one path with embeddings working was the only path that
+        // could return an empty list for a question the project answers.
+        //
+        // `lexicalFilterIds`, not the ranking: this array *is* the canvas filter, and the ranking
+        // scores every card in scope, so unioning it in would pad the filter out to the whole canvas
+        // and `minScore` would stop bounding anything. Only keyword hits that earned their place fill
+        // in behind the vector answer.
+        const matchedNodeIds = unionRankedNodeIds(
+            vectorMatchedIds,
+            lexicalFilterIds(structuredFilteredNodes, semanticQuery, limit),
+            limit,
+        );
 
         return reply.send({
             parsed,
             matchedNodeIds,
-            usedVectorSearch: true,
+            usedVectorSearch: vectorMatchedIds.length > 0,
         });
     });
 
@@ -2266,17 +2475,65 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             candidateNodes = candidateNodes.filter((node) => scopeSet.has(node.id));
         }
 
-        const parsed = await parseNaturalLanguageNodeQuery(openAiClient, rawMessage, app.log);
-        const structuredFilteredNodes = applyStructuredFilters(candidateNodes, parsed.structuredFilters);
+        const parsed = await parseNaturalLanguageNodeQuery(openAiClient, rawMessage, app.log, conversation);
+        /*
+         * Structured filters, given up on one rung at a time.
+         *
+         * They used to be applied once and absolutely, and everything downstream was gated on the
+         * result being non-empty: an inferred `titleContains` that matched nothing meant no embedding
+         * search ran at all and the reply was "I could not find relevant nodes on the current canvas"
+         * for a question the project could plainly answer. `applyStructuredFiltersWithFallback` keeps
+         * the narrowest rung that still matches something, so a wrong guess costs precision rather
+         * than the whole answer, and `relaxed` lets the reply say the question was read broadly.
+         */
+        const filtered = applyStructuredFiltersWithFallback(candidateNodes, parsed.structuredFilters);
+        const structuredFilteredNodes = filtered.nodes;
         const structuredNodeIds = structuredFilteredNodes.map((node) => node.id);
         let matchedNodeIds: string[] = structuredNodeIds.slice(0, limit);
+        /** What the reply model is shown, in order. Deliberately wider than `matchedNodeIds`. */
+        let contextRankedIds: string[] = matchedNodeIds;
         let usedVectorSearch = false;
 
         if (structuredNodeIds.length > 0) {
             const semanticQuery = parsed.semanticQuery.trim();
-            if (semanticQuery && parsedAt) {
-                matchedNodeIds = rankNodesBySemanticQuery(structuredFilteredNodes, semanticQuery, limit);
-            } else if (semanticQuery && openAiClient) {
+
+            /*
+             * Lexical ranking is the floor under every path, and this is the fix the chat handler
+             * needed most.
+             *
+             * `/query` calls `rankNodesBySemanticQuery` on all four of its non-vector exits -- reading
+             * history, no OpenAI client, no embeddings table, embedding failed. Chat, sharing the same
+             * parse-and-filter code above, called it on the history branch only. On every other
+             * non-vector path it handed the reply model `structuredFilteredNodes` in **document
+             * order**, truncated at `contextNodeLimit`: an arbitrary forty cards, with no relation to
+             * what was asked.
+             *
+             * That is exactly the reported symptom. Whether the right card was in the prompt came down
+             * to where it happened to sit in `flow.nodes` -- unless the structured filter had narrowed
+             * the set first, which needs the user to name a card type out loud. Naming the type
+             * "worked" because it was the only thing steering retrieval at all.
+             *
+             * It also settles a contract: `docs/functional-contract.md` requires that with embeddings
+             * missing or failing, "query/chat still return ranked results". Half of that was true.
+             *
+             * Ranking first and letting the vector pass refine it means every exit below is ranked
+             * by construction, including ones added later.
+             *
+             * **Two rankings, because they answer two questions.** `contextRankedIds` orders what the
+             * reply model is shown and should be generous — the model can say a card is irrelevant,
+             * and a card missing from the prompt cannot be discussed at all. `matchedNodeIds` is the
+             * set the *canvas is filtered to*, and there generosity is the failure: the keyword
+             * ranking scores every card in scope, so folding it in wholesale hands back the whole
+             * canvas under the name of a filter.
+             */
+            if (semanticQuery) {
+                contextRankedIds = rankNodesBySemanticQuery(structuredFilteredNodes, semanticQuery, limit);
+                // With no vector pass this ranking is all there is, and returning it whole is the
+                // documented behaviour for a deployment without embeddings.
+                matchedNodeIds = contextRankedIds;
+            }
+
+            if (semanticQuery && !parsedAt && openAiClient) {
                 const embeddingTable = await app.pg.query<{ table_name: string | null }>(
                     `
                     SELECT to_regclass('public.document_node_embeddings') AS table_name
@@ -2314,15 +2571,25 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                             [id, structuredNodeIds, vectorLiteral, limit, minScore],
                         );
 
-                        matchedNodeIds = vectorRows.rows.map((row: { node_id: string }) => row.node_id);
-                        usedVectorSearch = true;
+                        const ranked = vectorRows.rows.map((row: { node_id: string }) => row.node_id);
+                        // The vector answer in front, the keyword one behind it -- see
+                        // `unionRankedNodeIds` for why neither ranking is a superset of the other.
+                        // The context takes the whole keyword ranking; the filter takes only the
+                        // keyword hits that scored.
+                        contextRankedIds = unionRankedNodeIds(ranked, contextRankedIds, limit);
+                        matchedNodeIds = unionRankedNodeIds(
+                            ranked,
+                            lexicalFilterIds(structuredFilteredNodes, semanticQuery, limit),
+                            limit,
+                        );
+                        usedVectorSearch = ranked.length > 0;
                     }
                 }
             }
         }
 
         const structuredNodeById = new Map(structuredFilteredNodes.map((node) => [node.id, node]));
-        const rankedNodes: CardNodeForSearch[] = matchedNodeIds
+        const rankedNodes: CardNodeForSearch[] = contextRankedIds
             .map((nodeId) => structuredNodeById.get(nodeId))
             .filter((node): node is CardNodeForSearch => Boolean(node));
         const contextNodes = (rankedNodes.length > 0 ? rankedNodes : structuredFilteredNodes).slice(0, contextNodeLimit);
@@ -2342,27 +2609,97 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 `${index + 1}. id=${node.id}; label=${node.label}; title=${truncateText(node.title, 160)}; description=${truncateText(node.description, 260)}`
             )).join("\n");
 
+            /*
+             * What the canvas holds, not only what was retrieved.
+             *
+             * "How many insights do I have?", "what kinds of cards are in here?", "is there anything
+             * about X yet?" are ordinary questions about a study, and a model shown twenty retrieved
+             * cards and nothing else must either guess or refuse. The tally is free -- the candidate
+             * set is already in hand -- and it is the difference between an assistant that can say
+             * "you have 4 insights, and these two are about X" and one that can only quote what
+             * retrieval happened to surface.
+             */
+            const tally = new Map<string, number>();
+            for (const node of candidateNodes) {
+                const label = node.label || "unlabelled";
+                tally.set(label, (tally.get(label) ?? 0) + 1);
+            }
+            const inventoryText = tally.size > 0
+                ? Array.from(tally.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([label, count]) => `${label}: ${count}`)
+                    .join(", ")
+                : "(no cards)";
+
+            /*
+             * And how the retrieved cards are joined to each other.
+             *
+             * A knowledge graph's whole point is the edges, and the responder had never been shown
+             * one -- so "what came out of the interviews" or "which requirement does this answer" had
+             * no material to be answered from, however well retrieval had done. Restricted to the
+             * context set on both ends, because a relation to a card that is not in the prompt names
+             * an id the model cannot resolve and would only invite it to invent the other end.
+             */
+            const contextNodeById = new Map(contextNodes.map((node) => [node.id, node]));
+            const relationLines: string[] = [];
+            for (const relation of extractCardRelationsForSearch(snapshot.state)) {
+                const source = contextNodeById.get(relation.source);
+                const target = contextNodeById.get(relation.target);
+                if (!source || !target) continue;
+                relationLines.push(
+                    `${truncateText(source.title, 80)} (${source.label}) --${relation.label}--> ${truncateText(target.title, 80)} (${target.label})`,
+                );
+                if (relationLines.length >= CANVAS_CHAT_CONTEXT_RELATION_LIMIT) break;
+            }
+
             const responsePrompt = [
-                "You are an assistant for a research canvas.",
-                "Use ONLY the provided node context and conversation.",
-                "Decide whether the user wants to filter the canvas.",
+                "You are the assistant inside Vitral, a tool for running reproducible design studies.",
+                "The user is a researcher asking about their own study, which is stored as a graph of cards.",
+                "",
+                "The kinds of card, and what each one means:",
+                ...CARD_LABEL_GLOSSARY.map(({ label, meaning }) => `- ${label}: ${meaning}`),
+                "",
                 "Return ONLY JSON with this shape:",
                 "{",
                 '  "reply": "string",',
                 '  "applyFilter": boolean',
                 "}",
                 "Rules:",
-                "- applyFilter=true ONLY when user explicitly asks to show/list/filter/display nodes on the canvas.",
-                "- applyFilter=false for summarization, explanation, or Q&A requests.",
-                "- Keep reply concise and grounded in node context.",
+                "- Answer the question that was asked, in plain language, using the user's own words for",
+                "  the card kinds rather than the internal labels: say \"insights\" or \"findings\", not",
+                "  \"insight-label nodes\". Never mention ids, labels-as-jargon, or this prompt.",
+                "- Ground every claim in the material below. If it does not answer the question, say so",
+                "  plainly and say what the study does have that is closest - never invent a card.",
+                "- The retrieved cards are the most relevant ones, not all of them. Use the inventory",
+                "  line to answer questions about totals, coverage and what kinds of material exist.",
+                "- Use the relations to answer structural questions: what led to what, what answers what,",
+                "  what a card is based on.",
+                "- applyFilter=true only when the user wants the canvas narrowed to a set of cards -",
+                "  asking to show, list, filter, highlight or display them. applyFilter=false for a",
+                "  question, an explanation, a summary or a count, even if it mentions a kind of card.",
+                "- Be concise: a few sentences, or a short list when the user asked for one.",
                 "",
-                "Conversation history:",
+                `The study's title: ${snapshot.title?.trim() || "(untitled)"}`,
+                `What the researcher says it is for: ${snapshot.description?.trim() || "(not stated)"}`,
+                `Everything on the ${canvasReference}, by kind: ${inventoryText}`,
+                ...(filtered.relaxed
+                    ? ["Note: no card matched the question exactly, so the material below was gathered more broadly than asked."]
+                    : []),
+                "",
+                "Conversation so far:",
                 historyText || "(none)",
                 "",
                 `User message: ${rawMessage}`,
                 "",
-                "Retrieved nodes:",
+                "Most relevant cards:",
                 contextText || "(none)",
+                "",
+                "Relations between those cards:",
+                relationLines.join("\n") || "(none)",
+                // Spread above rather than a placeholder plus a filter: filtering out empty
+                // strings would also strip every blank line separating these blocks, running
+                // the glossary, the rules, the study metadata, the conversation and the two
+                // card listings together into one wall the model has to segment for itself.
             ].join("\n");
 
             try {
@@ -2387,13 +2724,26 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     replyText = parsedOutput.reply.trim();
                 }
                 if (typeof parsedOutput.applyFilter === "boolean") {
-                    applyFilter = parsedOutput.applyFilter || fallbackApplyFilter;
+                    /*
+                     * The model's answer wins outright when it gave one.
+                     *
+                     * This used to be `|| fallbackApplyFilter`, which meant the keyword regex could
+                     * only ever turn filtering *on*: "summarise the insights you found" contains
+                     * "found", so the canvas was filtered behind a question that asked for prose, and
+                     * the user had to clear a filter they never requested. The regex is a fallback
+                     * for when the model does not answer, and it is already used as the initial value
+                     * above; letting it override a considered `false` made it a veto instead.
+                     */
+                    applyFilter = parsedOutput.applyFilter;
                 }
             } catch (error) {
                 request.log.warn({ error }, "Canvas chat response generation failed; using fallback reply.");
             }
         }
 
+        // Only when there is genuinely nothing: with the relaxation ladder and the vector fallback
+        // above, an empty match now means the project itself holds nothing to show, which is worth
+        // saying plainly rather than overwriting a good answer with a complaint about the filter.
         if (applyFilter && matchedNodeIds.length === 0) {
             replyText = `I applied the filter, but no matching nodes were found on the ${canvasReference}.`;
         }
@@ -2760,6 +3110,26 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         ownerId: string | null,
     ): Promise<DuplicatedDocumentSummary> => {
         const duplicateStartedAt = Date.now();
+
+        /*
+         * Where the time actually goes, per stage.
+         *
+         * Contract 7 already pins that this path logs counts, bytes and total elapsed time, and that
+         * total is what says duplication is slow without ever saying *which part* is. The stages have
+         * very different shapes — a set-based `INSERT ... SELECT` for GitHub events and embeddings, a
+         * paged read-and-write for revisions, S3-free metadata rows for files — and guessing between
+         * them from one number is how a read path gets optimised while the write path is the cost.
+         */
+        const stageMs: Record<string, number> = {};
+        const timeStage = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+            const startedAt = Date.now();
+            try {
+                return await run();
+            } finally {
+                stageMs[name] = (stageMs[name] ?? 0) + (Date.now() - startedAt);
+            }
+        };
+
         const client = await app.pg.connect();
         try {
             await client.query("BEGIN");
@@ -2809,7 +3179,9 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 ext: string | null;
                 size_bytes: number | null;
                 sha256: string | null;
+                /** Ordered on, never read: see `DuplicatedRevisionRow.captured_at` for why it is selected. */
                 created_at: string;
+                created_at_text: string;
                 storage_bucket: string | null;
                 storage_key: string | null;
             }>(
@@ -2821,7 +3193,13 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     ext,
                     size_bytes,
                     sha256,
+                    -- ::text for the same reason the revision cursor needs it: pg hands a
+                    -- timestamptz back as a millisecond Date, and binding that to the copy's
+                    -- created_at silently rounds away the microseconds that rows written by now()
+                    -- carry. This column is the files' own ordering key, so a copy that rounds it
+                    -- can order two same-millisecond uploads differently from the original.
                     created_at,
+                    created_at::text AS created_at_text,
                     storage_bucket,
                     storage_key
                 FROM document_files
@@ -2889,6 +3267,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 throw new Error("Failed to create duplicated document.");
             }
 
+            await timeStage("files", async () => {
             for (const sourceFileChunk of chunkItems(sourceFilesResult.rows, DUPLICATE_FILES_INSERT_CHUNK_SIZE)) {
                 const placeholders: string[] = [];
                 const values: unknown[] = [];
@@ -2907,7 +3286,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                         sourceFile.sha256,
                         sourceFile.storage_bucket,
                         sourceFile.storage_key,
-                        sourceFile.created_at,
+                        sourceFile.created_at_text,
                     );
                     placeholders.push(
                         `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}::timestamptz)`,
@@ -2935,6 +3314,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     values,
                 );
             }
+            });
 
             const sourceRevisionCountRes = await client.query<{ count: string }>(
                 `
@@ -2955,22 +3335,55 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 sourceRevisionCount,
             }, "Starting project duplication.");
 
-            for (let offset = 0; ; ) {
-                const sourceRevisionChunkRes = await client.query<{
-                    version: number;
-                    captured_at: string;
-                    state: unknown;
-                    timeline: unknown;
-                }>(
+            /*
+             * The revision log, copied the way the export already reads it.
+             *
+             * Two changes, both taken from `GET /state/:id/export-vi`, which learned them on the same
+             * data and wrote them down in AGENTS.md contract 7.
+             *
+             * **`state::text`, not `state`.** `pg` parses a `jsonb` column into a live JS object
+             * graph, `remapStateFileReferences` then rebuilt every one of those graphs, and
+             * `JSON.stringify` reprinted them — three passes over every byte of history, in Node,
+             * with the heap to match. On the reference 1204-revision project that is ~106 MB and 1204
+             * object graphs, twice. The export deleted exactly this and said so; duplication kept it.
+             * As text, the same remap is one regular-expression scan and the bytes are never anything
+             * but a string.
+             *
+             * **Keyset, not `OFFSET`.** `LIMIT/OFFSET` inside a loop makes Postgres re-sort the whole
+             * log once per batch — quadratic in the number of revisions, on the one table that grows
+             * without bound. The cursor is carried as `::text` for the reason contract 7 gives: `pg`
+             * hands a `timestamptz` back as a millisecond `Date`, and feeding that in rounds the
+             * cursor *down*, so rows sharing that millisecond repeat forever. `assertCursorAdvanced`
+             * turns that mistake into a failed duplication rather than an endless one.
+             *
+             * The same `captured_at::text` is what gets inserted, so the copy keeps the microseconds
+             * the millisecond round trip used to shave off.
+             */
+            let copiedRevisions = 0;
+            await timeStage("revisions", async () => {
+            let afterCapturedAt: string | null = null;
+            let afterVersion: number | null = null;
+            let afterId: string | null = null;
+            for (;;) {
+                const sourceRevisionChunkRes: { rows: DuplicatedRevisionRow[] } = await client.query<DuplicatedRevisionRow>(
                     `
-                    SELECT version, captured_at, state, timeline
+                    SELECT
+                        id,
+                        version,
+                        captured_at,
+                        captured_at::text AS cursor_captured_at,
+                        state::text AS state,
+                        timeline::text AS timeline
                     FROM document_state_revisions
                     WHERE document_id = $1
+                      AND (
+                          $3::timestamptz IS NULL
+                          OR (captured_at, version, id) > ($3::timestamptz, $4::integer, $5::uuid)
+                      )
                     ORDER BY captured_at ASC, version ASC, id ASC
                     LIMIT $2
-                    OFFSET $3
                     `,
-                    [sourceDocId, DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE, offset],
+                    [sourceDocId, DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE, afterCapturedAt, afterVersion, afterId],
                 );
                 const sourceRevisionChunk = sourceRevisionChunkRes.rows;
                 if (sourceRevisionChunk.length === 0) break;
@@ -2979,7 +3392,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 const values: unknown[] = [];
 
                 for (const sourceRevision of sourceRevisionChunk) {
-                    const remappedRevisionState = remapStateFileReferences(sourceRevision.state, fileIdMap);
+                    const remappedRevisionState = remapFileReferencesInStateText(sourceRevision.state, fileIdMap);
                     const revisionVersion = Number.isFinite(sourceRevision.version)
                         ? Math.max(1, Math.trunc(sourceRevision.version))
                         : 1;
@@ -2987,16 +3400,14 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     values.push(
                         duplicatedDocument.id,
                         revisionVersion,
-                        sourceRevision.captured_at,
-                        JSON.stringify(remappedRevisionState ?? {}),
-                        JSON.stringify(sourceRevision.timeline ?? {}),
+                        sourceRevision.cursor_captured_at,
+                        remappedRevisionState,
+                        sourceRevision.timeline,
                     );
                     placeholders.push(
                         `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}::jsonb, $${offset + 5}::jsonb)`,
                     );
                 }
-
-                if (placeholders.length === 0) continue;
 
                 await client.query(
                     `
@@ -3011,11 +3422,26 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                     `,
                     values,
                 );
+                copiedRevisions += sourceRevisionChunk.length;
 
-                offset += sourceRevisionChunk.length;
+                if (sourceRevisionChunk.length < DUPLICATE_REVISIONS_INSERT_CHUNK_SIZE) break;
+                const lastRevision = sourceRevisionChunk[sourceRevisionChunk.length - 1];
+                // The whole cursor, not its first component: revisions written inside one
+                // transaction share `now()` to the microsecond, so a page that is entirely one
+                // timestamp advances `version`/`id` while `captured_at` stands still. Comparing the
+                // timestamp alone would abort a duplication that was making perfect progress.
+                assertCursorAdvanced(
+                    "duplicate revisions",
+                    afterCapturedAt === null ? null : `${afterCapturedAt}|${afterVersion}|${afterId}`,
+                    `${lastRevision.cursor_captured_at}|${lastRevision.version}|${lastRevision.id}`,
+                );
+                afterCapturedAt = lastRevision.cursor_captured_at;
+                afterVersion = lastRevision.version;
+                afterId = lastRevision.id;
             }
+            });
 
-            await client.query(
+            await timeStage("githubEvents", () => client.query(
                 `
                 INSERT INTO document_github_events (
                     document_id,
@@ -3055,7 +3481,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                 ORDER BY occurred_at ASC, event_key ASC
                 `,
                 [duplicatedDocument.id, sourceDocId],
-            );
+            ));
 
             const embeddingTable = await client.query<{ table_name: string | null }>(
                 `
@@ -3064,7 +3490,7 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
             );
 
             if (embeddingTable.rows[0]?.table_name) {
-                await client.query(
+                await timeStage("embeddings", () => client.query(
                     `
                     INSERT INTO document_node_embeddings (doc_id, node_id, label, node_text, embedding, model)
                     SELECT $1::uuid, node_id, label, node_text, embedding, model
@@ -3079,17 +3505,19 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
                         updated_at = now()
                     `,
                     [duplicatedDocument.id, sourceDocId],
-                );
+                ));
             }
 
-            await client.query("COMMIT");
+            await timeStage("commit", () => client.query("COMMIT"));
             logger.info({
                 sourceDocId,
                 duplicatedDocId: duplicatedDocument.id,
                 elapsedMs: Date.now() - duplicateStartedAt,
+                stageMs,
                 sourceFileCount,
                 sourceTotalFileBytes,
                 sourceRevisionCount,
+                copiedRevisions,
             }, "Project duplication completed.");
             return duplicatedDocument;
         } catch (error) {
@@ -3153,14 +3581,25 @@ export const stateRoutes: FastifyPluginAsync = async (app) => {
         const duplicator = await app.currentUser(request);
 
         pruneDuplicateJobs(duplicateJobs);
+        // Coalescing is per *duplicator*, not per source.
+        //
+        // Matching on `sourceDocId` alone handed a second account the first account's job. The
+        // comment above says copying somebody's published project is the intended flow, so two people
+        // duplicating the same project at once is a real path — and the second one polled a job that
+        // succeeded, refetched their list, and found nothing, because the copy was created under
+        // `createDuplicateJob(id, duplicator?.id)` for the *first* account. The window is exactly the
+        // duration this endpoint takes, so making duplication faster makes the bug rarer rather than
+        // gone.
+        const duplicatorId = duplicator?.id ?? null;
         for (const existingJob of duplicateJobs.values()) {
             if (existingJob.sourceDocId !== id) continue;
+            if (existingJob.ownerId !== duplicatorId) continue;
             if (existingJob.status === "queued" || existingJob.status === "running") {
                 return reply.status(202).send(existingJob);
             }
         }
 
-        const job = createDuplicateJob(id, duplicator?.id ?? null);
+        const job = createDuplicateJob(id, duplicatorId);
         duplicateJobs.set(job.jobId, job);
         setImmediate(() => {
             void runDuplicateJob(job.jobId);

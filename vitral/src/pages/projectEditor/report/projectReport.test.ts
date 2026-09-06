@@ -137,6 +137,7 @@ function emptyTimeline(): ReportSnapshot["timeline"] {
         blueprintEvents: [],
         codebaseSubtracks: [],
         screenshotMarkers: [],
+        latestScreenshot: null,
         llmModel: "gpt-5-nano",
     };
 }
@@ -1277,6 +1278,61 @@ for (const [label, fixture] of [
     }).report.markdown;
     check("a project with no requirements says that instead",
         noRequirements.includes("_No requirement cards in this project._"));
+}
+
+// --- 27. The last system screenshot, above the abstract ----------------------------------------
+//
+// The picture is the one thing in this document that is not derived from the graph, and the reason
+// it is placed rather than appended is the reading order: the abstract describes a system, and a
+// reader who has not seen that system is being asked to hold a description of an interface they
+// have never laid eyes on.
+//
+// The absence case matters as much as the presence one -- "if no screenshot is uploaded dont add
+// anything" means no figure, no caption, and no placeholder saying a figure is missing.
+{
+    const withShot = studyFixture();
+    const dataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+    withShot.timeline = {
+        ...withShot.timeline,
+        // Both, because they must agree: the marker list is what the Timeline section counts, and
+        // `latestScreenshot` is the one of them the document actually prints.
+        screenshotMarkers: [{ id: "s1", occurredAtIso: day(30), zoneCount: 0 }],
+        latestScreenshot: { occurredAtIso: day(30), imageDataUrl: dataUrl },
+    };
+
+    const md = reportFor(withShot).report.markdown;
+    check("the screenshot is emitted as an image", md.includes(`](${dataUrl})`));
+    check("with the day in its alt text", md.includes(`![The system as it stood on ${formatIsoDay(day(30))}]`));
+    check("and a caption under it", md.includes(`_The system as it stood on ${formatIsoDay(day(30))}._`));
+    check("it sits above the Abstract", md.indexOf(dataUrl) < md.indexOf("## Abstract"));
+    // Exactly one figure, not "at least one": a card title or a quoted source could contain `![`,
+    // and an ordering assertion that only compares indices would not notice.
+    equal("and it is the document's only image", (md.match(/!\[/g) ?? []).length, 1);
+    // The Timeline section catalogues the screenshots, so it has to know one of them is printed.
+    check("the timeline section says the newest one is reproduced",
+        md.includes("The most recent image is reproduced above the abstract"));
+    // Below the metadata table, which is what "right before the abstract" means in emitted order:
+    // the figure introduces the study, it does not replace the header.
+    check("and below the header table", md.indexOf("Content fingerprint") < md.indexOf(dataUrl));
+
+    // The figure must not disturb the sections that were already pinned around the abstract.
+    const notes: ReportCardTypeNotes = {
+        notes: { requirement: "Requirements framed the work." },
+        model: "gpt-5-nano",
+        prompt: "ReportCardTypes",
+    };
+    check("the Abstract still precedes the Overview",
+        md.indexOf("## Abstract") < md.indexOf("## Overview"));
+    const withNotes = reportFor(withShot, {}, { cardTypeNotes: notes }).report.markdown;
+    check("and The material still sits between them",
+        withNotes.indexOf("## Abstract") < withNotes.indexOf("## The material")
+        && withNotes.indexOf("## The material") < withNotes.indexOf("## Overview"));
+
+    const without = reportFor(studyFixture()).report.markdown;
+    check("with no screenshot nothing is emitted", !without.includes("data:image/"));
+    equal("and no image markup at all", (without.match(/!\[/g) ?? []).length, 0);
+    check("and no caption is left behind", !without.includes("The system as it stood on"));
+    check("and no placeholder claims one is missing", !without.toLowerCase().includes("no system screenshot"));
 }
 
 console.log(`ok    ${checks - failures}/${checks} checks pass`);

@@ -130,10 +130,26 @@ export function ProjectsPage() {
             const pollStartedAt = Date.now();
             const maxPollDurationMs = 10 * 60 * 1000;
 
+            /*
+             * The first look is immediate, and the wait grows from there.
+             *
+             * The loop used to sleep a flat second *before* every poll, including the first — so a
+             * small project that had already finished by the time the 202 came back still sat behind
+             * a full second of nothing, and a second was the floor on "how long does duplicating take"
+             * no matter what the server did. Starting at 150ms catches exactly that case, and the ramp
+             * to 1500ms keeps a genuinely long duplication from being polled hundreds of times.
+             *
+             * The server sends `Retry-After: 1` with a non-terminal job. The first 150ms look
+             * deliberately ignores it — one sub-second probe to catch an already-finished job is
+             * cheaper for both sides than a second of dead UI — and the ramp settles above the hint
+             * within three polls, which is the cadence the header is actually asking for.
+             */
+            let pollDelayMs = 150;
             while (job.status === "queued" || job.status === "running") {
                 await new Promise<void>((resolve) => {
-                    window.setTimeout(resolve, 1000);
+                    window.setTimeout(resolve, pollDelayMs);
                 });
+                pollDelayMs = Math.min(1500, Math.round(pollDelayMs * 1.6));
                 job = await loadDuplicateDocumentJob(job.jobId);
                 if (Date.now() - pollStartedAt > maxPollDurationMs) {
                     throw new Error("Duplication is still running. Please refresh this page in a moment.");

@@ -3,6 +3,24 @@ import classes from "./CanvasChatOverlay.module.css";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faPaperPlane } from '@fortawesome/free-solid-svg-icons';
 
+/**
+ * The blank panel, as a demonstration rather than a syntax lesson.
+ *
+ * It used to hold one example — "List out all requirements including their titles and
+ * descriptions." — which is the schema read aloud, and which taught exactly the wrong lesson: that
+ * the assistant has to be addressed in its own vocabulary. These are the questions a researcher
+ * actually has, deliberately spread across the four things the assistant can now do — narrow the
+ * canvas, count, reason over relations, and summarise — so the panel shows its range instead of one
+ * incantation. Clickable, because the fastest way to learn what a tool answers well is to see it
+ * answer once.
+ */
+const EXAMPLE_PROMPTS = [
+    "What did we learn from the interviews?",
+    "Show me the requirements that came out of the workshop.",
+    "Which findings does the system design still not answer?",
+    "Summarise where this study got to.",
+];
+
 export type CanvasChatEntry = {
     id: string;
     role: "user" | "assistant";
@@ -92,9 +110,25 @@ export function CanvasChatOverlay({
 
                 <div className={classes.messages}>
                     {messages.length === 0 ? (
-                        <p className={classes.empty}>
-                            Example: "List out all requirements including their titles and descriptions."
-                        </p>
+                        <div className={classes.empty}>
+                            <p className={classes.emptyLead}>
+                                Ask about this study in your own words — what you found, what
+                                shaped it, what is still open.
+                            </p>
+                            <ul className={classes.emptyExamples}>
+                                {EXAMPLE_PROMPTS.map((example) => (
+                                    <li key={example}>
+                                        <button
+                                            type="button"
+                                            className={classes.examplePrompt}
+                                            onClick={() => onSend(example)}
+                                        >
+                                            {example}
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
                     ) : (
                         messages.map((message) => (
                             <article
