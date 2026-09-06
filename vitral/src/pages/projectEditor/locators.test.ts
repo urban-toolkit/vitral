@@ -867,6 +867,47 @@ function indexOf(fixture: Fixture, files: Array<{ sha256: string; name: string; 
     if (typed.ok) equal("with no renumbering to report", typed.renumberedFrom, null);
 }
 
+// --- 16. A phase's borrowed node is not a renumbering -------------------------------------------
+//
+// The mirror of 15, and the reason that one is not the whole rule.
+//
+// A phase has no node of its own, so its `targetId` is *borrowed* from its anchor activity — and
+// that activity answers to its own `A` code. `byTargetId` is filled in letter order, so the
+// activity, indexed after the phase, wins the shared id. A phase link therefore carries an id that
+// resolves to a different code by construction, every single time, with nothing having been
+// renumbered. Read as a renumbering it opens the thread at Detail instead of the phase at
+// Overview, under a notice naming a rename that never happened.
+//
+// Every `P` link the report has ever printed carries this shape, which is why the fix belongs in
+// the resolver rather than in `codeToUrl`.
+{
+    const index = indexOf(studyFixture());
+    const phase = index.byCode.get("P1")!;
+
+    // The premise, stated so a future reader does not have to rediscover it: the id really is shared.
+    const owner = index.byTargetId.get(phase.targetId)!;
+    check("a phase's node is owned by an activity in byTargetId", owner.locator.kind === "activity");
+
+    const followed = resolveLocatorReference(index, "P1", phase.targetId);
+    check("a phase link resolves", followed.ok);
+    if (followed.ok) {
+        equal("to the phase, not to its anchor activity", followed.target.code, "P1");
+        equal("at Overview", followed.viewpoint.level, 1);
+        equal("claiming no renumbering", followed.renumberedFrom, null);
+    }
+
+    // A lens on a phase code is subject to the same rule.
+    const lensed = resolveLocatorReference(index, "P1A", phase.targetId);
+    check("and so does a lensed phase reference", lensed.ok);
+    if (lensed.ok) equal("with no renumbering either", lensed.renumberedFrom, null);
+
+    // Section 15 must not be weakened by the fix: a *card* code with a disagreeing id still redirects.
+    const concept = index.byCode.get("C1")!;
+    const drifted = resolveLocatorReference(index, "R1", concept.targetId);
+    check("a card reference still follows its id", drifted.ok);
+    if (drifted.ok) equal("and still reports the renumbering", drifted.renumberedFrom, "R1");
+}
+
 console.log(`ok    ${checks - failures}/${checks} checks pass`);
 if (failures > 0) {
     // A throw is the exit code: this runs under plain node, with no test runner to report to.

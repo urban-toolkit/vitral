@@ -21,6 +21,24 @@ export function resolveRouterBasename(): string {
 }
 
 /**
+ * The origin a *citation* should point at, which is not always the one it was exported from.
+ *
+ * A link printed in a paper outlives the session that generated it. `window.location.origin` — what
+ * the markdown report uses, correctly, for a link a reader follows in the same breath — silently
+ * writes `http://localhost:5173` into every reference when the file is exported from a dev server,
+ * and a `.tex` file is not read again until someone clicks it a year later.
+ *
+ * So the deployment names itself, and the fallback stays honest rather than clever: with nothing
+ * configured this is exactly `window.location.origin`, and the generated file prints whichever was
+ * used at the top of itself, so a localhost export is obvious on sight instead of at review time.
+ */
+export function resolveCitationOrigin(): string {
+    const configured = String(import.meta.env.VITE_PUBLIC_ORIGIN ?? "").trim();
+    if (configured !== "") return configured.replace(/\/+$/, "");
+    return window.location.origin;
+}
+
+/**
  * Whether a stored path may be navigated to.
  *
  * `RequireSession` writes the path it turned away into `Navigate state={{ from }}`, and `LoginPage`

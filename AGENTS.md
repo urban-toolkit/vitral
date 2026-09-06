@@ -504,23 +504,41 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
     An empty canvas never raises the flag (`adoptUserNodes` starts it at `nodes.length > 0`), so the
     wait is skipped when nothing is displayed — where there is also nothing to race, and the resolver
     answers immediately and honestly.
-  - **The params are stripped through the router**, with `replace`. `createBrowserRouter` holds its
-    own location and re-reads `window.location` only on `popstate`, so `history.replaceState` would
-    leave the router holding a query string the address bar no longer shows — and `RequireSession`
-    builds its post-login return path out of exactly that.
-  - **`at` is read and deliberately not honoured.** Honouring it means setting the playhead, which
-    undoes step 1 of the reveal; and it is not the snapshot it looks like, because the needle gates
-    whole activity trees and replays no node history. What it *would* do is make `canvasClusters`
-    disagree with the index the phase codes were numbered over — the precise failure restoring the
-    filters exists to prevent — and arm `resolveActionTimestamp` to stamp a past instant on the next
-    card the owner creates.
-  - **`n` outranks the code when they disagree.** A citation carries both halves because a hard
-    `removeNode` or a label change renumbers a whole letter. A paper that cites `R7` means the card
-    its author was looking at, so `resolveLocatorReference` redirects to the node and re-applies the
-    lens to whatever code that node answers to now; showing the reader different material under the
-    right label is the one failure they cannot detect, because the canvas would look normal. It hands
-    back `renumberedFrom` and the caller has to say so out loud. An id the index no longer holds is
-    dropped rather than obeyed — there is nothing to redirect to.
+  - **The params are rewritten on arrival, not stripped.** Stripping left a bare `/project/<id>`,
+    which is precisely the URL that sends the next reader to `/login` — so somebody who followed a
+    citation and copied their own address bar handed on a link that does not work. Once a reference
+    printed in a paper is the point, that is a defect rather than tidiness. `handleGoToLocatorCode`
+    therefore writes back the reference the canvas is **showing** (so a renumbered arrival leaves
+    `C1` there, not the `R7` that was clicked), drops `n` — it has already done its work on the way
+    in, and the code written back is the one the node answers to now — and drops `at`. Only when a
+    reference was already in the bar: a code *typed* into the box is an owner looking something up,
+    and putting `?ref=` in their URL would mean their next reload silently reset their filters and
+    their playhead. Still through the router and still `replace`, because `createBrowserRouter` holds
+    its own location and re-reads `window.location` only on `popstate`, so `history.replaceState`
+    would leave the router holding a query string the address bar no longer shows — and
+    `RequireSession` builds its post-login return path out of exactly that.
+  - **`at` is read and deliberately not honoured, and no longer written.** Honouring it means setting
+    the playhead, which undoes step 1 of the reveal; and it is not the snapshot it looks like, because
+    the needle gates whole activity trees and replays no node history. What it *would* do is make
+    `canvasClusters` disagree with the index the phase codes were numbered over — the precise failure
+    restoring the filters exists to prevent — and arm `resolveActionTimestamp` to stamp a past instant
+    on the next card the owner creates. `locatorTex.ts` omits it for that reason and because it is the
+    only thing that would percent-encode one of these URLs; a link that arrives carrying one has it
+    dropped rather than passed on. Pinning a citation is done by publishing a frozen **copy** of the
+    project and citing that, which is a workflow rather than a parameter.
+  - **`n` outranks the code when they disagree — except for a phase, which has no node of its own.**
+    A citation carries both halves because a hard `removeNode` or a label change renumbers a whole
+    letter. A paper that cites `R7` means the card its author was looking at, so
+    `resolveLocatorReference` redirects to the node and re-applies the lens to whatever code that node
+    answers to now; showing the reader different material under the right label is the one failure
+    they cannot detect, because the canvas would look normal. It hands back `renumberedFrom` and the
+    caller has to say so out loud. An id the index no longer holds is dropped rather than obeyed.
+    **A phase is the exception and it is not a special case, it is the absence of one**: a phase is not
+    a stored entity, so its `targetId` is *borrowed* from its anchor activity, and that activity wins
+    the shared id in `byTargetId` because activities are indexed after phases. Every `P` link
+    therefore carried an id resolving to a different code by construction, and obeying it opened the
+    thread at Detail instead of the phase at Overview under a notice naming a rename that never
+    happened. Skipping the claim for a phase is what `locators.test.ts` §16 pins.
   - Nothing on this path is gated on `interactionLocked`, so a guest following a link into a
     published project gets a bit-for-bit identical result. Keep it that way.
 - Inputs are the whole live graph, **unfiltered**. `buildSalienceIndex` normalises its degree terms
@@ -572,6 +590,19 @@ Current product-safety intent (user-study phase): prioritize no-regression usabi
   `Locator` prefix in source. The canvas box is labelled **Go to reference** (it was "Go to code"),
   because somebody meeting `R7T` in a paper is not meeting a locator, and "code" stopped covering it
   once a code could carry a lens.
+- **The box names what the canvas is showing, and no longer clears on success.** It used to empty
+  itself when a reference resolved, on the grounds that an emptied field is an acknowledgement. It is
+  a worse one than the alternative: seeding the canonical spelling back in place says the same thing
+  and says *what was understood* with it — `r7p` becomes `R7P` — and it is the only thing on screen
+  that can tell a reader arriving from a paper which citation they followed. `ProjectEditorPage` owns
+  the value (`shownReference`, set from `formatLocatorReference` on the resolved target, so a
+  renumbered arrival shows the code the canvas actually landed on rather than the one that was
+  clicked); the **draft stays local** to `CanvasLevelControl`, so typing never reaches the page and
+  never re-runs its memo lists. The seed is applied during render, not from an effect — React's own
+  recipe for state derived from a prop, the shape `BlueprintTray` already uses — and it is keyed on a
+  counter rather than the string, so going to the same reference twice still re-seeds. Failure keeps
+  both signals it had (text retained, plus the notice) and gains one: the field selects itself, so
+  correcting a typo is one keystroke.
 - **Typing a reference is a third way of driving the level control**, which is why the box lives
   in `CanvasLevelControl` beside the segments and follow-zoom rather than with the search tools. The
   reveal order in `handleGoToLocatorCode` is load-bearing and every step is there because skipping it
@@ -989,6 +1020,52 @@ These are concrete spots where the contracts are currently enforced. If behavior
 - Both zoom ladders (`levelForZoom`, `lodForZoom`) are symmetric. Do not add hysteresis back to either without a measured flicker problem, and keep every card-detail boundary below the Detail level boundary — the ordering in contract 19 is what makes zooming out replace a card with a glyph rather than simplify it first.
 - Keep `hubOrbitRadius` resolving to exactly `ORBIT_MIN_RADIUS_PX` for an ordinary activity card. Making the extra clearance unconditional would relayout the whole bare graph, which is the one thing Detail is not supposed to do.
 - Do not let a `person` card into `countLabels`, `pickTop` or the automatic-similarity candidate list. Each of those is a separate leak of the same rule (contracts 19 and 21), and the failure is quiet: a glyph that names itself after whoever attended, or a participant that becomes the most connected card in the project.
+
+34. The paper's reference file (`vitral-refs.tex`)
+- **A code in a paper is inert until something turns it into a URL.** `codeToUrl` could always do
+  that and only the markdown report ever called it, so an author writing LaTeX had to harvest URLs
+  out of an exported report by hand — and a hand-copied URL cannot survive a renumbering.
+  `locatorTex.ts` emits every citable reference the project has, each carrying the node id that makes
+  it renumber-proof, as one file the paper `\input`s. Exported from the **TeX** button beside `MD` in
+  `CanvasSidebar`'s header.
+- **It lives in `projectEditor/`, not `report/`.** Everything in `report/` is a function of a
+  `ReportSnapshot` and emits markdown; this is a projection of the *locator index* and needs nothing
+  else, which is what `codeToUrl` is too. It is not inside `locators.ts` either — that file is on the
+  canvas hot path and LaTeX escaping has no business there.
+- **Nothing is advertised that the canvas would refuse.** A reference is emitted only when
+  `resolveLocatorReference` accepts it — asked of the resolver, never re-derived, the same rule the
+  markdown's next-step links follow. File lenses additionally ask the caller's `hasAttachment`, which
+  is the one question the index cannot answer because `locators.ts` never reads node data.
+- **Three kinds are dropped whole.** `file`, `stage` and `event` carry `nodeId: null`, so the reveal's
+  camera step never runs and nothing opens the timeline dock: `\vitralref{S1}` would reset every
+  filter, move nothing, and look broken. Cite `R7F` for a card's source document — that is a lens on a
+  card, and the card has a node.
+- **Two spellings never name one destination.** The lens table is written for cards, where all six
+  land somewhere different; on an activity several collapse (`A1A` is `A1` spelled longer). The bare
+  code is tried first, so it always wins the canonical name.
+- **A dead code is emitted inert, with its reason** — `\vitral@dead{R12}{...deleted on 2026-01-02.}`
+  and no URL. Nameable, visibly not a link, never dressed as one: the house rule for an unresolvable
+  reference, and here it turns a stale citation into a compile-time warning naming the date instead of
+  a reader meeting a refusal notice on a canvas.
+- **The catcode block is the load-bearing LaTeX.** `\&` written into a macro body does not work —
+  hyperref fixes catcodes as it reads a *literal* argument, and a URL arriving through `\csname`
+  expansion was tokenised long before — and percent-encoding is worse, because `%` is the comment
+  character. So the entries are tokenised under changed catcodes instead. `\`, `{` and `}` keep
+  theirs, or `\vitral@entry` stops being a control sequence and its arguments stop parsing; the test
+  asserts no URL contains one rather than assuming it. `\makeatletter` is repeated *inside* the group
+  because `@` must be a letter where the entries are **called**, not only where they were defined.
+  Every numeric assignment ends in `\relax`, because `\endlinechar=-1` removes the end-of-line space
+  that would otherwise terminate it.
+- **The origin is `resolveCitationOrigin()`, not `window.location.origin`.** A link printed in a paper
+  outlives the session that exported it, and a localhost URL in a published citation cannot be
+  corrected. `VITE_PUBLIC_ORIGIN` names the deployment; the header prints whichever was used, so a
+  dev export is obvious on sight.
+- **Pinning is a workflow, not a parameter.** Duplicate the project when the paper is final, publish
+  the copy, cite the copy — then "latest" *is* the snapshot. Duplication deliberately leaves the copy
+  unpublished, so the export raises a notice when `published` is false: every link in the file opens a
+  published project and nothing else, which makes an unpublished copy the way this feature fails
+  silently.
+
 - Do not turn the drop-ring relation menu into a post-hoc rewire (create the cards, then change the edge). Holding the `File` handles until it is answered is what makes dismissing it a true no-op.
 - Do not move the blueprint surface split earlier in the derivation chain (contract 28). It reads correct anywhere, and is wrong anywhere but last: a component whose requirement a filter removed is left orbiting nothing.
 - Do not give blueprint components activity-tree membership to "simplify" the playback story. It gates the wrong thing and shifts card salience; `canvasBlueprintNodes` already answers it, and answers it better for a component attached to two trees.

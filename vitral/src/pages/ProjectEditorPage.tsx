@@ -97,13 +97,16 @@ import {
     canvasBlueprintNodes,
 } from "@/pages/projectEditor/blueprintSurfaces";
 import { isModelDerivedNodeData } from "@/utils/edgeProvenance";
-import { resolveRouterBasename } from "@/routing";
+import { resolveCitationOrigin, resolveRouterBasename } from "@/routing";
 import {
     buildLocatorIndex,
     codeToUrl,
+    formatLocatorReference,
     locatorGraphScope,
     resolveLocatorReference,
+    type LocatorIndex,
 } from "@/pages/projectEditor/locators";
+import { buildLocatorTex } from "@/pages/projectEditor/locatorTex";
 import {
     clearCardFilePreviewRequest,
     requestCardFilePreview,
@@ -642,7 +645,19 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
     // something the project remembers.
     const [trayOpen, setTrayOpen] = useState(false);
     const [exportingProject, setExportingProject] = useState(false);
+    /**
+     * The reference the canvas is currently showing, echoed into the "Go to reference" box.
+     *
+     * The box is the only thing on screen that can name the citation a reader followed — somebody
+     * who clicked `R7P` in a PDF otherwise lands on a canvas with no evidence of what they clicked.
+     *
+     * Paired with a counter for the reason `canvasNotice` is: going to the same reference twice must
+     * re-seed the box, or a reader who retyped a code they were already on would see nothing happen.
+     */
+    const [shownReference, setShownReference] = useState<{ reference: string; id: number } | null>(null);
+    const shownReferenceIdRef = useRef(0);
     const [exportingMarkdown, setExportingMarkdown] = useState(false);
+    const [exportingRefs, setExportingRefs] = useState(false);
     const [gitConnectionStatus, setGitConnectionStatus] = useState<GitConnectionStatus>({ connected: false });
     const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
     const [processingSystemScreenshot, setProcessingSystemScreenshot] = useState(false);
@@ -1510,6 +1525,20 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         edgesRef.current = edges;
     }, [edges]);
 
+    /**
+     * The query string, read through refs for the same reason as the graph above it.
+     *
+     * `setSearchParams` is memoised on `[navigate, searchParams]`, so taking it as a dependency would
+     * give `handleGoToLocatorCode` a new identity on every query-string change and re-create the
+     * memoised `levelControlElement` with it.
+     */
+    const searchParamsRef = useRef(searchParams);
+    const setSearchParamsRef = useRef(setSearchParams);
+    useEffect(() => {
+        searchParamsRef.current = searchParams;
+        setSearchParamsRef.current = setSearchParams;
+    }, [searchParams, setSearchParams]);
+
     const softDeleteNode = useCallback((nodeId: string) => {
         // `nodesRef`/`edgesRef`, never the closure: see the note above them. A stale `edges` here does
         // not fail loudly — it silently leaves the deleted node's connections alive, which is how a
@@ -2005,6 +2034,61 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
 
 
     /**
+     * The locator index over the project as it stands, built on demand.
+     *
+     * One builder, because three callers must not each decide what "the graph" means: the reference
+     * box, the exported report, and the LaTeX reference file a paper cites. `LOCATOR_PHASE_CONTRACT`
+     * says phase codes are only meaningful over the unfiltered live graph at the latest playhead, so
+     * this reproduces those conditions rather than reusing any canvas memo -- none of them holds the
+     * unfiltered set.
+     *
+     * `nodesRef`/`edgesRef` rather than the closure, for the reason written above them: taking the
+     * arrays as dependencies would give this a new identity on every graph change, and
+     * `handleGoToLocatorCode` and the memoised `levelControlElement` would go with it.
+     */
+    const buildCurrentLocatorIndex = useCallback((
+        capturedAtIso: string,
+        /** The report passes its own, so the document and the numbering cluster one graph, not two. */
+        scope?: ReturnType<typeof locatorGraphScope>,
+    ): LocatorIndex => {
+        const nodes = nodesRef.current;
+        const edges = edgesRef.current;
+        const resolvedScope = scope ?? locatorGraphScope(nodes, edges, timelineStages.map((stage) => ({
+            name: String(stage.name ?? ""),
+            start: toIsoDateString(stage.start),
+            end: toIsoDateString(stage.end),
+        })));
+
+        return buildLocatorIndex({
+            nodes,
+            edges,
+            files: allFiles.map((file) => {
+                const record = file as unknown as Record<string, unknown>;
+                return {
+                    sha256: typeof record.sha256 === "string" ? record.sha256 : file.id,
+                    name: file.name,
+                    createdAt: toIsoDateString(record.createdAt),
+                };
+            }),
+            timeline: {
+                stages: timelineStages.map((stage) => ({
+                    id: stage.id,
+                    name: String(stage.name ?? ""),
+                    start: toIsoDateString(stage.start),
+                    end: toIsoDateString(stage.end),
+                })),
+                designStudyEvents: designStudyEvents.map((eventData) => ({
+                    id: eventData.id,
+                    name: eventData.name,
+                    occurredAt: toIsoDateString(eventData.occurredAt),
+                })),
+            },
+            membership: resolvedScope.membership,
+            clusters: resolvedScope.clusters,
+            asOf: { version: null, capturedAt: capturedAtIso },
+        });
+    }, [allFiles, designStudyEvents, timelineStages]);
+    /**
      * Go to a reference.
      *
      * The reader's half of the shared reference system: somebody has `C3` from a paper, a colleague or
@@ -2046,41 +2130,7 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (typed === "") return false;
 
         const nodes = nodesRef.current;
-        const edges = edgesRef.current;
-        const stages = timelineStages.map((stage) => ({
-            name: String(stage.name ?? ""),
-            start: toIsoDateString(stage.start),
-            end: toIsoDateString(stage.end),
-        }));
-        const scope = locatorGraphScope(nodes, edges, stages);
-        const index = buildLocatorIndex({
-            nodes,
-            edges,
-            files: allFiles.map((file) => {
-                const record = file as unknown as Record<string, unknown>;
-                return {
-                    sha256: typeof record.sha256 === "string" ? record.sha256 : file.id,
-                    name: file.name,
-                    createdAt: toIsoDateString(record.createdAt),
-                };
-            }),
-            timeline: {
-                stages: timelineStages.map((stage) => ({
-                    id: stage.id,
-                    name: String(stage.name ?? ""),
-                    start: toIsoDateString(stage.start),
-                    end: toIsoDateString(stage.end),
-                })),
-                designStudyEvents: designStudyEvents.map((eventData) => ({
-                    id: eventData.id,
-                    name: eventData.name,
-                    occurredAt: toIsoDateString(eventData.occurredAt),
-                })),
-            },
-            membership: scope.membership,
-            clusters: scope.clusters,
-            asOf: { version: null, capturedAt: new Date().toISOString() },
-        });
+        const index = buildCurrentLocatorIndex(new Date().toISOString());
 
         // Parsing, the lens, the status guard and the viewpoint are all one decision, and it is the
         // report's decision too — so it is made in `locators.ts`, where the document can reach it.
@@ -2159,6 +2209,54 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         //    behind it: if the camera then times out, "that card could not be shown" is the sentence
         //    that matters. The reader is looking at the right artifact under a number their document
         //    does not use, and nothing on screen can tell them that on its own.
+        /*
+         * What the box shows, and what the address bar keeps.
+         *
+         * The reference the canvas is *showing*, not the one that was asked for. The two differ
+         * exactly when `n` overrode a renumbered code, and then the box reading `C1` beside the
+         * notice below reading "R7 was renumbered C1" is the pair of statements that makes the swap
+         * legible. With nothing renumbered this is byte-identical to what was typed, canonicalised --
+         * `r7p` becomes `R7P` in place, which is a better acknowledgement than the empty field the
+         * box used to give.
+         */
+        const shown = formatLocatorReference(
+            target.locator.kind,
+            target.locator.ordinal,
+            resolution.lens,
+        );
+        shownReferenceIdRef.current += 1;
+        setShownReference({ reference: shown, id: shownReferenceIdRef.current });
+
+        /*
+         * The address bar as a citable link, and never a stale one.
+         *
+         * Stripping produced a bare `/project/<id>`, which is exactly the URL that sends the next
+         * reader to `/login` -- so somebody who followed a citation and copied their own address bar
+         * handed on something that does not work. For a link printed in a paper that is a defect
+         * rather than tidiness, and re-sharing is the whole point of the thing.
+         *
+         * Rewriting instead of stripping keeps the bar copyable *and* true: the reference written
+         * back is the one the canvas is showing, so a renumbered arrival leaves `C1` there rather
+         * than the `R7` that was clicked. `n` has already done its work on the way in and the code
+         * written back is the one the node answers to now, so a copied link needs no id; `at` is read
+         * and deliberately not honoured, and it is the only thing that would percent-encode.
+         *
+         * Only when a reference was already there. A code *typed* into the box is an owner looking
+         * something up, not a citation being followed, and putting `?ref=` in their bar would mean
+         * their next reload silently reset their filters and their playhead. Following a link has
+         * already accepted that.
+         */
+        const currentParams = searchParamsRef.current;
+        if (currentParams.get("ref") !== null) {
+            const next = new URLSearchParams(currentParams);
+            next.set("ref", shown);
+            next.delete("n");
+            next.delete("at");
+            if (next.toString() !== currentParams.toString()) {
+                setSearchParamsRef.current(next, { replace: true });
+            }
+        }
+
         if (resolution.renumberedFrom !== null) {
             showCanvasNotice(
                 `${resolution.renumberedFrom} was renumbered ${target.code} since that link was`
@@ -2168,11 +2266,12 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         return true;
     }, [
         allFiles,
-        designStudyEvents,
+        // Same volatility as the three it replaced — it depends on exactly those — so the memoised
+        // `levelControlElement` is no more fragile than it was.
+        buildCurrentLocatorIndex,
         requestNodeFocus,
         resetFiltersForCanvasCreation,
         showCanvasNotice,
-        timelineStages,
     ]);
 
     const handleClearCanvasFocus = useCallback(() => {
@@ -2695,19 +2794,11 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (displayedNodes.length > 0 && !nodesMeasured) return;
 
         deepLinkHandledRef.current = true;
-        handleGoToLocatorCode(reference, searchParams.get("n"));
-
-        // Stripped only now, so a load that failed leaves the reference in the address bar to retry
-        // with. Through the router rather than `history.replaceState`: `createBrowserRouter` holds
-        // its own location and re-reads `window.location` only on `popstate`, so a raw call would
-        // leave the router holding a query string the address bar no longer shows — and
-        // `RequireSession` builds its post-login return path out of exactly that. `replace`, so the
-        // back button does not step onto a URL meaning "jump to R7" and fire it again.
-        const remaining = new URLSearchParams(searchParams);
-        remaining.delete("ref");
-        remaining.delete("n");
-        remaining.delete("at");
-        setSearchParams(remaining, { replace: true });
+        // The params are not cleaned up here any more. `handleGoToLocatorCode` rewrites them on
+        // success — keeping `ref`, dropping `n` and `at` — so the address bar stays a link somebody
+        // can copy and re-share, which for a reference printed in a paper is the point. A failed
+        // arrival still leaves the citation in the bar, because the rewrite is on the success path
+        // and a failed *document* load never reaches this effect at all.
     }, [
         displayedNodes.length,
         handleGoToLocatorCode,
@@ -4106,6 +4197,90 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         title,
     ]);
 
+    /**
+     * The paper's reference file: every citable code, with a URL that opens the canvas on it.
+     *
+     * Deliberately synchronous, offline, and free of the report's machinery. It is a projection of
+     * the locator index and nothing more, so an author regenerating it after adding one card should
+     * not pay for an abstract, two model round trips and a re-encoded screenshot -- nor be told the
+     * export went ahead "without machine-written framing" for a file that has none.
+     *
+     * Not gated on `interactionLocked`, for the same reason the report is not: it writes nothing,
+     * and somebody reading a published study is exactly who it is for.
+     */
+    const handleExportLocatorRefs = useCallback(() => {
+        if (exportingRefs) return;
+        setExportingRefs(true);
+        try {
+            const generatedAtIso = new Date().toISOString();
+            const capturedAtIso = latestCanvasChangeTime !== null
+                ? new Date(latestCanvasChangeTime).toISOString()
+                : generatedAtIso;
+
+            const file = buildLocatorTex(buildCurrentLocatorIndex(capturedAtIso), {
+                projectId,
+                projectTitle: title?.trim() || "Untitled",
+                // Not `window.location.origin`: a link printed in a paper outlives the session that
+                // exported it, and a localhost URL in a published citation cannot be corrected.
+                origin: resolveCitationOrigin(),
+                basename: resolveRouterBasename(),
+                generatedAtIso,
+                // The same test the reveal applies before it moves the camera. Without it every card
+                // would advertise a file lens and most would refuse on arrival.
+                hasAttachment: (nodeId: string) => {
+                    const owner = nodesRef.current.find((node) => node.id === nodeId);
+                    const ownerData = (owner?.data ?? {}) as Record<string, unknown>;
+                    const attachmentIds = Array.isArray(ownerData.attachmentIds)
+                        ? (ownerData.attachmentIds as unknown[]).filter(
+                            (value): value is string => typeof value === "string",
+                        )
+                        : [];
+                    return attachmentIds.some((id) => allFiles.some((stored) => stored.id === id));
+                },
+            });
+
+            const blob = new Blob([file.tex], { type: "application/x-tex;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = file.fileName;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+
+            /*
+             * The one failure that is invisible until a reader hits it.
+             *
+             * Every link in this file opens a *published* project -- an anonymous reader is let in
+             * because the document is published, and for no other reason. Duplication deliberately
+             * leaves the copy unpublished ("duplicating somebody else's public project must not
+             * republish it under your name"), which is exactly the workflow this file is for, so the
+             * default state of a freshly-made citable copy is one where every citation 404s.
+             */
+            if (!publishedState) {
+                showCanvasNotice(
+                    "These links open a published project, and this one is not published yet."
+                    + " Publish it, or a reader following a citation will be told it is unavailable.",
+                );
+            }
+        } catch (caught) {
+            const message = caught instanceof Error ? caught.message : "Could not build the references.";
+            showCanvasNotice(`The LaTeX references could not be exported. ${message}`);
+        } finally {
+            setExportingRefs(false);
+        }
+    }, [
+        allFiles,
+        buildCurrentLocatorIndex,
+        exportingRefs,
+        latestCanvasChangeTime,
+        projectId,
+        publishedState,
+        showCanvasNotice,
+        title,
+    ]);
+
     const handleExportProject = useCallback(() => {
         if (exportingProject) return;
 
@@ -4801,6 +4976,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
             focusLabel={canvasFocusLabel}
             onClearFocus={handleClearCanvasFocus}
             onGoToCode={handleGoToLocatorCode}
+            reference={shownReference?.reference ?? null}
+            referenceId={shownReference?.id ?? 0}
             shifted={timelineOpen}
             chatOpen={chatOpen}
             onOpenChat={handleOpenChat}
@@ -4813,6 +4990,9 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         canvasFocusLabel,
         handleClearCanvasFocus,
         handleGoToLocatorCode,
+        // One object, changing only on a successful reveal — never per keystroke, which is what
+        // keeps the draft local to the control and typing out of this component entirely.
+        shownReference,
         timelineOpen,
         chatOpen,
         handleOpenChat,
@@ -4918,6 +5098,8 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
                 exportingProject={exportingProject}
                 onExportMarkdown={handleExportMarkdown}
                 exportingMarkdown={exportingMarkdown}
+                onExportRefs={handleExportLocatorRefs}
+                exportingRefs={exportingRefs}
                 bottomOffsetPx={canvasSidebarBottomOffset}
                 collapsed={sidebarCollapsed}
                 onToggleCollapsed={handleToggleSidebar}

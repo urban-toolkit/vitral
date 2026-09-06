@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowRight, faWandMagicSparkles } from "@fortawesome/free-solid-svg-icons";
 
@@ -57,6 +57,16 @@ export type CanvasLevelControlProps = {
      * correction instead of clearing it and leaving the reader to retype from memory.
      */
     onGoToCode?: (code: string) => boolean;
+    /**
+     * The reference the canvas is currently showing, seeded into the box.
+     *
+     * The box is the only thing on screen that names the citation a reader followed: somebody who
+     * clicked `R7P` in a PDF otherwise arrives at a canvas holding no evidence of what they clicked.
+     * Null when nothing has been asked for.
+     */
+    reference?: string | null;
+    /** Bumped by the caller on every arrival, so going to the same reference twice re-seeds the box. */
+    referenceId?: number;
     /** Lifted clear of the timeline dock, the same way the toolbar is. */
     shifted?: boolean;
     /** Trailing assistant button. Omitted when there is no chat to open. */
@@ -72,18 +82,49 @@ export function CanvasLevelControl({
     focusLabel = null,
     onClearFocus,
     onGoToCode,
+    reference = null,
+    referenceId = 0,
     shifted = false,
     chatOpen = false,
     onOpenChat,
 }: CanvasLevelControlProps) {
-    const [codeDraft, setCodeDraft] = useState("");
+    const [codeDraft, setCodeDraft] = useState(reference ?? "");
+    const inputRef = useRef<HTMLInputElement | null>(null);
+
+    /*
+     * Seeded, not controlled: between arrivals the draft belongs to the reader, and a controlled
+     * value would fight every keystroke.
+     *
+     * Adjusted during render rather than from an effect — React's own recipe for state derived from
+     * a prop, and the same shape `BlueprintTray` uses to reset its local nodes. An effect would
+     * render once with the previous reference first, so the box would visibly show the last citation
+     * before snapping to this one.
+     *
+     * Keyed on `referenceId` rather than on the string, so going to the same reference twice
+     * re-seeds: a reader who retyped a code they were already on must see the field acknowledge it.
+     */
+    const [seededFrom, setSeededFrom] = useState(referenceId);
+    if (seededFrom !== referenceId) {
+        setSeededFrom(referenceId);
+        if (reference !== null) setCodeDraft(reference);
+    }
 
     const submitCode = useCallback(() => {
         const typed = codeDraft.trim();
         if (typed === "" || !onGoToCode) return;
-        // Cleared only on success. A reference that did not resolve is usually a typo, and clearing
-        // the field would make the reader fetch the paper again to retype it.
-        if (onGoToCode(typed)) setCodeDraft("");
+        /*
+         * Not cleared, either way, which reverses what this used to do.
+         *
+         * On failure the text stays for correction — a bad reference is usually a typo, and clearing
+         * it would send the reader back to the paper — and the field selects itself so retyping is
+         * one keystroke rather than a manual erase.
+         *
+         * On success the parent seeds the canonical spelling back through `reference`, so the box
+         * goes on naming what the canvas is showing: `r7p` becomes `R7P` in place. That is both a
+         * better acknowledgement than an empty field and the thing a reader arriving from a paper
+         * needs, since nothing else on screen says which citation they followed.
+         */
+        if (!onGoToCode(typed)) inputRef.current?.select();
     }, [codeDraft, onGoToCode]);
 
     return (
@@ -121,16 +162,22 @@ export function CanvasLevelControl({
             {onGoToCode ? (
                 <div className={classes.row}>
                     <input
+                        ref={inputRef}
                         className={classes.codeInput}
                         type="text"
                         value={codeDraft}
                         onChange={(event) => setCodeDraft(event.target.value)}
+                        // The box is pre-filled now, so the first keystroke of the next reference
+                        // should replace the last one rather than append to it.
+                        onFocus={(event) => event.currentTarget.select()}
                         onKeyDown={(event) => {
                             if (event.key === "Enter") {
                                 event.preventDefault();
                                 submitCode();
                             }
-                            if (event.key === "Escape") setCodeDraft("");
+                            // Restores what the canvas is showing rather than emptying the field:
+                            // the box names a place, and abandoning an edit should put the name back.
+                            if (event.key === "Escape") setCodeDraft(reference ?? "");
                             // The canvas listens for Backspace as delete and for Space as pan; a code
                             // being typed must not reach either.
                             event.stopPropagation();

@@ -26,6 +26,14 @@ type CanvasSidebarProps = {
     onExportProject?: () => void;
     exportingProject?: boolean;
     onExportMarkdown?: () => void;
+    /**
+     * The paper's reference file: every citable code with a URL that opens the canvas on it.
+     *
+     * Beside the report rather than inside it, because regenerating a lookup table after adding one
+     * card should not cost an abstract and two model round trips.
+     */
+    onExportRefs?: () => void;
+    exportingRefs?: boolean;
     exportingMarkdown?: boolean;
     bottomOffsetPx?: number;
     collapsed: boolean;
@@ -48,6 +56,8 @@ export const CanvasSidebar = memo(function CanvasSidebar({
     onExportProject,
     exportingProject = false,
     onExportMarkdown,
+    onExportRefs,
+    exportingRefs = false,
     exportingMarkdown = false,
     bottomOffsetPx = 0,
     collapsed,
@@ -172,6 +182,18 @@ export const CanvasSidebar = memo(function CanvasSidebar({
                                 disabled={exportingMarkdown}
                             >
                                 {exportingMarkdown ? "..." : "MD"}
+                            </button>
+                        ) : null}
+                        {onExportRefs ? (
+                            <button
+                                type="button"
+                                className={styles.exportHeaderButton}
+                                onClick={onExportRefs}
+                                title="Export LaTeX references (vitral-refs.tex)"
+                                aria-label="Export LaTeX references"
+                                disabled={exportingRefs}
+                            >
+                                {exportingRefs ? "..." : "TeX"}
                             </button>
                         ) : null}
                         <button

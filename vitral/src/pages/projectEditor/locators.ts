@@ -642,9 +642,22 @@ export function resolveLocatorReference(
         return { ok: false, reference: null, reason: describeUnparsedReference(raw) };
     }
 
-    // A claim naming a node the index no longer holds is dropped rather than obeyed: there would be
-    // nothing to redirect to, and the code is then the only surviving half of the citation.
-    const claimed = expectedTargetId !== undefined && expectedTargetId !== null && expectedTargetId !== ""
+    /*
+     * A claim naming a node the index no longer holds is dropped rather than obeyed: there would be
+     * nothing to redirect to, and the code is then the only surviving half of the citation.
+     *
+     * **A phase never checks its claim, because it has nothing of its own to check.** A phase is not
+     * a stored entity, so its `targetId` is *borrowed* from its anchor activity — and that activity
+     * answers to its own `A` code, which wins the shared id in `byTargetId` because activities are
+     * indexed after phases. So a phase link's id resolves to a different code by construction, every
+     * time, with nothing having been renumbered; obeying it opened the thread at Detail instead of
+     * the phase at Overview, under a notice naming a rename that never happened.
+     *
+     * Fixed here rather than by dropping `n` from phase URLs, because that repairs only the links
+     * written after it — and `codeToUrl` has been printing this shape into every exported report.
+     */
+    const parsedIsPhase = parsed.locator.kind === "phase";
+    const claimed = !parsedIsPhase && expectedTargetId !== undefined && expectedTargetId !== null && expectedTargetId !== ""
         ? index.byTargetId.get(expectedTargetId) ?? null
         : null;
     const renumberedFrom = claimed !== null && claimed.code !== parsed.locator.code
