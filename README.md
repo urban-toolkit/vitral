@@ -5,6 +5,7 @@
     <a href="https://arcade.evl.uic.edu/vitral"><strong>Live demo</strong></a> ·
     <a href="https://urbantk.org/vitral/"><strong>Website</strong></a> ·
     <a href="https://github.com/urban-toolkit/vitral/issues"><strong>Issues</strong></a>
+    <a href="https://arcade.evl.uic.edu/vitral"><strong>Deployment</strong></a>
   </p>
   <p>
     <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"/>
