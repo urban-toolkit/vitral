@@ -7,6 +7,7 @@ import {
     registerAccount,
 } from "@/api/authApi";
 import { setGuestApiMode } from "@/api/guestMode";
+import { writeGuestDeclined } from "@/auth/guestDeclined";
 import { SessionContext, type Session, type SessionContextValue } from "@/auth/sessionContext";
 
 /**
@@ -122,6 +123,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const signIn = useCallback(async (input: { username: string; password: string }) => {
         const user = await loginAccount(input);
         writeGuestFlag(false);
+        writeGuestDeclined(false);
         setSession({ status: "user", user });
     }, [setSession]);
 
@@ -132,6 +134,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }) => {
         const user = await registerAccount(input);
         writeGuestFlag(false);
+        writeGuestDeclined(false);
         setSession({ status: "user", user });
     }, [setSession]);
 
@@ -142,6 +145,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             // Locally signed out even if the request failed: leaving the UI claiming a session the
             // user has asked to end is worse than a session row that expires on its own.
             writeGuestFlag(false);
+            // And it has to *stay* signed out. On a URL still carrying `?ref=` — which is every URL
+            // reached from a citation now that the reference survives arrival — the automatic guest
+            // entry would otherwise let the browser straight back in on the next render.
+            writeGuestDeclined(true);
             setSession({ status: "anonymous", verified: true });
         }
     }, [setSession]);
@@ -171,12 +178,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             await logoutAccount();
         } finally {
             writeGuestFlag(true, options?.remember ?? true);
+            // Reachable while a refusal stands only by asking for guest mode outright — the automatic
+            // path is vetoed by it — so arriving here is the refusal being withdrawn.
+            writeGuestDeclined(false);
             setSession({ status: "guest" });
         }
     }, [setSession]);
 
     const leaveGuestMode = useCallback(() => {
         writeGuestFlag(false);
+        // The unavailable-project screen offers a reader an account, and it is reached *from* a
+        // reference link — so without this the automatic entry would put them back in guest mode
+        // before the login screen could render.
+        writeGuestDeclined(true);
         setSession({ status: "anonymous", verified: true });
     }, [setSession]);
 

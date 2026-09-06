@@ -2794,17 +2794,17 @@ const FlowInnerWithProjectId = ({ projectId }: { projectId: string }) => {
         if (displayedNodes.length > 0 && !nodesMeasured) return;
 
         deepLinkHandledRef.current = true;
-        // The params are not cleaned up here any more. `handleGoToLocatorCode` rewrites them on
+        // The params are not cleaned up afterwards any more. `handleGoToLocatorCode` rewrites them on
         // success — keeping `ref`, dropping `n` and `at` — so the address bar stays a link somebody
         // can copy and re-share, which for a reference printed in a paper is the point. A failed
         // arrival still leaves the citation in the bar, because the rewrite is on the success path
         // and a failed *document* load never reaches this effect at all.
+        handleGoToLocatorCode(reference, searchParams.get("n"));
     }, [
         displayedNodes.length,
         handleGoToLocatorCode,
         nodesMeasured,
         searchParams,
-        setSearchParams,
         status,
     ]);
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Navigate, matchPath, useLocation } from "react-router-dom";
 
 import { useSession } from "@/auth/sessionContext";
+import { hasDeclinedGuestMode } from "@/auth/guestDeclined";
 import { LoadSpinner } from "@/components/project/LoadSpinner";
 
 /**
@@ -58,8 +59,18 @@ export function RequireSession({ children }: { children: ReactNode }) {
      *
      * An unverified anonymous falls through to `/login` exactly as before, and loses nothing —
      * `state.from` carries the whole reference across.
+     *
+     * **And refuse to overrule somebody who has already said no.** The reference now survives in the
+     * address bar after arrival, so that a reader who copies their own URL hands on a link that
+     * works — which also means `invited` stays true for every later load of that page. Without
+     * `hasDeclinedGuestMode` the owner of a project could sign out, reload, and be signed back in as
+     * a guest by their own citation link, with no way off the page. Convenience for a first-time
+     * reader must not outrank an explicit gesture by whoever is actually sitting there.
      */
-    const mayAutoGuest = session.status === "anonymous" && session.verified && invited;
+    const mayAutoGuest = session.status === "anonymous"
+        && session.verified
+        && invited
+        && !hasDeclinedGuestMode();
 
     /**
      * Whether the automatic guest entry has been started, and whether it has finished.
